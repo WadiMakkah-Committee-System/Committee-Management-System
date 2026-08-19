@@ -64,3 +64,80 @@ async def test_soft_deleted_department_name_can_be_reused(
 
     recreate = await client.post("/api/v1/departments", json=payload, headers=auth_headers)
     assert recreate.status_code == 201
+
+
+async def _create_department(client: AsyncClient, auth_headers, name: str) -> str:
+    response = await client.post(
+        "/api/v1/departments", json={"name": name, "description": None}, headers=auth_headers
+    )
+    return response.json()["dep_id"]
+
+
+async def _create_admin_in_department(
+    client: AsyncClient, auth_headers, *, username: str, dep_id: str
+) -> dict[str, str]:
+    """ينشئ مستخدم admin تابع لإدارة معيّنة، ويسجّل دخوله، ويرجع headers جاهزة."""
+    await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "أ",
+            "middle_name": "ب",
+            "last_name": "ج",
+            "username": username,
+            "email": f"{username}@example.com",
+            "password": "StrongPass1",
+            "role": "admin",
+            "dep_id": dep_id,
+        },
+        headers=auth_headers,
+    )
+    login = await client.post(
+        "/api/v1/auth/login", json={"username": username, "password": "StrongPass1"}
+    )
+    token = login.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_super_admin_sees_all_departments_in_list(
+    client: AsyncClient, auth_headers
+) -> None:
+    await _create_department(client, auth_headers, "إدارة أولى")
+    await _create_department(client, auth_headers, "إدارة ثانية")
+
+    listing = await client.get("/api/v1/departments", headers=auth_headers)
+    assert listing.status_code == 200
+    assert len(listing.json()) == 2
+
+
+async def test_non_super_admin_sees_only_own_department_in_list(
+    client: AsyncClient, auth_headers
+) -> None:
+    own_dep_id = await _create_department(client, auth_headers, "إدارة الموظف")
+    await _create_department(client, auth_headers, "إدارة أخرى لا يشوفها")
+
+    member_headers = await _create_admin_in_department(
+        client, auth_headers, username="member_dep_view", dep_id=own_dep_id
+    )
+
+    listing = await client.get("/api/v1/departments", headers=member_headers)
+    assert listing.status_code == 200
+    body = listing.json()
+    assert len(body) == 1
+    assert body[0]["dep_id"] == own_dep_id
+
+
+async def test_non_super_admin_cannot_view_other_department_by_id(
+    client: AsyncClient, auth_headers
+) -> None:
+    own_dep_id = await _create_department(client, auth_headers, "إدارة العضو")
+    other_dep_id = await _create_department(client, auth_headers, "إدارة أخرى")
+
+    member_headers = await _create_admin_in_department(
+        client, auth_headers, username="member_dep_forbidden", dep_id=own_dep_id
+    )
+
+    own = await client.get(f"/api/v1/departments/{own_dep_id}", headers=member_headers)
+    assert own.status_code == 200
+
+    other = await client.get(f"/api/v1/departments/{other_dep_id}", headers=member_headers)
+    assert other.status_code == 403

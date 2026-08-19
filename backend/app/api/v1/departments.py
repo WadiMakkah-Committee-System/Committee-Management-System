@@ -1,8 +1,12 @@
 """
 الهدف:
-راوتات إدارة الإدارات — FR-UM-007 → FR-UM-010. العرض متاح لأي مستخدم
-مسجّل دخول (يحتاجها كل الأدوار عند اختيار الإدارة في شاشات أخرى)، لكن
-الإنشاء/التعديل/الحذف مقصورة على super_admin.
+راوتات إدارة الإدارات — FR-UM-007 → FR-UM-010.
+
+قواعد العرض (قرار موثّق):
+- super_admin: يشوف كل الإدارات (قائمة كاملة + أي إدارة عبر معرّفها).
+- بقية الأدوار: يشوفون إدارتهم فقط (حسب dep_id الخاص بهم) — سواء في القائمة
+  أو عند طلب إدارة بعينها؛ محاولة عرض إدارة أخرى تُرفض بـ 403.
+- الإنشاء/التعديل/الحذف مقصورة على super_admin فقط، بلا استثناء.
 """
 
 import uuid
@@ -42,16 +46,31 @@ async def create_department(
 
 @router.get("", response_model=list[DepartmentOut])
 async def list_departments(
-    _: CurrentUser, db: AsyncSession = Depends(get_db)
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[DepartmentOut]:
-    departments = await department_service.list_departments(db)
+    """
+    super_admin يشوف كل الإدارات. بقية الأدوار يشوفون إدارتهم فقط — إذا لم
+    يكن لدى المستخدم إدارة (dep_id فارغ)، تُرجع قائمة فارغة بدل خطأ.
+    """
+    if current_user.role == UserRole.super_admin:
+        departments = await department_service.list_departments(db)
+    elif current_user.dep_id is not None:
+        departments = await department_service.list_departments(db, dep_id=current_user.dep_id)
+    else:
+        departments = []
     return [DepartmentOut.model_validate(d) for d in departments]
 
 
 @router.get("/{dep_id}", response_model=DepartmentOut)
 async def get_department(
-    dep_id: uuid.UUID, _: CurrentUser, db: AsyncSession = Depends(get_db)
+    dep_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> DepartmentOut:
+    """super_admin يقدر يعرض أي إدارة. بقية الأدوار يقدرون يعرضون إدارتهم فقط."""
+    if current_user.role != UserRole.super_admin and current_user.dep_id != dep_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="لا تملك صلاحية عرض هذه الإدارة"
+        )
+
     department = await department_service.get_department(db, dep_id)
     if department is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="الإدارة غير موجودة")
