@@ -1,0 +1,181 @@
+import { useEffect } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { Save } from 'lucide-react'
+import { Modal } from '@/components/ui/Modal'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
+import { Button } from '@/components/ui/Button'
+import { ROLE_OPTIONS } from '@/lib/utils'
+import type { Department, User, UserCreatePayload, UserUpdatePayload } from '@/types'
+
+const baseFields = {
+  first_name: z.string().min(1, 'الاسم الأول مطلوب').max(100),
+  middle_name: z.string().min(1, 'الاسم الأوسط مطلوب').max(100),
+  last_name: z.string().min(1, 'اسم العائلة مطلوب').max(100),
+  email: z.string().email('بريد إلكتروني غير صحيح'),
+  role: z.string().min(1, 'الدور مطلوب'),
+  dep_id: z.string(),
+}
+
+const createSchema = z.object({
+  ...baseFields,
+  username: z
+    .string()
+    .min(3, 'اسم المستخدم 3 أحرف على الأقل')
+    .max(50)
+    .regex(/^[a-zA-Z0-9_.]+$/, 'أحرف إنجليزية وأرقام و . _ فقط'),
+  password: z
+    .string()
+    .min(8, 'يجب أن تحتوي على 8 أحرف على الأقل')
+    .regex(/[A-Z]/, 'يجب أن تحتوي على حرف كبير')
+    .regex(/[a-z]/, 'يجب أن تحتوي على حرف صغير')
+    .regex(/[0-9]/, 'يجب أن تحتوي على رقم'),
+})
+
+const editSchema = z.object(baseFields)
+
+type CreateFormValues = z.infer<typeof createSchema>
+type EditFormValues = z.infer<typeof editSchema>
+
+interface UserFormModalProps {
+  open: boolean
+  onClose: () => void
+  user?: User | null
+  departments: Department[]
+  onSubmitCreate: (values: UserCreatePayload) => void
+  onSubmitEdit: (values: UserUpdatePayload) => void
+  loading?: boolean
+  serverError?: string | null
+}
+
+export function UserFormModal({
+  open,
+  onClose,
+  user,
+  departments,
+  onSubmitCreate,
+  onSubmitEdit,
+  loading,
+  serverError,
+}: UserFormModalProps) {
+  const isEdit = !!user
+  const depOptions = [
+    { value: '', label: 'بدون إدارة' },
+    ...departments.map((d) => ({ value: d.dep_id, label: d.name })),
+  ]
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<CreateFormValues | EditFormValues>({
+    resolver: zodResolver(isEdit ? editSchema : createSchema),
+  })
+
+  useEffect(() => {
+    if (open) {
+      reset({
+        first_name: user?.first_name ?? '',
+        middle_name: user?.middle_name ?? '',
+        last_name: user?.last_name ?? '',
+        email: user?.email ?? '',
+        role: user?.role ?? '',
+        dep_id: user?.dep_id ?? '',
+        ...(isEdit ? {} : { username: '', password: '' }),
+      } as CreateFormValues)
+    }
+  }, [open, user, isEdit, reset])
+
+  function onValid(values: CreateFormValues | EditFormValues) {
+    if (isEdit) {
+      const v = values as EditFormValues
+      onSubmitEdit({
+        first_name: v.first_name,
+        middle_name: v.middle_name,
+        last_name: v.last_name,
+        email: v.email,
+        role: v.role as UserUpdatePayload['role'],
+        dep_id: v.dep_id || null,
+      })
+    } else {
+      const v = values as CreateFormValues
+      onSubmitCreate({
+        first_name: v.first_name,
+        middle_name: v.middle_name,
+        last_name: v.last_name,
+        username: v.username,
+        email: v.email,
+        password: v.password,
+        role: v.role as UserCreatePayload['role'],
+        dep_id: v.dep_id || null,
+      })
+    }
+  }
+
+  const createErrors = errors as typeof errors & Partial<Record<'username' | 'password', { message?: string }>>
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={isEdit ? 'تعديل بيانات المستخدم' : 'إضافة مستخدم جديد'}
+      description={isEdit ? `تعديل بيانات "${user?.first_name} ${user?.last_name}"` : 'أدخل بيانات المستخدم الجديد'}
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={loading}>
+            إلغاء
+          </Button>
+          <Button form="user-form" type="submit" loading={loading} icon={<Save size={16} />}>
+            {isEdit ? 'حفظ التعديلات' : 'إضافة المستخدم'}
+          </Button>
+        </>
+      }
+    >
+      <form id="user-form" onSubmit={handleSubmit(onValid)} className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Input label="الاسم الأول" required error={errors.first_name?.message} {...register('first_name')} />
+          <Input label="الاسم الأوسط" required error={errors.middle_name?.message} {...register('middle_name')} />
+          <Input label="اسم العائلة" required error={errors.last_name?.message} {...register('last_name')} />
+        </div>
+
+        {!isEdit && (
+          <Input
+            label="اسم المستخدم"
+            required
+            hint="يُستخدم لتسجيل الدخول — لا يمكن تعديله لاحقًا"
+            error={createErrors.username?.message}
+            {...register('username' as 'first_name')}
+          />
+        )}
+
+        <Input label="البريد الإلكتروني" type="email" required error={errors.email?.message} {...register('email')} />
+
+        {!isEdit && (
+          <Input
+            label="كلمة المرور المؤقتة"
+            type="password"
+            required
+            hint="سيُطلب من المستخدم تغييرها عند أول تسجيل دخول"
+            error={createErrors.password?.message}
+            {...register('password' as 'first_name')}
+          />
+        )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Select label="الدور" required placeholder="اختر الدور" options={ROLE_OPTIONS} error={errors.role?.message} {...register('role')} />
+          <Select label="الإدارة" placeholder="اختر الإدارة" options={depOptions} {...register('dep_id')} />
+        </div>
+
+        {serverError && (
+          <p className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
+            {serverError}
+          </p>
+        )}
+      </form>
+    </Modal>
+  )
+}

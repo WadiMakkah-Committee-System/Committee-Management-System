@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   نظام إدارة اللجان والاجتماعات — Design Tokens
+   المصدر: Wadi_Makkah_UI_Design_System_AR_v2.md
+   قاعدة: لا Hex Colors مباشرة داخل الأكواد — كل شيء عبر Tokens (§28.14)
+   ========================================================================== */
+
+:root {
+  /* --- Semantic tokens: Light Mode (§28.14 + §7) --- */
+  --bg-app: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --border-default: #e5e7eb;
+  --brand-primary: #105ea7;
+  --brand-primary-hover: #0b4d8a;
+  --brand-accent: #24bae9;
+
+  /* --- Sidebar (§14) --- */
+  --sidebar-bg: #1f2937;
+  --sidebar-active-bg: #105ea7;
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
+
+  /* --- Status colors (§8) --- */
+  --status-success-main: #1ba64b;
+  --status-success-bg: #eaf8ef;
+  --status-success-border: #1ba64b;
+  --status-warning-main: #e9a625;
+  --status-warning-bg: #fff7e6;
+  --status-warning-border: #e9a625;
+  --status-error-main: #dc3545;
+  --status-error-bg: #fdecec;
+  --status-error-border: #dc3545;
+  --status-info-main: #105ea7;
+  --status-info-bg: #eaf3fa;
+  --status-info-border: #105ea7;
+  --status-neutral-main: #6b7280;
+  --status-neutral-bg: #f3f4f6;
+  --status-neutral-border: #6b7280;
+
+  /* --- Table (§13) --- */
+  --table-header-bg: #f8fafc;
+  --table-hover-bg: #f8fafc;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  /* --- Semantic tokens: Dark Mode (§28.1, §28.2, §28.14) --- */
+  --bg-app: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-elevated: #243244;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --border-default: #2a3441;
+  --brand-primary: #105ea7;
+  --brand-primary-hover: #24bae9;
+  --brand-accent: #24bae9;
+
+  /* --- Sidebar (§28.8) --- */
+  --sidebar-bg: #0f172a;
+  --sidebar-active-bg: #105ea7;
+  --sidebar-hover-bg: #1e293b;
+
+  /* --- Status colors (§28.4) --- */
+  --status-success-main: #22c55e;
+  --status-success-bg: #12351f;
+  --status-success-border: #1f6b3a;
+  --status-warning-main: #facc15;
+  --status-warning-bg: #3a2f0b;
+  --status-warning-border: #6b5810;
+  --status-error-main: #ef4444;
+  --status-error-bg: #3a1518;
+  --status-error-border: #6b252a;
+  --status-info-main: #24bae9;
+  --status-info-bg: #102e3a;
+  --status-info-border: #1b5267;
+  --status-neutral-main: #cbd5e1;
+  --status-neutral-bg: #1e293b;
+  --status-neutral-border: #334155;
+
+  /* --- Table (§28.9) --- */
+  --table-header-bg: #243244;
+  --table-hover-bg: #243244;
+
+  color-scheme: dark;
+}
+
+@theme {
+  /* Typography (§3, §4, §5) */
+  --font-sans: "IBM Plex Sans Arabic", "Noto Sans Arabic", "Inter", Arial, sans-serif;
+
+  /* Semantic → utility bridge (bg-app, text-primary, border-default, ...) */
+  --color-bg-app: var(--bg-app);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-border-default: var(--border-default);
+
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-primary-hover: var(--brand-primary-hover);
+  --color-brand-accent: var(--brand-accent);
+
+  --color-sidebar-bg: var(--sidebar-bg);
+  --color-sidebar-active-bg: var(--sidebar-active-bg);
+  --color-sidebar-hover-bg: var(--sidebar-hover-bg);
+
+  --color-success: var(--status-success-main);
+  --color-success-bg: var(--status-success-bg);
+  --color-success-border: var(--status-success-border);
+  --color-warning: var(--status-warning-main);
+  --color-warning-bg: var(--status-warning-bg);
+  --color-warning-border: var(--status-warning-border);
+  --color-danger: var(--status-error-main);
+  --color-danger-bg: var(--status-error-bg);
+  --color-danger-border: var(--status-error-border);
+  --color-info: var(--status-info-main);
+  --color-info-bg: var(--status-info-bg);
+  --color-info-border: var(--status-info-border);
+  --color-neutral: var(--status-neutral-main);
+  --color-neutral-bg: var(--status-neutral-bg);
+  --color-neutral-border: var(--status-neutral-border);
+
+  --color-table-header: var(--table-header-bg);
+  --color-table-hover: var(--table-hover-bg);
+
+  /* Brand identity accents (§6) — ثابتة في الوضعين */
+  --color-brand-dark-blue: #2b3f90;
+  --color-brand-teal: #018b85;
+  --color-brand-lime: #99c23e;
+  --color-brand-orange: #e9a625;
+  --color-brand-yellow: #facc12;
+  --color-brand-brown: #9d5036;
+  --color-brand-purple: #9a559c;
+  --color-brand-purple-dark: #53519c;
+
+  /* Radius scale (§17) */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+* {
+  border-color: var(--border-default);
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+::selection {
+  background-color: var(--brand-accent);
+  color: #ffffff;
+}
+
+/* Scrollbar — خفيف واحترافي */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-default);
+  border-radius: 8px;
+}

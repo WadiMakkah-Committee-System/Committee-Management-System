@@ -1,0 +1,76 @@
+import { useEffect, useState } from 'react'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { useAuthStore } from '@/store/authStore'
+import { AppShell } from '@/components/layout/AppShell'
+import { ProtectedRoute } from '@/routes/ProtectedRoute'
+import { LoginPage } from '@/features/auth/LoginPage'
+import { UsersPage } from '@/features/users/UsersPage'
+import { DepartmentsPage } from '@/features/departments/DepartmentsPage'
+import { ProfilePage } from '@/features/profile/ProfilePage'
+import { PageSpinner } from '@/components/ui/Spinner'
+import { usersKeys } from '@/hooks/useUsers'
+import * as usersApi from '@/api/users'
+
+/**
+ * عند تحديث الصفحة يوجد accessToken في التخزين لكن user في الحالة يكون
+ * فارغًا مؤقتًا — هذا المكوّن يعيد جلب /users/me مرة واحدة عشان يملأ بيانات
+ * المستخدم (تُستخدم في الـ Sidebar/Topbar وقيود الأدوار) قبل عرض التطبيق.
+ */
+function AppBootstrap({ children }: { children: React.ReactNode }) {
+  const accessToken = useAuthStore((s) => s.accessToken)
+  const user = useAuthStore((s) => s.user)
+  const setUser = useAuthStore((s) => s.setUser)
+  const logout = useAuthStore((s) => s.logout)
+  const [ready, setReady] = useState(!accessToken || !!user)
+
+  const { data, isError } = useQuery({
+    queryKey: usersKeys.me,
+    queryFn: usersApi.fetchMe,
+    enabled: !!accessToken && !user,
+  })
+
+  useEffect(() => {
+    if (data) {
+      setUser(data)
+      setReady(true)
+    }
+  }, [data, setUser])
+
+  useEffect(() => {
+    if (isError) {
+      logout()
+      setReady(true)
+    }
+  }, [isError, logout])
+
+  if (!ready) return <PageSpinner />
+  return <>{children}</>
+}
+
+function App() {
+  return (
+    <AppBootstrap>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+
+        <Route element={<ProtectedRoute />}>
+          <Route element={<AppShell />}>
+            <Route path="/profile" element={<ProfilePage />} />
+
+            <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
+              <Route path="/users" element={<UsersPage />} />
+              <Route path="/departments" element={<DepartmentsPage />} />
+            </Route>
+
+            <Route path="/" element={<Navigate to="/users" replace />} />
+          </Route>
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AppBootstrap>
+  )
+}
+
+export default App
