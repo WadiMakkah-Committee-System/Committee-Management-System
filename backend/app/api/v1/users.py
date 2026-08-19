@@ -105,17 +105,20 @@ async def update_user(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> UserOut:
-    user = await user_service.update_user(
-        db,
-        actor_user_id=current_user.user_id,
-        user_id=user_id,
-        first_name=payload.first_name,
-        middle_name=payload.middle_name,
-        last_name=payload.last_name,
-        email=payload.email,
-        role=payload.role,
-        dep_id=payload.dep_id,
-    )
+    try:
+        user = await user_service.update_user(
+            db,
+            actor_user_id=current_user.user_id,
+            user_id=user_id,
+            first_name=payload.first_name,
+            middle_name=payload.middle_name,
+            last_name=payload.last_name,
+            email=payload.email,
+            role=payload.role,
+            dep_id=payload.dep_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="المستخدم غير موجود")
     return UserOut.model_validate(user)
@@ -129,9 +132,12 @@ async def update_user(
 async def delete_user(
     user_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> None:
-    user = await user_service.soft_delete_user(
-        db, actor_user_id=current_user.user_id, user_id=user_id
-    )
+    try:
+        user = await user_service.soft_delete_user(
+            db, actor_user_id=current_user.user_id, user_id=user_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="المستخدم غير موجود")
 
@@ -145,9 +151,12 @@ async def suspend_user(
     user_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> UserOut:
     """إيقاف حساب مؤقتًا — FR-UM-004 (يمنع تسجيل الدخول فقط)."""
-    user = await user_service.set_user_status(
-        db, actor_user_id=current_user.user_id, user_id=user_id, status=UserStatus.suspended
-    )
+    try:
+        user = await user_service.set_user_status(
+            db, actor_user_id=current_user.user_id, user_id=user_id, status=UserStatus.suspended
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="المستخدم غير موجود")
     return UserOut.model_validate(user)

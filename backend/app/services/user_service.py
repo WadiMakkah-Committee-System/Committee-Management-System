@@ -28,6 +28,25 @@ from app.models.user import User, UserRole, UserStatus
 from app.services import audit_service
 
 
+async def _count_other_active_super_admins(db: AsyncSession, *, excluding_user_id: uuid.UUID) -> int:
+    """
+    يحسب عدد حسابات super_admin النشطة (غير محذوفة وغير موقوفة) باستثناء
+    مستخدم معيّن — يُستخدم لمنع أي عملية (حذف/إيقاف/تغيير دور) قد تترك
+    النظام بدون super_admin واحد قادر على تسجيل الدخول وإدارته.
+    """
+    result = await db.execute(
+        select(func.count())
+        .select_from(User)
+        .where(
+            User.role == UserRole.super_admin,
+            User.deleted_at.is_(None),
+            User.status == UserStatus.active,
+            User.user_id != excluding_user_id,
+        )
+    )
+    return result.scalar_one()
+
+
 async def create_user(
     db: AsyncSession,
     *,
@@ -143,10 +162,22 @@ async def update_user(
     role: UserRole | None = None,
     dep_id: uuid.UUID | None = None,
 ) -> User | None:
-    """تعديل بيانات مستخدم موجود. يرجع None إذا لم يوجد."""
+    """
+    تعديل بيانات مستخدم موجود. يرجع None إذا لم يوجد.
+
+    يرفع ValueError إذا كان التعديل سيغيّر دور آخر super_admin نشط في
+    النظام إلى دور آخر — حماية من ترك النظام بدون أي حساب قادر على إدارته.
+    """
     user = await get_user(db, user_id)
     if user is None:
         return None
+
+    if role is not None and role != UserRole.super_admin and user.role == UserRole.super_admin:
+        remaining = await _count_other_active_super_admins(db, excluding_user_id=user.user_id)
+        if remaining == 0:
+            raise ValueError(
+                "لا يمكن تغيير دور هذا المستخدم — إنه آخر super_admin نشط في النظام"
+            )
 
     before = {"role": user.role.value, "dep_id": str(user.dep_id) if user.dep_id else None}
 
@@ -179,10 +210,21 @@ async def update_user(
 async def soft_delete_user(
     db: AsyncSession, *, actor_user_id: uuid.UUID, user_id: uuid.UUID
 ) -> User | None:
-    """حذف مستخدم (Soft Delete) — FR-UM-005."""
+    """
+    حذف مستخدم (Soft Delete) — FR-UM-005.
+
+    يرفع ValueError إذا كان المستخدم آخر super_admin نشط في النظام — حذفه
+    يترك النظام بدون أي حساب قادر على إدارته (لا أحد يقدر يضيف حسابات أو
+    إدارات بعدها).
+    """
     user = await get_user(db, user_id)
     if user is None:
         return None
+
+    if user.role == UserRole.super_admin:
+        remaining = await _count_other_active_super_admins(db, excluding_user_id=user.user_id)
+        if remaining == 0:
+            raise ValueError("لا يمكن حذف هذا المستخدم — إنه آخر super_admin نشط في النظام")
 
     user.deleted_at = func.now()
 
@@ -206,10 +248,19 @@ async def set_user_status(
     """
     إيقاف/إعادة تفعيل حساب — FR-UM-004. الإيقاف يمنع تسجيل الدخول فقط،
     ولا يخفي بيانات المستخدم من الشاشات الأخرى (مثل عضويات اللجان).
+
+    يرفع ValueError عند محاولة إيقاف آخر super_admin نشط (الإيقاف يمنع
+    الدخول تمامًا، فله نفس أثر الحذف على قدرة النظام على أن يُدار).
+    إعادة التفعيل لا تحتاج هذا الفحص أبدًا (لا يمكن أن تُنقص العدد).
     """
     user = await get_user(db, user_id)
     if user is None:
         return None
+
+    if status == UserStatus.suspended and user.role == UserRole.super_admin:
+        remaining = await _count_other_active_super_admins(db, excluding_user_id=user.user_id)
+        if remaining == 0:
+            raise ValueError("لا يمكن إيقاف هذا الحساب — إنه آخر super_admin نشط في النظام")
 
     user.status = status
     action = "suspend" if status == UserStatus.suspended else "reactivate"

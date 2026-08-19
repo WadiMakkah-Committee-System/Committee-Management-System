@@ -214,3 +214,80 @@ async def test_me_for_super_admin_without_department_returns_null_department(
     body = me.json()
     assert body["dep_id"] is None
     assert body["department"] is None
+
+
+async def _create_second_super_admin(
+    client: AsyncClient, auth_headers, username: str = "super_admin_2"
+) -> str:
+    """ينشئ super_admin ثاني عبر super_admin الأول (auth_headers)، ويرجع user_id."""
+    response = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "س",
+            "middle_name": "ص",
+            "last_name": "ض",
+            "username": username,
+            "email": f"{username}@example.com",
+            "password": "StrongPass1",
+            "role": "super_admin",
+            "dep_id": None,
+        },
+        headers=auth_headers,
+    )
+    return response.json()["user_id"]
+
+
+async def test_cannot_delete_last_super_admin(client: AsyncClient, auth_headers) -> None:
+    """
+    حماية أساسية: يمنع حذف آخر super_admin نشط في النظام، وإلا يبقى النظام
+    بدون أي حساب قادر على إدارته.
+    """
+    me = await client.get("/api/v1/users/me", headers=auth_headers)
+    self_id = me.json()["user_id"]
+
+    response = await client.delete(f"/api/v1/users/{self_id}", headers=auth_headers)
+    assert response.status_code == 400
+    assert "آخر" in response.json()["detail"]
+
+    # يتأكد إنه فعلًا لسه موجود ونشط (ما انحذف)
+    still_there = await client.get(f"/api/v1/users/{self_id}", headers=auth_headers)
+    assert still_there.status_code == 200
+
+
+async def test_can_delete_super_admin_when_another_exists(
+    client: AsyncClient, auth_headers
+) -> None:
+    second_id = await _create_second_super_admin(client, auth_headers)
+
+    response = await client.delete(f"/api/v1/users/{second_id}", headers=auth_headers)
+    assert response.status_code == 204
+
+
+async def test_cannot_suspend_last_super_admin(client: AsyncClient, auth_headers) -> None:
+    me = await client.get("/api/v1/users/me", headers=auth_headers)
+    self_id = me.json()["user_id"]
+
+    response = await client.post(f"/api/v1/users/{self_id}/suspend", headers=auth_headers)
+    assert response.status_code == 400
+    assert "آخر" in response.json()["detail"]
+
+
+async def test_can_suspend_super_admin_when_another_exists(
+    client: AsyncClient, auth_headers
+) -> None:
+    second_id = await _create_second_super_admin(client, auth_headers, username="super_admin_3")
+
+    response = await client.post(f"/api/v1/users/{second_id}/suspend", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "suspended"
+
+
+async def test_cannot_change_role_of_last_super_admin(client: AsyncClient, auth_headers) -> None:
+    me = await client.get("/api/v1/users/me", headers=auth_headers)
+    self_id = me.json()["user_id"]
+
+    response = await client.patch(
+        f"/api/v1/users/{self_id}", json={"role": "admin"}, headers=auth_headers
+    )
+    assert response.status_code == 400
+    assert "آخر" in response.json()["detail"]
