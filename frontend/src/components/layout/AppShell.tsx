@@ -8,7 +8,7 @@ export function AppShell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   return (
-    <div className="flex min-h-svh bg-bg-app lg:flex-row-reverse">
+    <div className="flex min-h-svh bg-bg-app">
       <Sidebar mobileOpen={mobileNavOpen} onCloseMobile={() => setMobileNavOpen(false)} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar onOpenMobileNav={() => setMobileNavOpen(true)} />
