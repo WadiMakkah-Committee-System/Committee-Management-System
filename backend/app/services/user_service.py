@@ -21,6 +21,7 @@ import uuid
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password
 from app.models.user import User, UserRole, UserStatus
@@ -39,7 +40,7 @@ async def create_user(
     password: str,
     role: UserRole,
     dep_id: uuid.UUID | None,
-) -> User:
+) -> User | None:
     """
     إنشاء مستخدم جديد. يرفع ValueError إذا كان username أو email مستخدمًا
     مسبقًا لحساب نشط (غير محذوف).
@@ -80,15 +81,18 @@ async def create_user(
     )
 
     await db.commit()
-    await db.refresh(user)
-    return user
+    return await get_user(db, user.user_id)
 
 
 async def list_users(
     db: AsyncSession, *, dep_id: uuid.UUID | None = None
 ) -> list[User]:
     """عرض المستخدمين النشطين (غير المحذوفين)، مع تصفية اختيارية حسب الإدارة."""
-    stmt = select(User).where(User.deleted_at.is_(None))
+    stmt = (
+        select(User)
+        .options(selectinload(User.department))
+        .where(User.deleted_at.is_(None))
+    )
     if dep_id is not None:
         stmt = stmt.where(User.dep_id == dep_id)
     result = await db.execute(stmt.order_by(User.created_at.desc()))
@@ -96,9 +100,15 @@ async def list_users(
 
 
 async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
-    """جلب مستخدم واحد (النشط فقط) عبر معرّفه."""
+    """
+    جلب مستخدم واحد (النشط فقط) عبر معرّفه، مع تحميل بيانات إدارته
+    (selectinload) في نفس الاستعلام — عشان UserOut يقدر يُرجع اسم الإدارة
+    مباشرة بدون الحاجة لطلب API منفصل لصفحة الإدارات.
+    """
     result = await db.execute(
-        select(User).where(User.user_id == user_id, User.deleted_at.is_(None))
+        select(User)
+        .options(selectinload(User.department))
+        .where(User.user_id == user_id, User.deleted_at.is_(None))
     )
     return result.scalar_one_or_none()
 
@@ -163,8 +173,7 @@ async def update_user(
     )
 
     await db.commit()
-    await db.refresh(user)
-    return user
+    return await get_user(db, user.user_id)
 
 
 async def soft_delete_user(
@@ -215,5 +224,4 @@ async def set_user_status(
     )
 
     await db.commit()
-    await db.refresh(user)
-    return user
+    return await get_user(db, user.user_id)

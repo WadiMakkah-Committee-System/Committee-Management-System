@@ -55,23 +55,17 @@ async def create_department(
     return department
 
 
-async def list_departments(
-    db: AsyncSession, *, dep_id: uuid.UUID | None = None
-) -> list[Department]:
+async def list_departments(db: AsyncSession) -> list[Department]:
     """
-    عرض الإدارات النشطة (غير المحذوفة).
+    عرض كل الإدارات النشطة (غير المحذوفة).
 
-    - dep_id=None: كل الإدارات — يُستخدم فقط لـ super_admin (القرار الموثّق:
-      "اللي يبان عنده كل الإدارات هو super_admin فقط").
-    - dep_id محدد: تُرجع إدارة واحدة ضمن قائمة (أو قائمة فارغة إذا كانت
-      محذوفة/غير موجودة) — يُستخدم لبقية الأدوار، كل مستخدم يشوف إدارته فقط.
-      فرض هذا القيد (تحديد dep_id تبع من هو المستخدم الحالي) مسؤولية طبقة
-      الـ API (RBAC)، وليس هذه الدالة.
+    ملاحظة: هذا الـ endpoint بالكامل مقصور على super_admin (قرار موثّق) —
+    بقية الأدوار يشوفون إدارتهم عبر بيانات حسابهم مباشرة (GET /users/me)،
+    وليس عبر هذه الدالة، فلا حاجة لتصفية حسب dep_id هنا.
     """
-    stmt = select(Department).where(Department.deleted_at.is_(None))
-    if dep_id is not None:
-        stmt = stmt.where(Department.dep_id == dep_id)
-    result = await db.execute(stmt.order_by(Department.name))
+    result = await db.execute(
+        select(Department).where(Department.deleted_at.is_(None)).order_by(Department.name)
+    )
     return list(result.scalars().all())
 
 

@@ -160,3 +160,57 @@ async def test_non_super_admin_cannot_manage_users(client: AsyncClient, auth_hea
 
     response = await client.get("/api/v1/users", headers=admin_headers)
     assert response.status_code == 403
+
+
+async def test_me_returns_own_profile_with_embedded_department(
+    client: AsyncClient, auth_headers
+) -> None:
+    """
+    GET /users/me متاح لأي مستخدم مسجّل دخول (بلا قيد دور)، ويرجع بيانات
+    إدارته كاملة (اسم + وصف) مضمَّنة مباشرة — بدل الحاجة لطلب منفصل لصفحة
+    الإدارات (المقصورة على super_admin أصلًا).
+    """
+    dep_id = await _create_department(client, auth_headers, "إدارة الأعضاء")
+
+    await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "منى",
+            "middle_name": "صالح",
+            "last_name": "الحربي",
+            "username": "mona_h",
+            "email": "mona@example.com",
+            "password": "StrongPass1",
+            "role": "admin",
+            "dep_id": dep_id,
+        },
+        headers=auth_headers,
+    )
+    login = await client.post(
+        "/api/v1/auth/login", json={"username": "mona_h", "password": "StrongPass1"}
+    )
+    member_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    me = await client.get("/api/v1/users/me", headers=member_headers)
+    assert me.status_code == 200
+    body = me.json()
+    assert body["username"] == "mona_h"
+    assert body["dep_id"] == dep_id
+    assert body["department"]["dep_id"] == dep_id
+    assert body["department"]["name"] == "إدارة الأعضاء"
+
+
+async def test_me_requires_authentication(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/users/me")
+    assert response.status_code == 401
+
+
+async def test_me_for_super_admin_without_department_returns_null_department(
+    client: AsyncClient, auth_headers
+) -> None:
+    """super_admin عادة بدون dep_id — يجب أن يرجع department=None بدل خطأ."""
+    me = await client.get("/api/v1/users/me", headers=auth_headers)
+    assert me.status_code == 200
+    body = me.json()
+    assert body["dep_id"] is None
+    assert body["department"] is None

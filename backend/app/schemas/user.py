@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.core.security import validate_password_policy
 from app.models.user import UserRole, UserStatus
+from app.schemas.department import DepartmentOut
 
 
 class UserCreate(BaseModel):
@@ -53,6 +54,13 @@ class UserUpdate(BaseModel):
 
 
 class UserOut(BaseModel):
+    """
+    شكل بيانات المستخدم المُرجَعة للعميل — تتضمّن بيانات إدارته كاملة
+    (اسم + وصف) مضمَّنة مباشرة (department)، وليس مجرد dep_id، لتجنّب
+    الحاجة لطلب منفصل لصفحة الإدارات فقط لمعرفة اسمها (قرار موثّق: بيانات
+    الإدارة تظهر كجزء من بيانات المستخدم نفسه).
+    """
+
     model_config = ConfigDict(from_attributes=True)
 
     user_id: uuid.UUID
@@ -63,6 +71,7 @@ class UserOut(BaseModel):
     email: str
     role: UserRole
     dep_id: uuid.UUID | None
+    department: DepartmentOut | None = None
     status: UserStatus
     must_change_password: bool
     last_login_at: datetime | None

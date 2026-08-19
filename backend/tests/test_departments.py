@@ -109,35 +109,27 @@ async def test_super_admin_sees_all_departments_in_list(
     assert len(listing.json()) == 2
 
 
-async def test_non_super_admin_sees_only_own_department_in_list(
-    client: AsyncClient, auth_headers
-) -> None:
-    own_dep_id = await _create_department(client, auth_headers, "إدارة الموظف")
-    await _create_department(client, auth_headers, "إدارة أخرى لا يشوفها")
-
+async def test_non_super_admin_cannot_list_departments(client: AsyncClient, auth_headers) -> None:
+    """
+    قرار موثّق: endpoint الإدارات بالكامل مقصور على super_admin. بقية
+    الأدوار يشوفون إدارتهم عبر GET /users/me بدل هذا المسار.
+    """
+    dep_id = await _create_department(client, auth_headers, "إدارة الموظف")
     member_headers = await _create_admin_in_department(
-        client, auth_headers, username="member_dep_view", dep_id=own_dep_id
+        client, auth_headers, username="member_dep_forbidden_list", dep_id=dep_id
     )
 
     listing = await client.get("/api/v1/departments", headers=member_headers)
-    assert listing.status_code == 200
-    body = listing.json()
-    assert len(body) == 1
-    assert body[0]["dep_id"] == own_dep_id
+    assert listing.status_code == 403
 
 
-async def test_non_super_admin_cannot_view_other_department_by_id(
+async def test_non_super_admin_cannot_get_department_by_id(
     client: AsyncClient, auth_headers
 ) -> None:
-    own_dep_id = await _create_department(client, auth_headers, "إدارة العضو")
-    other_dep_id = await _create_department(client, auth_headers, "إدارة أخرى")
-
+    dep_id = await _create_department(client, auth_headers, "إدارة الموظف الثانية")
     member_headers = await _create_admin_in_department(
-        client, auth_headers, username="member_dep_forbidden", dep_id=own_dep_id
+        client, auth_headers, username="member_dep_forbidden_get", dep_id=dep_id
     )
 
-    own = await client.get(f"/api/v1/departments/{own_dep_id}", headers=member_headers)
-    assert own.status_code == 200
-
-    other = await client.get(f"/api/v1/departments/{other_dep_id}", headers=member_headers)
-    assert other.status_code == 403
+    response = await client.get(f"/api/v1/departments/{dep_id}", headers=member_headers)
+    assert response.status_code == 403
