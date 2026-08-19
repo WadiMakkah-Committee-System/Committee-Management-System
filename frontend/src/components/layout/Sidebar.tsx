@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
+import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
 
 interface NavItem {
   label: string
@@ -56,10 +57,8 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
           mobileOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0',
         )}
       >
-        <div className="flex h-16 items-center gap-2.5 px-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-sm bg-brand-primary text-sm font-bold text-white">
-            وم
-          </div>
+        <div className="flex h-20 items-center gap-2.5 px-5">
+          <img src={wadiMakkahMark} alt="شعار وادي مكة" className="h-9 w-auto shrink-0" />
           <div className="leading-tight">
             <p className="text-sm font-bold text-white">وادي مكة</p>
             <p className="text-[11px] text-white/50">إدارة اللجان والاجتماعات</p>

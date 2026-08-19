@@ -12,6 +12,7 @@ import { useAuthStore } from '@/store/authStore'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { extractErrorMessage } from '@/lib/utils'
+import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
 
 const schema = z.object({
   username: z.string().min(1, 'اسم المستخدم مطلوب'),
@@ -53,9 +54,7 @@ export function LoginPage() {
         className="w-full max-w-md"
       >
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-md bg-brand-primary text-xl font-bold text-white shadow-lg shadow-brand-primary/20">
-            وم
-          </div>
+          <img src={wadiMakkahMark} alt="شعار وادي مكة" className="h-16 w-auto" />
           <div>
             <h1 className="text-xl font-bold text-text-primary">نظام إدارة اللجان والاجتماعات</h1>
             <p className="mt-1 text-sm text-text-muted">شركة وادي مكة للتقنية</p>
