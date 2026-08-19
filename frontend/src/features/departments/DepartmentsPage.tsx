@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Building2, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Building2, FileText, Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   useCreateDepartment,
   useDeleteDepartment,
@@ -104,8 +104,14 @@ export function DepartmentsPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="إجمالي الإدارات" value={departments?.length ?? 0} icon={<Building2 size={20} />} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="إجمالي الإدارات" value={departments?.length ?? 0} icon={<Building2 size={20} />} tone="purple" />
+        <StatCard
+          label="إدارات بوصف مكتمل"
+          value={departments?.filter((d) => !!d.description).length ?? 0}
+          icon={<FileText size={20} />}
+          tone="teal"
+        />
       </div>
 
       <SearchInput value={search} onChange={setSearch} placeholder="ابحث باسم الإدارة أو الوصف..." />

@@ -10,6 +10,7 @@ import {
   Ban,
   RotateCcw,
   Mail,
+  Layers,
 } from 'lucide-react'
 import {
   useCreateUser,
@@ -85,11 +86,12 @@ export function UsersPage() {
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const stats = useMemo(() => {
-    if (!users) return { total: 0, active: 0, suspended: 0 }
+    if (!users) return { total: 0, active: 0, suspended: 0, roles: 0 }
     return {
       total: users.length,
       active: users.filter((u) => u.status === 'active').length,
       suspended: users.filter((u) => u.status === 'suspended').length,
+      roles: new Set(users.map((u) => u.role)).size,
     }
   }, [users])
 
@@ -191,10 +193,11 @@ export function UsersPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="إجمالي المستخدمين" value={stats.total} icon={<UsersIcon size={20} />} />
-        <StatCard label="حسابات نشطة" value={stats.active} icon={<ShieldCheck size={20} />} tone="success" />
-        <StatCard label="حسابات موقوفة" value={stats.suspended} icon={<PauseCircle size={20} />} tone="warning" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="إجمالي المستخدمين" value={stats.total} icon={<UsersIcon size={20} />} tone="brand" />
+        <StatCard label="حسابات نشطة" value={stats.active} icon={<ShieldCheck size={20} />} tone="teal" />
+        <StatCard label="حسابات موقوفة" value={stats.suspended} icon={<PauseCircle size={20} />} tone="orange" />
+        <StatCard label="الأدوار المستخدمة" value={stats.roles} icon={<Layers size={20} />} tone="purple" />
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
