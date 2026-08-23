@@ -16,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
-from app.schemas.department import DepartmentCreate, DepartmentDetailOut, DepartmentOut, DepartmentUpdate
+from app.schemas.department import (
+    DepartmentCreate,
+    DepartmentDetailOut,
+    DepartmentManagerOut,
+    DepartmentOut,
+    DepartmentUpdate,
+)
 from app.schemas.user import UserOut
 from app.services import department_service
 
@@ -37,7 +43,9 @@ async def create_department(
             db,
             actor_user_id=current_user.user_id,
             name=payload.name,
+            code=payload.code,
             description=payload.description,
+            manager_user_id=payload.manager_user_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -71,7 +79,9 @@ async def get_department(dep_id: uuid.UUID, db: AsyncSession = Depends(get_db)) 
     return DepartmentDetailOut(
         dep_id=department.dep_id,
         name=department.name,
+        code=department.code,
         description=department.description,
+        manager=DepartmentManagerOut.model_validate(department.manager) if department.manager else None,
         created_at=department.created_at,
         updated_at=department.updated_at,
         member_count=detail["member_count"],
@@ -90,13 +100,18 @@ async def update_department(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DepartmentOut:
-    department = await department_service.update_department(
-        db,
-        actor_user_id=current_user.user_id,
-        dep_id=dep_id,
-        name=payload.name,
-        description=payload.description,
-    )
+    try:
+        department = await department_service.update_department(
+            db,
+            actor_user_id=current_user.user_id,
+            dep_id=dep_id,
+            name=payload.name,
+            code=payload.code,
+            description=payload.description,
+            manager_user_id=payload.manager_user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if department is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="الإدارة غير موجودة")
     return DepartmentOut.model_validate(department)

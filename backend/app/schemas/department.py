@@ -15,14 +15,30 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class DepartmentManagerOut(BaseModel):
+    """شكل مختصر لبيانات المسؤول عن الإدارة — يُستخدم مضمَّنًا داخل DepartmentOut."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: uuid.UUID
+    first_name: str
+    middle_name: str
+    last_name: str
+    email: str
+
+
 class DepartmentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=150)
+    code: str = Field(min_length=1, max_length=20)
     description: str | None = None
+    manager_user_id: uuid.UUID
 
 
 class DepartmentUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=150)
+    code: str | None = Field(default=None, min_length=1, max_length=20)
     description: str | None = None
+    manager_user_id: uuid.UUID | None = None
 
 
 class DepartmentOut(BaseModel):
@@ -30,7 +46,9 @@ class DepartmentOut(BaseModel):
 
     dep_id: uuid.UUID
     name: str
+    code: str | None
     description: str | None
+    manager: DepartmentManagerOut | None = None
     created_at: datetime
     updated_at: datetime
 

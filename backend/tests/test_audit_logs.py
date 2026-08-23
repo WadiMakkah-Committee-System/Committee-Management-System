@@ -2,10 +2,21 @@
 
 from httpx import AsyncClient
 
+from app.models.user import User
 
-async def test_audit_log_records_department_creation(client: AsyncClient, auth_headers) -> None:
+
+async def test_audit_log_records_department_creation(
+    client: AsyncClient, auth_headers, super_admin_user: User
+) -> None:
     await client.post(
-        "/api/v1/departments", json={"name": "إدارة السجل", "description": None}, headers=auth_headers
+        "/api/v1/departments",
+        json={
+            "name": "إدارة السجل",
+            "code": "LOG",
+            "description": None,
+            "manager_user_id": str(super_admin_user.user_id),
+        },
+        headers=auth_headers,
     )
 
     response = await client.get("/api/v1/audit-logs?target_type=department", headers=auth_headers)
