@@ -2,18 +2,33 @@
 
 from httpx import AsyncClient
 
+from app.models.user import User
 
-async def _create_department(client: AsyncClient, auth_headers, name: str = "إدارة اختبار") -> str:
+
+async def _create_department(
+    client: AsyncClient,
+    auth_headers,
+    super_admin_user: User,
+    name: str = "إدارة اختبار",
+    code: str = "TST",
+) -> str:
     response = await client.post(
-        "/api/v1/departments", json={"name": name, "description": None}, headers=auth_headers
+        "/api/v1/departments",
+        json={
+            "name": name,
+            "code": code,
+            "description": None,
+            "manager_user_id": str(super_admin_user.user_id),
+        },
+        headers=auth_headers,
     )
     return response.json()["dep_id"]
 
 
 async def test_create_user_success(
-    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:
-    dep_id = await _create_department(client, auth_headers)
+    dep_id = await _create_department(client, auth_headers, super_admin_user)
 
     response = await client.post(
         "/api/v1/users",
@@ -173,14 +188,14 @@ async def test_non_super_admin_cannot_manage_users(
 
 
 async def test_me_returns_own_profile_with_embedded_department(
-    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:
     """
     GET /users/me متاح لأي مستخدم مسجّل دخول (بلا قيد دور)، ويرجع بيانات
     إدارته كاملة (اسم + وصف) مضمَّنة مباشرة — بدل الحاجة لطلب منفصل لصفحة
     الإدارات (المقصورة على super_admin أصلًا).
     """
-    dep_id = await _create_department(client, auth_headers, "إدارة الأعضاء")
+    dep_id = await _create_department(client, auth_headers, super_admin_user, "إدارة الأعضاء", "MEM")
 
     await client.post(
         "/api/v1/users",

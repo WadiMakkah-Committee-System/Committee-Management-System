@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password
+from app.models.department import Department
 from app.models.role import Role
 from app.models.user import User, UserStatus
 from app.services import audit_service
@@ -121,7 +122,7 @@ async def list_users(
     """عرض المستخدمين النشطين (غير المحذوفين)، مع تصفية اختيارية حسب الإدارة."""
     stmt = (
         select(User)
-        .options(selectinload(User.department))
+        .options(selectinload(User.department).selectinload(Department.manager))
         .where(User.deleted_at.is_(None))
     )
     if dep_id is not None:
@@ -138,7 +139,7 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
     """
     result = await db.execute(
         select(User)
-        .options(selectinload(User.department))
+        .options(selectinload(User.department).selectinload(Department.manager))
         .where(User.user_id == user_id, User.deleted_at.is_(None))
     )
     return result.scalar_one_or_none()

@@ -78,7 +78,9 @@ class User(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    department: Mapped["Department | None"] = relationship(back_populates="users")  # noqa: F821
+    department: Mapped["Department | None"] = relationship(  # noqa: F821
+        back_populates="users", foreign_keys=[dep_id]
+    )
     role: Mapped["Role"] = relationship(back_populates="users", lazy="selectin")  # noqa: F821
 
     @property
