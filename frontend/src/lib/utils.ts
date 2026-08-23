@@ -49,6 +49,26 @@ export const PERMISSION_CATEGORY_ORDER = [
   'minutes',
 ]
 
+/**
+ * درجات فاتحة جدًا من ألوان هوية الشركة — تُستخدم كخلفية للبطاقات (بطاقات
+ * الإدارات وبطاقات الأدوار والصلاحيات) لإضفاء تمييز بصري خفيف بين البطاقات
+ * دون طغيان اللون، حسب طلب العمل. الشفافية منخفضة جدًا (٦٪) عمدًا لتبقى
+ * الخلفية "فاتحة جدًا" في كلا الوضعين (فاتح/داكن).
+ */
+const CARD_TONE_CLASSES = [
+  '!bg-brand-primary/5 !border-brand-primary/15',
+  '!bg-brand-teal/5 !border-brand-teal/15',
+  '!bg-brand-purple/5 !border-brand-purple/15',
+  '!bg-brand-orange/5 !border-brand-orange/15',
+  '!bg-brand-dark-blue/5 !border-brand-dark-blue/15',
+  '!bg-brand-lime/5 !border-brand-lime/15',
+] as const
+
+/** ترجع تدرّج لون بطاقة ثابت لكل بطاقة حسب ترتيبها (تدوير على القائمة أعلاه). */
+export function cardToneClass(index: number): string {
+  return CARD_TONE_CLASSES[index % CARD_TONE_CLASSES.length]
+}
+
 /** يستخرج رسالة خطأ عربية واضحة من أي شكل استجابة خطأ محتمل من الـ API. */
 export function extractErrorMessage(error: unknown): string {
   const fallback = 'حدث خطأ غير متوقع، حاول مرة أخرى'

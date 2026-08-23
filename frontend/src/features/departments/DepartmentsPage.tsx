@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Building2, FileText, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Building2, FileText, Pencil, Plus, Trash2, UserRound } from 'lucide-react'
 import {
   useCreateDepartment,
   useDeleteDepartment,
@@ -19,7 +19,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { StatCard } from '@/components/ui/StatCard'
 import { useToast } from '@/components/ui/Toast'
 import { DepartmentFormModal } from './DepartmentFormModal'
-import { extractErrorMessage, formatDate } from '@/lib/utils'
+import { cardToneClass, cn, extractErrorMessage, formatDate } from '@/lib/utils'
 import type { Department } from '@/types'
 
 export function DepartmentsPage() {
@@ -58,7 +58,7 @@ export function DepartmentsPage() {
     setFormOpen(true)
   }
 
-  function handleSubmit(values: { name: string; description: string | null }) {
+  function handleSubmit(values: { name: string; code: string; description: string | null; manager_user_id: string }) {
     setFormError(null)
     if (editingDept) {
       updateMutation.mutate(
@@ -150,7 +150,10 @@ export function DepartmentsPage() {
             >
               <Card
                 onClick={() => navigate(`/departments/${dept.dep_id}`)}
-                className="flex h-full cursor-pointer flex-col gap-3 transition-shadow hover:shadow-md"
+                className={cn(
+                  'flex h-full cursor-pointer flex-col gap-3 transition-shadow hover:shadow-md',
+                  cardToneClass(i),
+                )}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-brand-primary/10 text-brand-primary">
@@ -174,11 +177,24 @@ export function DepartmentsPage() {
                   </div>
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-text-primary">{dept.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-text-primary">{dept.name}</h3>
+                    {dept.code && (
+                      <span className="rounded-xs bg-bg-elevated px-1.5 py-0.5 text-[10px] font-semibold text-text-muted">
+                        {dept.code}
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-1 line-clamp-2 text-sm text-text-muted">
                     {dept.description || 'لا يوجد وصف'}
                   </p>
                 </div>
+                {dept.manager && (
+                  <p className="flex items-center gap-1.5 text-xs text-text-secondary">
+                    <UserRound size={12} />
+                    {dept.manager.first_name} {dept.manager.last_name}
+                  </p>
+                )}
                 <p className="mt-auto text-xs text-text-muted">أُنشئت في {formatDate(dept.created_at)}</p>
               </Card>
             </motion.div>
