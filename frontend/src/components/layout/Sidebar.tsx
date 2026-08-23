@@ -21,15 +21,16 @@ interface NavItem {
   label: string
   icon: LucideIcon
   path?: string
-  superAdminOnly?: boolean
+  /** يكفي امتلاك واحدة من هذه الصلاحيات (أو is_super_admin) لإظهار العنصر. */
+  requiredPermission?: string[]
   comingSoon?: boolean
 }
 
 /** ترتيب التنقل الموثّق في §15 — العناصر غير المبنية بعد تظهر معطّلة ("قريبًا") بدل إخفائها. */
 const NAV_ITEMS: NavItem[] = [
   { label: 'لوحة التحكم', icon: LayoutDashboard, comingSoon: true },
-  { label: 'المستخدمون', icon: Users, path: '/users', superAdminOnly: true },
-  { label: 'الإدارات', icon: Building2, path: '/departments', superAdminOnly: true },
+  { label: 'المستخدمون', icon: Users, path: '/users', requiredPermission: ['users.view'] },
+  { label: 'الإدارات', icon: Building2, path: '/departments', requiredPermission: ['departments.view'] },
   { label: 'اللجان', icon: Users2, comingSoon: true },
   { label: 'الاجتماعات', icon: CalendarDays, comingSoon: true },
   { label: 'المهام', icon: ListChecks, comingSoon: true },
@@ -41,10 +42,16 @@ const NAV_ITEMS: NavItem[] = [
 ]
 
 export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; onCloseMobile: () => void }) {
-  const role = useAuthStore((s) => s.user?.role)
-  const isSuperAdmin = role === 'super_admin'
+  const user = useAuthStore((s) => s.user)
+  const isSuperAdmin = !!user?.role.is_super_admin
+  const permissions = user?.permissions ?? []
 
-  const items = NAV_ITEMS.filter((item) => !item.superAdminOnly || isSuperAdmin)
+  const items = NAV_ITEMS.filter(
+    (item) =>
+      !item.requiredPermission ||
+      isSuperAdmin ||
+      item.requiredPermission.some((code) => permissions.includes(code)),
+  )
 
   return (
     <>

@@ -21,6 +21,7 @@ import {
   useUsers,
 } from '@/hooks/useUsers'
 import { useDepartments } from '@/hooks/useDepartments'
+import { useRoles } from '@/hooks/useRoles'
 import { Button } from '@/components/ui/Button'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { Select } from '@/components/ui/Select'
@@ -34,7 +35,8 @@ import { Avatar } from '@/components/ui/Avatar'
 import { UserStatusBadge, RoleBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { UserFormModal } from './UserFormModal'
-import { extractErrorMessage, ROLE_LABELS, ROLE_OPTIONS } from '@/lib/utils'
+import { MemberDetailModal } from './MemberDetailModal'
+import { extractErrorMessage, roleLabel } from '@/lib/utils'
 import type { User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
 const PAGE_SIZE = 10
@@ -45,9 +47,10 @@ type PendingAction =
   | { type: 'reactivate'; user: User }
   | null
 
-export function UsersPage() {
+export function UsersTab() {
   const { data: users, isLoading, isError, refetch } = useUsers()
   const { data: departments } = useDepartments()
+  const { data: roles } = useRoles()
   const createMutation = useCreateUser()
   const updateMutation = useUpdateUser()
   const deleteMutation = useDeleteUser()
@@ -66,6 +69,9 @@ export function UsersPage() {
 
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [detailUserId, setDetailUserId] = useState<string | null>(null)
+
+  const roleOptions = (roles ?? []).map((r) => ({ value: r.role_id, label: roleLabel(r) }))
 
   const filtered = useMemo(() => {
     if (!users) return []
@@ -76,7 +82,7 @@ export function UsersPage() {
         `${u.first_name} ${u.middle_name} ${u.last_name}`.toLowerCase().includes(q) ||
         u.username.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q)
-      const matchesRole = !roleFilter || u.role === roleFilter
+      const matchesRole = !roleFilter || u.role.role_id === roleFilter
       const matchesStatus = !statusFilter || u.status === statusFilter
       return matchesQuery && matchesRole && matchesStatus
     })
@@ -91,7 +97,7 @@ export function UsersPage() {
       total: users.length,
       active: users.filter((u) => u.status === 'active').length,
       suspended: users.filter((u) => u.status === 'suspended').length,
-      roles: new Set(users.map((u) => u.role)).size,
+      roles: new Set(users.map((u) => u.role.role_id)).size,
     }
   }, [users])
 
@@ -185,7 +191,7 @@ export function UsersPage() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-xl font-bold text-text-primary">المستخدمون</h1>
+          <h2 className="text-base font-bold text-text-primary">المستخدمون</h2>
           <p className="mt-1 text-sm text-text-muted">إدارة حسابات المستخدمين وأدوارهم في النظام</p>
         </div>
         <Button icon={<Plus size={16} />} onClick={openCreateForm}>
@@ -212,7 +218,7 @@ export function UsersPage() {
         <div className="grid grid-cols-2 gap-3 sm:w-auto sm:min-w-[340px] sm:grid-cols-2">
           <Select
             aria-label="تصفية حسب الدور"
-            options={ROLE_OPTIONS}
+            options={roleOptions}
             placeholder="كل الأدوار"
             value={roleFilter}
             onChange={(e) => {
@@ -279,7 +285,8 @@ export function UsersPage() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-                    className="border-b border-border-default transition-colors last:border-0 hover:bg-table-hover"
+                    onClick={() => setDetailUserId(user.user_id)}
+                    className="cursor-pointer border-b border-border-default transition-colors last:border-0 hover:bg-table-hover"
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -296,13 +303,13 @@ export function UsersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <RoleBadge role={user.role} label={ROLE_LABELS[user.role]} />
+                      <RoleBadge role={user.role} />
                     </td>
                     <td className="px-4 py-3 text-text-secondary">{user.department?.name ?? '—'}</td>
                     <td className="px-4 py-3">
                       <UserStatusBadge status={user.status} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end">
                         <ActionMenu
                           items={[
@@ -392,6 +399,18 @@ export function UsersPage() {
         variant={pendingAction ? actionCopy[pendingAction.type].variant : 'danger'}
         loading={actionLoading}
         errorMessage={actionError}
+      />
+
+      <MemberDetailModal
+        userId={detailUserId}
+        onClose={() => setDetailUserId(null)}
+        onEdit={(userId) => {
+          const target = users?.find((u) => u.user_id === userId)
+          if (target) {
+            setDetailUserId(null)
+            openEditForm(target)
+          }
+        }}
       />
     </div>
   )

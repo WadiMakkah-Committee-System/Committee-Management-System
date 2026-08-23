@@ -7,7 +7,7 @@ import { useMutation } from '@tanstack/react-query'
 import * as authApi from '@/api/auth'
 import { Avatar } from '@/components/ui/Avatar'
 import { ThemeToggle } from './ThemeToggle'
-import { ROLE_LABELS } from '@/lib/utils'
+import { roleLabel } from '@/lib/utils'
 
 export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const user = useAuthStore((s) => s.user)
@@ -60,7 +60,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 {user.first_name} {user.last_name}
               </span>
               <span className="block text-xs leading-tight text-text-muted">
-                {ROLE_LABELS[user.role]}
+                {roleLabel(user.role)}
               </span>
             </span>
             <ChevronDown size={14} className="text-text-muted" />

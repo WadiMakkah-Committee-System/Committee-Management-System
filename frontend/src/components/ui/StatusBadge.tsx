@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { CheckCircle2, PauseCircle, ShieldCheck, User2, Crown, Briefcase } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import type { UserRole, UserStatus } from '@/types'
+import { CheckCircle2, PauseCircle, ShieldCheck, User2, Crown, Briefcase, Sparkles } from 'lucide-react'
+import { cn, roleLabel } from '@/lib/utils'
+import type { RoleSummary, SystemRoleName, UserStatus } from '@/types'
 
 type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
@@ -39,7 +39,7 @@ export function UserStatusBadge({ status }: { status: UserStatus }) {
   )
 }
 
-const ROLE_TONE: Record<UserRole, BadgeTone> = {
+const SYSTEM_ROLE_TONE: Record<SystemRoleName, BadgeTone> = {
   super_admin: 'danger',
   admin: 'info',
   executive_president: 'warning',
@@ -47,7 +47,7 @@ const ROLE_TONE: Record<UserRole, BadgeTone> = {
   executive_office_secretary: 'neutral',
 }
 
-const ROLE_ICON: Record<UserRole, ReactNode> = {
+const SYSTEM_ROLE_ICON: Record<SystemRoleName, ReactNode> = {
   super_admin: <ShieldCheck size={13} />,
   admin: <User2 size={13} />,
   executive_president: <Crown size={13} />,
@@ -55,10 +55,13 @@ const ROLE_ICON: Record<UserRole, ReactNode> = {
   executive_office_secretary: <Briefcase size={13} />,
 }
 
-export function RoleBadge({ role, label }: { role: UserRole; label: string }) {
+/** شارة الدور — تدعم الأدوار النظامية (ألوان/أيقونات ثابتة) والمخصَّصة (لون محايد + أيقونة عامة). */
+export function RoleBadge({ role }: { role: RoleSummary }) {
+  const tone = SYSTEM_ROLE_TONE[role.name as SystemRoleName] ?? 'info'
+  const icon = SYSTEM_ROLE_ICON[role.name as SystemRoleName] ?? <Sparkles size={13} />
   return (
-    <Badge tone={ROLE_TONE[role]} icon={ROLE_ICON[role]}>
-      {label}
+    <Badge tone={tone} icon={icon}>
+      {roleLabel(role)}
     </Badge>
   )
 }

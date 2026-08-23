@@ -1,18 +1,18 @@
 import { apiClient } from '@/lib/apiClient'
-import type { User, UserCreatePayload, UserUpdatePayload } from '@/types'
+import type { User, UserCreatePayload, UserDetail, UserUpdatePayload } from '@/types'
 
-export async function fetchMe(): Promise<User> {
-  const { data } = await apiClient.get<User>('/users/me')
+export async function fetchMe(): Promise<UserDetail> {
+  const { data } = await apiClient.get<UserDetail>('/users/me')
   return data
 }
 
-export async function fetchUsers(): Promise<User[]> {
-  const { data } = await apiClient.get<User[]>('/users')
+export async function fetchUsers(dep_id?: string): Promise<User[]> {
+  const { data } = await apiClient.get<User[]>('/users', { params: dep_id ? { dep_id } : undefined })
   return data
 }
 
-export async function fetchUser(userId: string): Promise<User> {
-  const { data } = await apiClient.get<User>(`/users/${userId}`)
+export async function fetchUser(userId: string): Promise<UserDetail> {
+  const { data } = await apiClient.get<UserDetail>(`/users/${userId}`)
   return data
 }
 

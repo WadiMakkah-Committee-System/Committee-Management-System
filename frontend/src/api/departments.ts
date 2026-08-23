@@ -1,8 +1,13 @@
 import { apiClient } from '@/lib/apiClient'
-import type { Department, DepartmentCreatePayload, DepartmentUpdatePayload } from '@/types'
+import type { Department, DepartmentCreatePayload, DepartmentDetail, DepartmentUpdatePayload } from '@/types'
 
 export async function fetchDepartments(): Promise<Department[]> {
   const { data } = await apiClient.get<Department[]>('/departments')
+  return data
+}
+
+export async function fetchDepartment(depId: string): Promise<DepartmentDetail> {
+  const { data } = await apiClient.get<DepartmentDetail>(`/departments/${depId}`)
   return data
 }
 

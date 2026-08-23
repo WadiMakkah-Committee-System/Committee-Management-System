@@ -1,12 +1,16 @@
-import type { ApiErrorShape, UserRole } from '@/types'
+import type { ApiErrorShape, RoleSummary, SystemRoleName } from '@/types'
 
 /** دمج أسماء classes بشرط تجاهل القيم الفارغة/false — بديل خفيف عن clsx للاستخدام الداخلي. */
 export function cn(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(' ')
 }
 
-/** أسماء الأدوار بالعربية — تُستخدم في الجداول والشارات وقوائم الاختيار. */
-export const ROLE_LABELS: Record<UserRole, string> = {
+/**
+ * أسماء الأدوار النظامية الخمسة بالعربية — للأدوار المخصَّصة (غير النظامية)
+ * الاسم نفسه عربي أصلًا (يُدخله Super Admin عند الإنشاء)، فلا حاجة لترجمته.
+ * استخدمي roleLabel() دائمًا بدل الوصول المباشر لهذا الكائن.
+ */
+const SYSTEM_ROLE_LABELS: Record<SystemRoleName, string> = {
   super_admin: 'سوبر أدمن',
   admin: 'مسؤول إدارة',
   executive_president: 'رئيس تنفيذي',
@@ -14,9 +18,36 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   executive_office_secretary: 'سكرتير المكتب التنفيذي',
 }
 
-export const ROLE_OPTIONS: { value: UserRole; label: string }[] = (
-  Object.keys(ROLE_LABELS) as UserRole[]
-).map((value) => ({ value, label: ROLE_LABELS[value] }))
+/** التسمية المعروضة لأي دور — نظامي أو مخصَّص — تُستخدم في الجداول والشارات. */
+export function roleLabel(role: Pick<RoleSummary, 'name'>): string {
+  return SYSTEM_ROLE_LABELS[role.name as SystemRoleName] ?? role.name
+}
+
+/** تسميات أقسام كتالوج الصلاحيات (تطابق category في backend/db/migrations/0006). */
+export const PERMISSION_CATEGORY_LABELS: Record<string, string> = {
+  departments: 'الإدارات',
+  users: 'المستخدمون',
+  committees: 'اللجان',
+  meetings: 'الاجتماعات',
+  tasks: 'المهام',
+  decisions: 'القرارات',
+  ai_items: 'البنود المستخرجة من الذكاء الاصطناعي',
+  documents: 'الوثائق',
+  minutes: 'المحاضر',
+}
+
+/** ترتيب عرض الأقسام في نموذج إنشاء/تعديل الدور — يطابق ترتيب طلب المتطلبات. */
+export const PERMISSION_CATEGORY_ORDER = [
+  'departments',
+  'users',
+  'committees',
+  'meetings',
+  'tasks',
+  'decisions',
+  'ai_items',
+  'documents',
+  'minutes',
+]
 
 /** يستخرج رسالة خطأ عربية واضحة من أي شكل استجابة خطأ محتمل من الـ API. */
 export function extractErrorMessage(error: unknown): string {

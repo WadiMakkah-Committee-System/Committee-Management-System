@@ -1,13 +1,15 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { User } from '@/types'
+import type { UserDetail } from '@/types'
 
 interface AuthState {
   accessToken: string | null
   refreshToken: string | null
-  user: User | null
+  /** بيانات المستخدم الحالي، بما فيها صلاحياته الفعلية (permissions) — تُستخدم
+   *  لإظهار/إخفاء عناصر التنقل والصفحات المقيّدة دون افتراض أدوار ثابتة. */
+  user: UserDetail | null
   setTokens: (accessToken: string, refreshToken: string) => void
-  setUser: (user: User) => void
+  setUser: (user: UserDetail) => void
   logout: () => void
 }
 
