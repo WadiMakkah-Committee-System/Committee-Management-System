@@ -11,7 +11,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { RoleFormModal } from './RoleFormModal'
-import { cn, extractErrorMessage, roleLabel } from '@/lib/utils'
+import { cardToneClass, cn, extractErrorMessage, roleLabel } from '@/lib/utils'
 import type { Role, RoleCreatePayload, RoleUpdatePayload } from '@/types'
 
 export function RolesPermissionsTab() {
@@ -119,7 +119,7 @@ export function RolesPermissionsTab() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
             >
-              <Card className="flex h-full flex-col gap-3 transition-shadow hover:shadow-md">
+              <Card className={cn('flex h-full flex-col gap-3 transition-shadow hover:shadow-md', cardToneClass(i))}>
                 <div className="flex items-start justify-between gap-2">
                   <div
                     className={cn(

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowRight, Building2, FileText, Mail, Plus, Users as UsersIcon } from 'lucide-react'
+import { ArrowRight, Building2, FileText, Mail, Plus, UserRound, Users as UsersIcon } from 'lucide-react'
 import { useDepartmentDetail } from '@/hooks/useDepartments'
 import { useCreateUser, useUpdateUser } from '@/hooks/useUsers'
 import { Card } from '@/components/ui/Card'
@@ -99,7 +99,14 @@ export function DepartmentDetailPage() {
             <ArrowRight size={18} />
           </button>
           <div>
-            <h1 className="text-xl font-bold text-text-primary">{detail.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-text-primary">{detail.name}</h1>
+              {detail.code && (
+                <span className="rounded-xs bg-bg-elevated px-1.5 py-0.5 text-[10px] font-semibold text-text-muted">
+                  {detail.code}
+                </span>
+              )}
+            </div>
             <p className="mt-1 text-sm text-text-muted">{detail.description || 'لا يوجد وصف'}</p>
           </div>
         </div>
@@ -108,8 +115,14 @@ export function DepartmentDetailPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard label="عدد الأعضاء" value={detail.member_count} icon={<UsersIcon size={20} />} tone="brand" />
+        <StatCard
+          label="المسؤول عن الإدارة"
+          value={detail.manager ? `${detail.manager.first_name} ${detail.manager.last_name}` : '—'}
+          icon={<UserRound size={20} />}
+          tone="orange"
+        />
         <StatCard
           label="أُنشئت في"
           value={formatDate(detail.created_at)}

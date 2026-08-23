@@ -55,10 +55,20 @@ export interface RoleUpdatePayload {
   permission_codes?: string[]
 }
 
+export interface DepartmentManager {
+  user_id: string
+  first_name: string
+  middle_name: string
+  last_name: string
+  email: string
+}
+
 export interface Department {
   dep_id: string
   name: string
+  code: string | null
   description: string | null
+  manager: DepartmentManager | null
   created_at: string
   updated_at: string
 }
@@ -112,12 +122,16 @@ export interface UserUpdatePayload {
 
 export interface DepartmentCreatePayload {
   name: string
+  code: string
   description: string | null
+  manager_user_id: string
 }
 
 export interface DepartmentUpdatePayload {
   name?: string
+  code?: string
   description?: string | null
+  manager_user_id?: string
 }
 
 export interface LoginPayload {
