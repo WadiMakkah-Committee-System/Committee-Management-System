@@ -12,7 +12,14 @@ Pydantic Schemas الخاصة بالأدوار والصلاحيات (Roles & Per
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+
+#: الأقسام التي يوجد لها بالفعل endpoint يتحقق من صلاحياتها فعليًا حاليًا.
+#: بقية الأقسام (اللجان، الاجتماعات...) موجودة في الكتالوج فقط تحضيرًا
+#: للمراحل القادمة — is_enforced تسمح للواجهة بعرضها كـ "قريبًا" بدل
+#: تكرار هذه القائمة يدويًا في كود الفرونت.
+ENFORCED_CATEGORIES = {"departments", "users"}
 
 
 class PermissionOut(BaseModel):
@@ -23,6 +30,16 @@ class PermissionOut(BaseModel):
     category: str
     label_ar: str
     sort_order: int
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def is_enforced(self) -> bool:
+        """
+        هل هذا القسم فيه فعليًا endpoint يتحقق من الصلاحية، أم مجرد بيانات
+        كتالوج تحضيرًا لمرحلة قادمة؟ تسمح للواجهة بعرض "قريبًا" بدون تكرار
+        قائمة الأقسام المفعّلة يدويًا في كود الفرونت.
+        """
+        return self.category in ENFORCED_CATEGORIES
 
 
 class RoleCreate(BaseModel):

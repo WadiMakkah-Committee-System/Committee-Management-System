@@ -21,6 +21,22 @@ async def test_permissions_catalog_has_all_categories(client: AsyncClient, auth_
     }
 
 
+async def test_permissions_catalog_marks_enforced_categories(
+    client: AsyncClient, auth_headers
+) -> None:
+    """
+    departments/users فقط عليها endpoints تتحقق منها فعليًا حاليًا — الحقل
+    is_enforced يسمح للواجهة بعرض بقية الأقسام كـ "قريبًا" بدون تكرار هذه
+    القائمة يدويًا في الفرونت.
+    """
+    response = await client.get("/api/v1/permissions", headers=auth_headers)
+    body = response.json()
+    enforced = {p["category"] for p in body if p["is_enforced"]}
+    not_enforced = {p["category"] for p in body if not p["is_enforced"]}
+    assert enforced == {"departments", "users"}
+    assert "committees" in not_enforced and "meetings" in not_enforced
+
+
 async def test_system_roles_seeded(client: AsyncClient, auth_headers) -> None:
     response = await client.get("/api/v1/roles", headers=auth_headers)
     assert response.status_code == 200
