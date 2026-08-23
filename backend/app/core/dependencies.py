@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.redis_client import is_session_valid, touch_session
 from app.core.security import InvalidTokenError, decode_token
 from app.db.session import get_db
-from app.models.user import User, UserRole, UserStatus
+from app.models.user import User, UserStatus
 from app.services import user_service
 
 # tokenUrl فقط للتوثيق التفاعلي (Swagger) — لا يُستخدم فعليًا كمصدر للتحقق
@@ -85,14 +85,23 @@ async def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-def require_roles(*allowed_roles: UserRole):
+def require_permission(*required_codes: str):
     """
-    مصنع Dependency لتقييد راوت بأدوار محددة. الدور يُقرأ من المستخدم الحالي
-    في قاعدة البيانات (عبر get_current_user)، وليس من التوكن مباشرة.
+    مصنع Dependency لتقييد راوت بصلاحية (أو أكثر) محددة من كتالوج الصلاحيات
+    الديناميكي — بدل قائمة أدوار ثابتة في الكود. الصلاحيات الفعلية للمستخدم
+    تُقرأ من دوره (current_user.role.permission_codes)، والذي بدوره يأتي من
+    قاعدة البيانات (عبر get_current_user)، وليس من التوكن مباشرة.
+
+    يكفي أن يملك المستخدم واحدة على الأقل من required_codes للسماح بالطلب.
+    دور super_admin (is_super_admin=True) يتجاوز أي فحص تلقائيًا — فهو
+    الدور الجذري الذي يملك كل الصلاحيات دائمًا حتى لو تغيّر الكتالوج لاحقًا.
     """
 
     async def _checker(current_user: CurrentUser) -> User:
-        if current_user.role not in allowed_roles:
+        if current_user.role.is_super_admin:
+            return current_user
+        user_codes = current_user.role.permission_codes
+        if not any(code in user_codes for code in required_codes):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="ليست لديك صلاحية للقيام بهذا الإجراء",
@@ -100,3 +109,19 @@ def require_roles(*allowed_roles: UserRole):
         return current_user
 
     return _checker
+
+
+async def require_super_admin(current_user: CurrentUser) -> User:
+    """
+    يقيّد راوت بـ super_admin حصرًا (وليس أي صلاحية أخرى) — تُستخدم فقط
+    لإدارة الأدوار والصلاحيات نفسها (roles.py)، لأن السماح لدور آخر بمنح
+    نفسه أو غيره صلاحيات إضافية يفتح ثغرة تصعيد صلاحيات (Privilege
+    Escalation). لاحقًا يمكن تحويلها لصلاحية قابلة للتفويض مثل بقية
+    الشاشات، لكن حاليًا تبقى محصورة بالدور الجذري فقط.
+    """
+    if not current_user.role.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ليست لديك صلاحية للقيام بهذا الإجراء",
+        )
+    return current_user

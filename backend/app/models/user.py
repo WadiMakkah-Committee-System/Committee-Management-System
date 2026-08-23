@@ -1,19 +1,18 @@
 """
 الهدف:
-نموذج SQLAlchemy ORM لجدول users — يطابق تمامًا بنية الجدول الحقيقي في
-db/migrations/0003_create_users.sql (تم التحقق عبر Supabase MCP list_tables
-على القاعدة الفعلية).
+نموذج SQLAlchemy ORM لجدول users — يطابق تمامًا بنية الجدول الحقيقي بعد
+db/migrations/0006_roles_permissions.sql (الدور أصبح role_id ديناميكيًا
+بدل عمود Enum ثابت).
 
 المسؤولية:
-تمثيل صف واحد من جدول users، بما في ذلك الأدوار العامة (user_role)، حالة
-الحساب (user_status)، وحقول الأمان (failed_login_attempts, locked_until,
-must_change_password).
+تمثيل صف واحد من جدول users، بما في ذلك الدور الديناميكي (role_id → جدول
+roles)، حالة الحساب (user_status)، وحقول الأمان (failed_login_attempts,
+locked_until, must_change_password).
 
 ملاحظات أمنية:
 - password_hash يُخزَّن كـ bcrypt hash فقط — لا يوجد أي حقل لكلمة مرور نصية.
-- الأدوار هنا (user_role) هي الأدوار العامة على مستوى النظام فقط. أدوار
-  اللجان (رئيس/عضو/مطلع/بديل) Scoped لكل لجنة وتُصمَّم لاحقًا مع جدول
-  اللجان — لا علاقة لها بهذا الحقل.
+- role_id يشير لجدول roles (قابل للإنشاء/التعديل من الواجهة) بدل Enum ثابت
+  في قاعدة البيانات — أي دور جديد لا يحتاج أي هجرة (migration) أو تعديل كود.
 """
 
 import enum
@@ -26,14 +25,6 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-
-
-class UserRole(str, enum.Enum):
-    super_admin = "super_admin"
-    admin = "admin"
-    executive_president = "executive_president"
-    executive_office_manager = "executive_office_manager"
-    executive_office_secretary = "executive_office_secretary"
 
 
 class UserStatus(str, enum.Enum):
@@ -56,8 +47,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    role: Mapped[UserRole] = mapped_column(
-        SAEnum(UserRole, name="user_role", native_enum=True), nullable=False
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("roles.role_id"), nullable=False
     )
     dep_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("departments.dep_id"), nullable=True
@@ -88,10 +79,15 @@ class User(Base):
     )
 
     department: Mapped["Department | None"] = relationship(back_populates="users")  # noqa: F821
+    role: Mapped["Role"] = relationship(back_populates="users", lazy="selectin")  # noqa: F821
 
     @property
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
+
+    @property
+    def is_super_admin(self) -> bool:
+        return self.role is not None and self.role.is_super_admin
 
     @property
     def full_name(self) -> str:

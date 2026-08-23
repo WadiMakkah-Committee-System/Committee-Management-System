@@ -18,8 +18,9 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.core.security import validate_password_policy
-from app.models.user import UserRole, UserStatus
+from app.models.user import UserStatus
 from app.schemas.department import DepartmentOut
+from app.schemas.role import RoleSummaryOut
 
 
 class UserCreate(BaseModel):
@@ -29,8 +30,9 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    role: UserRole
+    role_id: uuid.UUID
     dep_id: uuid.UUID | None = None
+    status: UserStatus = UserStatus.active
 
     @field_validator("password")
     @classmethod
@@ -49,7 +51,7 @@ class UserUpdate(BaseModel):
     middle_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     email: EmailStr | None = None
-    role: UserRole | None = None
+    role_id: uuid.UUID | None = None
     dep_id: uuid.UUID | None = None
 
 
@@ -69,7 +71,7 @@ class UserOut(BaseModel):
     last_name: str
     username: str
     email: str
-    role: UserRole
+    role: RoleSummaryOut
     dep_id: uuid.UUID | None
     department: DepartmentOut | None = None
     status: UserStatus
@@ -77,6 +79,23 @@ class UserOut(BaseModel):
     last_login_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class UserDetailOut(UserOut):
+    """
+    تفاصيل عضو مفصّلة — تُستخدم في نافذة/صفحة تفاصيل العضو، وتضيف قائمة
+    الصلاحيات الفعلية المرتبطة بدوره (محسوبة من role_permissions).
+    """
+
+    permissions: list[str] = Field(default_factory=list)
+
+
+# app.schemas.department.DepartmentDetailOut يشير إلى "UserOut" كـ Forward
+# Reference (لتفادي Circular Import بين الملفين) — يُحل هنا بعد أن يصبح
+# UserOut معرَّفًا فعليًا في هذا الموديول.
+from app.schemas.department import DepartmentDetailOut  # noqa: E402
+
+DepartmentDetailOut.model_rebuild(_types_namespace={"UserOut": UserOut})
 
 
 class ChangePasswordRequest(BaseModel):

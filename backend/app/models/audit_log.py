@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -56,3 +56,7 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+    # علاقة أحادية الاتجاه فقط للقراءة (اسم من نفّذ العملية) — بدون
+    # back_populates لأن User لا يحتاج قائمة سجلات التدقيق الخاصة به.
+    actor: Mapped["User | None"] = relationship(lazy="selectin", foreign_keys=[actor_user_id])  # noqa: F821

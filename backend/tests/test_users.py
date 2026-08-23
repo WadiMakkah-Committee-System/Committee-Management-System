@@ -10,7 +10,9 @@ async def _create_department(client: AsyncClient, auth_headers, name: str = "إ�
     return response.json()["dep_id"]
 
 
-async def test_create_user_success(client: AsyncClient, auth_headers) -> None:
+async def test_create_user_success(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
     dep_id = await _create_department(client, auth_headers)
 
     response = await client.post(
@@ -22,7 +24,7 @@ async def test_create_user_success(client: AsyncClient, auth_headers) -> None:
             "username": "sarah_m",
             "email": "sarah@example.com",
             "password": "StrongPass1",
-            "role": "admin",
+            "role_id": roles_by_name["admin"],
             "dep_id": dep_id,
         },
         headers=auth_headers,
@@ -35,7 +37,9 @@ async def test_create_user_success(client: AsyncClient, auth_headers) -> None:
     assert "password" not in body
 
 
-async def test_create_user_weak_password_rejected(client: AsyncClient, auth_headers) -> None:
+async def test_create_user_weak_password_rejected(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
     response = await client.post(
         "/api/v1/users",
         json={
@@ -45,7 +49,7 @@ async def test_create_user_weak_password_rejected(client: AsyncClient, auth_head
             "username": "sarah_weak",
             "email": "sarah_weak@example.com",
             "password": "weak",  # لا يطابق سياسة كلمة المرور FR-UM-015
-            "role": "admin",
+            "role_id": roles_by_name["admin"],
             "dep_id": None,
         },
         headers=auth_headers,
@@ -53,7 +57,9 @@ async def test_create_user_weak_password_rejected(client: AsyncClient, auth_head
     assert response.status_code == 422
 
 
-async def test_create_user_duplicate_username_rejected(client: AsyncClient, auth_headers) -> None:
+async def test_create_user_duplicate_username_rejected(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
     payload = {
         "first_name": "أ",
         "middle_name": "ب",
@@ -61,7 +67,7 @@ async def test_create_user_duplicate_username_rejected(client: AsyncClient, auth
         "username": "dup_user",
         "email": "dup1@example.com",
         "password": "StrongPass1",
-        "role": "admin",
+        "role_id": roles_by_name["admin"],
         "dep_id": None,
     }
     first = await client.post("/api/v1/users", json=payload, headers=auth_headers)
@@ -73,7 +79,7 @@ async def test_create_user_duplicate_username_rejected(client: AsyncClient, auth
 
 
 async def test_suspend_and_reactivate_blocks_and_restores_login(
-    client: AsyncClient, auth_headers
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
     create = await client.post(
         "/api/v1/users",
@@ -84,7 +90,7 @@ async def test_suspend_and_reactivate_blocks_and_restores_login(
             "username": "khalid_z",
             "email": "khalid@example.com",
             "password": "StrongPass1",
-            "role": "admin",
+            "role_id": roles_by_name["admin"],
             "dep_id": None,
         },
         headers=auth_headers,
@@ -110,7 +116,9 @@ async def test_suspend_and_reactivate_blocks_and_restores_login(
     assert login_after_reactivate.status_code == 200
 
 
-async def test_soft_delete_user(client: AsyncClient, auth_headers) -> None:
+async def test_soft_delete_user(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
     create = await client.post(
         "/api/v1/users",
         json={
@@ -120,7 +128,7 @@ async def test_soft_delete_user(client: AsyncClient, auth_headers) -> None:
             "username": "noura_q",
             "email": "noura@example.com",
             "password": "StrongPass1",
-            "role": "admin",
+            "role_id": roles_by_name["admin"],
             "dep_id": None,
         },
         headers=auth_headers,
@@ -134,7 +142,9 @@ async def test_soft_delete_user(client: AsyncClient, auth_headers) -> None:
     assert get_after.status_code == 404
 
 
-async def test_non_super_admin_cannot_manage_users(client: AsyncClient, auth_headers) -> None:
+async def test_non_super_admin_cannot_manage_users(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
     # ننشئ مستخدم admin عادي، ثم نتحقق أنه لا يقدر يدير المستخدمين
     create = await client.post(
         "/api/v1/users",
@@ -145,7 +155,7 @@ async def test_non_super_admin_cannot_manage_users(client: AsyncClient, auth_hea
             "username": "abdullah_d",
             "email": "abdullah@example.com",
             "password": "StrongPass1",
-            "role": "admin",
+            "role_id": roles_by_name["admin"],
             "dep_id": None,
         },
         headers=auth_headers,
@@ -163,7 +173,7 @@ async def test_non_super_admin_cannot_manage_users(client: AsyncClient, auth_hea
 
 
 async def test_me_returns_own_profile_with_embedded_department(
-    client: AsyncClient, auth_headers
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
     """
     GET /users/me متاح لأي مستخدم مسجّل دخول (بلا قيد دور)، ويرجع بيانات
@@ -181,7 +191,7 @@ async def test_me_returns_own_profile_with_embedded_department(
             "username": "mona_h",
             "email": "mona@example.com",
             "password": "StrongPass1",
-            "role": "admin",
+            "role_id": roles_by_name["admin"],
             "dep_id": dep_id,
         },
         headers=auth_headers,
@@ -217,7 +227,7 @@ async def test_me_for_super_admin_without_department_returns_null_department(
 
 
 async def _create_second_super_admin(
-    client: AsyncClient, auth_headers, username: str = "super_admin_2"
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], username: str = "super_admin_2"
 ) -> str:
     """ينشئ super_admin ثاني عبر super_admin الأول (auth_headers)، ويرجع user_id."""
     response = await client.post(
@@ -229,7 +239,7 @@ async def _create_second_super_admin(
             "username": username,
             "email": f"{username}@example.com",
             "password": "StrongPass1",
-            "role": "super_admin",
+            "role_id": roles_by_name["super_admin"],
             "dep_id": None,
         },
         headers=auth_headers,
@@ -255,9 +265,9 @@ async def test_cannot_delete_last_super_admin(client: AsyncClient, auth_headers)
 
 
 async def test_can_delete_super_admin_when_another_exists(
-    client: AsyncClient, auth_headers
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
-    second_id = await _create_second_super_admin(client, auth_headers)
+    second_id = await _create_second_super_admin(client, auth_headers, roles_by_name)
 
     response = await client.delete(f"/api/v1/users/{second_id}", headers=auth_headers)
     assert response.status_code == 204
@@ -273,21 +283,25 @@ async def test_cannot_suspend_last_super_admin(client: AsyncClient, auth_headers
 
 
 async def test_can_suspend_super_admin_when_another_exists(
-    client: AsyncClient, auth_headers
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
-    second_id = await _create_second_super_admin(client, auth_headers, username="super_admin_3")
+    second_id = await _create_second_super_admin(
+        client, auth_headers, roles_by_name, username="super_admin_3"
+    )
 
     response = await client.post(f"/api/v1/users/{second_id}/suspend", headers=auth_headers)
     assert response.status_code == 200
     assert response.json()["status"] == "suspended"
 
 
-async def test_cannot_change_role_of_last_super_admin(client: AsyncClient, auth_headers) -> None:
+async def test_cannot_change_role_of_last_super_admin(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
     me = await client.get("/api/v1/users/me", headers=auth_headers)
     self_id = me.json()["user_id"]
 
     response = await client.patch(
-        f"/api/v1/users/{self_id}", json={"role": "admin"}, headers=auth_headers
+        f"/api/v1/users/{self_id}", json={"role_id": roles_by_name["admin"]}, headers=auth_headers
     )
     assert response.status_code == 400
     assert "آخر" in response.json()["detail"]
