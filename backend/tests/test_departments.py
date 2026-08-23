@@ -74,7 +74,7 @@ async def _create_department(client: AsyncClient, auth_headers, name: str) -> st
 
 
 async def _create_admin_in_department(
-    client: AsyncClient, auth_headers, *, username: str, dep_id: str
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], *, username: str, dep_id: str
 ) -> dict[str, str]:
     """ينشئ مستخدم admin تابع لإدارة معيّنة، ويسجّل دخوله، ويرجع headers جاهزة."""
     await client.post(
@@ -86,7 +86,7 @@ async def _create_admin_in_department(
             "username": username,
             "email": f"{username}@example.com",
             "password": "StrongPass1",
-            "role": "admin",
+            "role_id": roles_by_name["admin"],
             "dep_id": dep_id,
         },
         headers=auth_headers,
@@ -109,14 +109,16 @@ async def test_super_admin_sees_all_departments_in_list(
     assert len(listing.json()) == 2
 
 
-async def test_non_super_admin_cannot_list_departments(client: AsyncClient, auth_headers) -> None:
+async def test_non_super_admin_cannot_list_departments(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
     """
     قرار موثّق: endpoint الإدارات بالكامل مقصور على super_admin. بقية
     الأدوار يشوفون إدارتهم عبر GET /users/me بدل هذا المسار.
     """
     dep_id = await _create_department(client, auth_headers, "إدارة الموظف")
     member_headers = await _create_admin_in_department(
-        client, auth_headers, username="member_dep_forbidden_list", dep_id=dep_id
+        client, auth_headers, roles_by_name, username="member_dep_forbidden_list", dep_id=dep_id
     )
 
     listing = await client.get("/api/v1/departments", headers=member_headers)
@@ -124,11 +126,11 @@ async def test_non_super_admin_cannot_list_departments(client: AsyncClient, auth
 
 
 async def test_non_super_admin_cannot_get_department_by_id(
-    client: AsyncClient, auth_headers
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
     dep_id = await _create_department(client, auth_headers, "إدارة الموظف الثانية")
     member_headers = await _create_admin_in_department(
-        client, auth_headers, username="member_dep_forbidden_get", dep_id=dep_id
+        client, auth_headers, roles_by_name, username="member_dep_forbidden_get", dep_id=dep_id
     )
 
     response = await client.get(f"/api/v1/departments/{dep_id}", headers=member_headers)

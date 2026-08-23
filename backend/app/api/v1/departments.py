@@ -14,20 +14,21 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser, require_roles
+from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
-from app.models.user import UserRole
-from app.schemas.department import DepartmentCreate, DepartmentOut, DepartmentUpdate
+from app.schemas.department import DepartmentCreate, DepartmentDetailOut, DepartmentOut, DepartmentUpdate
+from app.schemas.user import UserOut
 from app.services import department_service
 
-router = APIRouter(
-    prefix="/departments",
-    tags=["Departments"],
-    dependencies=[Depends(require_roles(UserRole.super_admin))],
+router = APIRouter(prefix="/departments", tags=["Departments"])
+
+
+@router.post(
+    "",
+    response_model=DepartmentOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("departments.create"))],
 )
-
-
-@router.post("", response_model=DepartmentOut, status_code=status.HTTP_201_CREATED)
 async def create_department(
     payload: DepartmentCreate, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> DepartmentOut:
@@ -43,21 +44,46 @@ async def create_department(
     return DepartmentOut.model_validate(department)
 
 
-@router.get("", response_model=list[DepartmentOut])
+@router.get(
+    "",
+    response_model=list[DepartmentOut],
+    dependencies=[Depends(require_permission("departments.view"))],
+)
 async def list_departments(db: AsyncSession = Depends(get_db)) -> list[DepartmentOut]:
     departments = await department_service.list_departments(db)
     return [DepartmentOut.model_validate(d) for d in departments]
 
 
-@router.get("/{dep_id}", response_model=DepartmentOut)
-async def get_department(dep_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> DepartmentOut:
-    department = await department_service.get_department(db, dep_id)
-    if department is None:
+@router.get(
+    "/{dep_id}",
+    response_model=DepartmentDetailOut,
+    dependencies=[Depends(require_permission("departments.view"))],
+)
+async def get_department(dep_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> DepartmentDetailOut:
+    """
+    تفاصيل إدارة واحدة — الاسم، الوصف، عدد الأعضاء، وقائمة الأعضاء كاملة
+    (كل عضو مع دوره وحالة حسابه)، لصفحة "تفاصيل الإدارة".
+    """
+    detail = await department_service.get_department_detail(db, dep_id)
+    if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="الإدارة غير موجودة")
-    return DepartmentOut.model_validate(department)
+    department = detail["department"]
+    return DepartmentDetailOut(
+        dep_id=department.dep_id,
+        name=department.name,
+        description=department.description,
+        created_at=department.created_at,
+        updated_at=department.updated_at,
+        member_count=detail["member_count"],
+        members=[UserOut.model_validate(u) for u in detail["members"]],
+    )
 
 
-@router.patch("/{dep_id}", response_model=DepartmentOut)
+@router.patch(
+    "/{dep_id}",
+    response_model=DepartmentOut,
+    dependencies=[Depends(require_permission("departments.update"))],
+)
 async def update_department(
     dep_id: uuid.UUID,
     payload: DepartmentUpdate,
@@ -76,7 +102,11 @@ async def update_department(
     return DepartmentOut.model_validate(department)
 
 
-@router.delete("/{dep_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{dep_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_permission("departments.delete"))],
+)
 async def delete_department(
     dep_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> None:

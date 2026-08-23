@@ -19,11 +19,14 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from sqlalchemy import select
+
 from app.core.redis_client import redis_client
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
-from app.models.user import User, UserRole
+from app.models.role import Role
+from app.models.user import User
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -48,7 +51,15 @@ async def _fresh_async_resources() -> AsyncGenerator[None, None]:
 
 @pytest_asyncio.fixture(autouse=True)
 async def _clean_tables(_fresh_async_resources: None) -> AsyncGenerator[None, None]:
-    """تفريغ كل الجداول قبل كل اختبار لضمان عزل تام بين الاختبارات."""
+    """
+    تفريغ كل الجداول قبل كل اختبار لضمان عزل تام بين الاختبارات.
+
+    roles/permissions/role_permissions مستثناة من TRUNCATE عمدًا — هذه
+    بيانات كتالوج/بذر (seed) تُطبَّق مرة واحدة عبر db/migrations وتُستخدم
+    من كل الاختبارات (خصوصًا الأدوار النظامية الخمسة)؛ حذفها بالكامل يكسر
+    كل اختبار يعتمد على وجودها. الأدوار المخصَّصة (is_system=false) التي
+    تُنشئها اختبارات role_service تُحذف يدويًا بدل ذلك.
+    """
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -56,6 +67,7 @@ async def _clean_tables(_fresh_async_resources: None) -> AsyncGenerator[None, No
                 "RESTART IDENTITY CASCADE"
             )
         )
+        await conn.execute(text("DELETE FROM roles WHERE is_system = false"))
     yield
 
 
@@ -67,7 +79,19 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest_asyncio.fixture
-async def super_admin_user() -> User:
+async def roles_by_name() -> dict[str, str]:
+    """
+    خريطة {اسم الدور: role_id} لكل الأدوار النظامية الخمسة — تُستخدم في
+    الاختبارات لبناء payloads تحتاج role_id بدل اسم دور ثابت (بما أن
+    الأدوار أصبحت ديناميكية).
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Role))
+        return {r.name: str(r.role_id) for r in result.scalars().all()}
+
+
+@pytest_asyncio.fixture
+async def super_admin_user(roles_by_name: dict[str, str]) -> User:
     """إنشاء مستخدم super_admin مباشرة في القاعدة (بدون المرور عبر API)."""
     async with AsyncSessionLocal() as db:
         user = User(
@@ -77,7 +101,7 @@ async def super_admin_user() -> User:
             username="super_admin_test",
             email="super_admin_test@example.com",
             password_hash=hash_password("StrongPass1"),
-            role=UserRole.super_admin,
+            role_id=roles_by_name["super_admin"],
             dep_id=None,
             must_change_password=False,
         )

@@ -20,8 +20,10 @@ import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.department import Department
+from app.models.user import User
 from app.services import audit_service
 
 
@@ -75,6 +77,26 @@ async def get_department(db: AsyncSession, dep_id: uuid.UUID) -> Department | No
         select(Department).where(Department.dep_id == dep_id, Department.deleted_at.is_(None))
     )
     return result.scalar_one_or_none()
+
+
+async def get_department_detail(db: AsyncSession, dep_id: uuid.UUID) -> dict | None:
+    """
+    تفاصيل إدارة واحدة: بياناتها + عدد أعضائها + قائمة الأعضاء الكاملة
+    (كل عضو مع دوره وحالته) — تُستخدم في صفحة "تفاصيل الإدارة".
+    """
+    department = await get_department(db, dep_id)
+    if department is None:
+        return None
+
+    members_result = await db.execute(
+        select(User)
+        .options(selectinload(User.department))
+        .where(User.dep_id == dep_id, User.deleted_at.is_(None))
+        .order_by(User.created_at.desc())
+    )
+    members = list(members_result.scalars().all())
+
+    return {"department": department, "members": members, "member_count": len(members)}
 
 
 async def update_department(

@@ -33,3 +33,16 @@ class DepartmentOut(BaseModel):
     description: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class DepartmentSummaryOut(DepartmentOut):
+    """شكل الإدارة في قائمة الإدارات — يضيف عدد الأعضاء دون تحميل القائمة كاملة."""
+
+    member_count: int
+
+
+class DepartmentDetailOut(DepartmentOut):
+    """تفاصيل إدارة واحدة — تُستخدم في صفحة "تفاصيل الإدارة"."""
+
+    member_count: int
+    members: list["UserOut"]  # noqa: F821 — يُحل عبر model_rebuild في schemas/user.py
