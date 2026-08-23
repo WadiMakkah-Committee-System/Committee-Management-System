@@ -74,6 +74,7 @@ class RoleSummaryOut(BaseModel):
     role_id: uuid.UUID
     name: str
     description: str | None
+    is_super_admin: bool
 
 
 class RoleDetailOut(RoleOut):

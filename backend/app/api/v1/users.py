@@ -29,18 +29,24 @@ from app.services import user_service
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-@router.get("/me", response_model=UserOut)
-async def get_my_profile(current_user: CurrentUser) -> UserOut:
+@router.get("/me", response_model=UserDetailOut)
+async def get_my_profile(current_user: CurrentUser) -> UserDetailOut:
     """
     بيانات المستخدم الحالي، بما فيها إدارته كاملة (مضمَّنة عبر
-    UserOut.department) — متاح لأي دور، بدون قيد RBAC، لأنه يعرض بيانات
-    المستخدم نفسه فقط.
+    UserOut.department) وقائمة صلاحياته الفعلية (permissions) — متاح لأي
+    دور، بدون قيد RBAC، لأنه يعرض بيانات المستخدم نفسه فقط.
+
+    صلاحيات المستخدم هنا مطلوبة للواجهة الأمامية لتقرير أي شاشات/تبويبات
+    تظهر له (مثال: تبويب "الأدوار والصلاحيات" يظهر فقط لمن يملك
+    is_super_admin)، دون الاعتماد على أي قائمة أدوار ثابتة في كود الفرونت.
 
     ملاحظة تقنية: current_user يصل هنا محمَّلًا مسبقًا بعلاقة department
     (selectinload) من داخل core.dependencies.get_current_user →
     user_service.get_user، فلا حاجة لاستعلام إضافي هنا.
     """
-    return UserOut.model_validate(current_user)
+    data = UserOut.model_validate(current_user).model_dump()
+    data["permissions"] = sorted(current_user.role.permission_codes)
+    return UserDetailOut.model_validate(data)
 
 
 @router.post(
