@@ -4,10 +4,19 @@ import type { DepartmentCreatePayload, DepartmentUpdatePayload } from '@/types'
 
 export const departmentsKeys = {
   all: ['departments'] as const,
+  detail: (depId: string) => ['departments', depId] as const,
 }
 
 export function useDepartments() {
   return useQuery({ queryKey: departmentsKeys.all, queryFn: departmentsApi.fetchDepartments })
+}
+
+export function useDepartmentDetail(depId: string | undefined) {
+  return useQuery({
+    queryKey: departmentsKeys.detail(depId ?? ''),
+    queryFn: () => departmentsApi.fetchDepartment(depId as string),
+    enabled: !!depId,
+  })
 }
 
 export function useCreateDepartment() {
@@ -23,7 +32,10 @@ export function useUpdateDepartment() {
   return useMutation({
     mutationFn: ({ depId, payload }: { depId: string; payload: DepartmentUpdatePayload }) =>
       departmentsApi.updateDepartment(depId, payload),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: departmentsKeys.all }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: departmentsKeys.all })
+      queryClient.invalidateQueries({ queryKey: departmentsKeys.detail(variables.depId) })
+    },
   })
 }
 

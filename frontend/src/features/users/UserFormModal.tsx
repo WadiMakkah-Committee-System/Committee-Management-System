@@ -7,7 +7,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
-import { ROLE_OPTIONS } from '@/lib/utils'
+import { useRoles } from '@/hooks/useRoles'
+import { roleLabel } from '@/lib/utils'
 import type { Department, User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
 const baseFields = {
@@ -15,7 +16,7 @@ const baseFields = {
   middle_name: z.string().min(1, 'الاسم الأوسط مطلوب').max(100),
   last_name: z.string().min(1, 'اسم العائلة مطلوب').max(100),
   email: z.string().email('بريد إلكتروني غير صحيح'),
-  role: z.string().min(1, 'الدور مطلوب'),
+  role_id: z.string().min(1, 'الدور مطلوب'),
   dep_id: z.string(),
 }
 
@@ -32,6 +33,7 @@ const createSchema = z.object({
     .regex(/[A-Z]/, 'يجب أن تحتوي على حرف كبير')
     .regex(/[a-z]/, 'يجب أن تحتوي على حرف صغير')
     .regex(/[0-9]/, 'يجب أن تحتوي على رقم'),
+  status: z.enum(['active', 'suspended']),
 })
 
 const editSchema = z.object(baseFields)
@@ -44,6 +46,8 @@ interface UserFormModalProps {
   onClose: () => void
   user?: User | null
   departments: Department[]
+  /** إدارة مبدئية مُختارة مسبقًا (عند الإضافة من داخل صفحة تفاصيل إدارة معيّنة). */
+  defaultDepId?: string | null
   onSubmitCreate: (values: UserCreatePayload) => void
   onSubmitEdit: (values: UserUpdatePayload) => void
   loading?: boolean
@@ -55,15 +59,22 @@ export function UserFormModal({
   onClose,
   user,
   departments,
+  defaultDepId,
   onSubmitCreate,
   onSubmitEdit,
   loading,
   serverError,
 }: UserFormModalProps) {
   const isEdit = !!user
+  const { data: roles } = useRoles()
+  const roleOptions = (roles ?? []).map((r) => ({ value: r.role_id, label: roleLabel(r) }))
   const depOptions = [
     { value: '', label: 'بدون إدارة' },
     ...departments.map((d) => ({ value: d.dep_id, label: d.name })),
+  ]
+  const statusOptions = [
+    { value: 'active', label: 'نشط' },
+    { value: 'suspended', label: 'موقوف' },
   ]
 
   const {
@@ -82,12 +93,12 @@ export function UserFormModal({
         middle_name: user?.middle_name ?? '',
         last_name: user?.last_name ?? '',
         email: user?.email ?? '',
-        role: user?.role ?? '',
-        dep_id: user?.dep_id ?? '',
-        ...(isEdit ? {} : { username: '', password: '' }),
+        role_id: user?.role.role_id ?? '',
+        dep_id: user?.dep_id ?? defaultDepId ?? '',
+        ...(isEdit ? {} : { username: '', password: '', status: 'active' }),
       } as CreateFormValues)
     }
-  }, [open, user, isEdit, reset])
+  }, [open, user, isEdit, defaultDepId, reset])
 
   function onValid(values: CreateFormValues | EditFormValues) {
     if (isEdit) {
@@ -97,7 +108,7 @@ export function UserFormModal({
         middle_name: v.middle_name,
         last_name: v.last_name,
         email: v.email,
-        role: v.role as UserUpdatePayload['role'],
+        role_id: v.role_id,
         dep_id: v.dep_id || null,
       })
     } else {
@@ -109,13 +120,15 @@ export function UserFormModal({
         username: v.username,
         email: v.email,
         password: v.password,
-        role: v.role as UserCreatePayload['role'],
+        role_id: v.role_id,
         dep_id: v.dep_id || null,
+        status: v.status,
       })
     }
   }
 
-  const createErrors = errors as typeof errors & Partial<Record<'username' | 'password', { message?: string }>>
+  const createErrors = errors as typeof errors &
+    Partial<Record<'username' | 'password' | 'status', { message?: string }>>
 
   return (
     <Modal
@@ -166,9 +179,25 @@ export function UserFormModal({
         )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Select label="الدور" required placeholder="اختر الدور" options={ROLE_OPTIONS} error={errors.role?.message} {...register('role')} />
+          <Select
+            label="الدور"
+            required
+            placeholder="اختر الدور"
+            options={roleOptions}
+            error={errors.role_id?.message}
+            {...register('role_id')}
+          />
           <Select label="الإدارة" placeholder="اختر الإدارة" options={depOptions} {...register('dep_id')} />
         </div>
+
+        {!isEdit && (
+          <Select
+            label="حالة الحساب"
+            options={statusOptions}
+            error={createErrors.status?.message}
+            {...register('status' as 'first_name')}
+          />
+        )}
 
         {serverError && (
           <p className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">

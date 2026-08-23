@@ -5,8 +5,9 @@ import { useAuthStore } from '@/store/authStore'
 import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute } from '@/routes/ProtectedRoute'
 import { LoginPage } from '@/features/auth/LoginPage'
-import { UsersPage } from '@/features/users/UsersPage'
+import { UserManagementPage } from '@/features/users/UserManagementPage'
 import { DepartmentsPage } from '@/features/departments/DepartmentsPage'
+import { DepartmentDetailPage } from '@/features/departments/DepartmentDetailPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { usersKeys } from '@/hooks/useUsers'
@@ -58,9 +59,13 @@ function App() {
           <Route element={<AppShell />}>
             <Route path="/profile" element={<ProfilePage />} />
 
-            <Route element={<ProtectedRoute allowedRoles={['super_admin']} />}>
-              <Route path="/users" element={<UsersPage />} />
+            <Route element={<ProtectedRoute anyPermission={['users.view']} />}>
+              <Route path="/users" element={<UserManagementPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute anyPermission={['departments.view']} />}>
               <Route path="/departments" element={<DepartmentsPage />} />
+              <Route path="/departments/:depId" element={<DepartmentDetailPage />} />
             </Route>
 
             <Route path="/" element={<Navigate to="/users" replace />} />

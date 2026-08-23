@@ -5,7 +5,7 @@ import { Avatar } from '@/components/ui/Avatar'
 import { UserStatusBadge, RoleBadge } from '@/components/ui/StatusBadge'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { ErrorState } from '@/components/ui/ErrorState'
-import { ROLE_LABELS, formatDateTime } from '@/lib/utils'
+import { roleLabel, formatDateTime } from '@/lib/utils'
 
 function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
   return (
@@ -42,7 +42,7 @@ export function ProfilePage() {
           </h2>
           <p className="text-sm text-text-muted">@{me.username}</p>
           <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
-            <RoleBadge role={me.role} label={ROLE_LABELS[me.role]} />
+            <RoleBadge role={me.role} />
             <UserStatusBadge status={me.status} />
           </div>
         </div>
@@ -57,7 +57,7 @@ export function ProfilePage() {
             label="الإدارة"
             value={me.department ? me.department.name : 'بدون إدارة (سوبر أدمن)'}
           />
-          <InfoRow icon={<ShieldCheck size={16} />} label="الدور" value={ROLE_LABELS[me.role]} />
+          <InfoRow icon={<ShieldCheck size={16} />} label="الدور" value={roleLabel(me.role)} />
           <InfoRow
             icon={<KeyRound size={16} />}
             label="آخر تسجيل دخول"

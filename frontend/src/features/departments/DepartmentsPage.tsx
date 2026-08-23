@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Building2, FileText, Pencil, Plus, Trash2 } from 'lucide-react'
 import {
@@ -22,6 +23,7 @@ import { extractErrorMessage, formatDate } from '@/lib/utils'
 import type { Department } from '@/types'
 
 export function DepartmentsPage() {
+  const navigate = useNavigate()
   const { data: departments, isLoading, isError, refetch } = useDepartments()
   const createMutation = useCreateDepartment()
   const updateMutation = useUpdateDepartment()
@@ -146,25 +148,30 @@ export function DepartmentsPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
             >
-              <Card className="flex h-full flex-col gap-3 transition-shadow hover:shadow-md">
+              <Card
+                onClick={() => navigate(`/departments/${dept.dep_id}`)}
+                className="flex h-full cursor-pointer flex-col gap-3 transition-shadow hover:shadow-md"
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-brand-primary/10 text-brand-primary">
                     <Building2 size={18} />
                   </div>
-                  <ActionMenu
-                    items={[
-                      { label: 'تعديل', icon: <Pencil size={14} />, onClick: () => openEditForm(dept) },
-                      {
-                        label: 'حذف',
-                        icon: <Trash2 size={14} />,
-                        tone: 'danger',
-                        onClick: () => {
-                          setDeleteError(null)
-                          setDeleteTarget(dept)
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <ActionMenu
+                      items={[
+                        { label: 'تعديل', icon: <Pencil size={14} />, onClick: () => openEditForm(dept) },
+                        {
+                          label: 'حذف',
+                          icon: <Trash2 size={14} />,
+                          tone: 'danger',
+                          onClick: () => {
+                            setDeleteError(null)
+                            setDeleteTarget(dept)
+                          },
                         },
-                      },
-                    ]}
-                  />
+                      ]}
+                    />
+                  </div>
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-text-primary">{dept.name}</h3>

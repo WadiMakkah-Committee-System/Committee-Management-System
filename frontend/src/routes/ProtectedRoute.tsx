@@ -1,8 +1,18 @@
 import { Navigate, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
-import type { UserRole } from '@/types'
 
-export function ProtectedRoute({ allowedRoles }: { allowedRoles?: UserRole[] }) {
+interface ProtectedRouteProps {
+  /**
+   * يكفي أن يملك المستخدم واحدة على الأقل من هذه الصلاحيات للوصول — نفس
+   * منطق require_permission في الباك-إند (core/dependencies.py)، عشان
+   * قيود الفرونت تطابق قيود الـ API الفعلية بدل افتراض قائمة أدوار ثابتة.
+   */
+  anyPermission?: string[]
+  /** يقيّد الوصول بدور الجذر (is_super_admin) فقط — لشاشات إدارة الأدوار نفسها. */
+  superAdminOnly?: boolean
+}
+
+export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRouteProps = {}) {
   const accessToken = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
 
@@ -10,8 +20,14 @@ export function ProtectedRoute({ allowedRoles }: { allowedRoles?: UserRole[] }) 
     return <Navigate to="/login" replace />
   }
 
-  if (allowedRoles && user && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/profile" replace />
+  if (user) {
+    const isSuperAdmin = user.role.is_super_admin
+    if (superAdminOnly && !isSuperAdmin) {
+      return <Navigate to="/profile" replace />
+    }
+    if (anyPermission && !isSuperAdmin && !anyPermission.some((code) => user.permissions.includes(code))) {
+      return <Navigate to="/profile" replace />
+    }
   }
 
   return <Outlet />

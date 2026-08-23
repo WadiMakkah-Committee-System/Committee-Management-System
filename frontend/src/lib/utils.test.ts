@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AxiosError } from 'axios'
-import { cn, extractErrorMessage, getInitials, ROLE_LABELS } from './utils'
+import { cn, extractErrorMessage, getInitials, roleLabel } from './utils'
 
 describe('cn', () => {
   it('يدمج classes الصحيحة ويتجاهل القيم الفارغة', () => {
@@ -15,10 +15,14 @@ describe('getInitials', () => {
   })
 })
 
-describe('ROLE_LABELS', () => {
-  it('يحتوي على تسمية عربية لكل دور مدعوم في الباك-إند', () => {
-    expect(ROLE_LABELS.super_admin).toBe('سوبر أدمن')
-    expect(Object.keys(ROLE_LABELS)).toHaveLength(5)
+describe('roleLabel', () => {
+  it('يرجع التسمية العربية الثابتة لأي دور نظامي', () => {
+    expect(roleLabel({ name: 'super_admin' })).toBe('سوبر أدمن')
+    expect(roleLabel({ name: 'admin' })).toBe('مسؤول إدارة')
+  })
+
+  it('يرجع الاسم نفسه لدور مخصَّص غير معروف من الكتالوج الثابت', () => {
+    expect(roleLabel({ name: 'مشرف الاجتماعات' })).toBe('مشرف الاجتماعات')
   })
 })
 
