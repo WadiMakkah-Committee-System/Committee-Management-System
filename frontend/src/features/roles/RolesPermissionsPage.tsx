@@ -14,7 +14,7 @@ import { RoleFormModal } from './RoleFormModal'
 import { cardToneClass, cn, extractErrorMessage, roleLabel } from '@/lib/utils'
 import type { Role, RoleCreatePayload, RoleUpdatePayload } from '@/types'
 
-export function RolesPermissionsTab() {
+export function RolesPermissionsPage() {
   const { data: roles, isLoading, isError, refetch } = useRoles()
   const createMutation = useCreateRole()
   const updateMutation = useUpdateRole()
