@@ -7,11 +7,13 @@
 - POST   /committee-requests               → committees.request.create (الادمن)
 - GET    /committee-requests, /{id}        → committees.request.view، أو مقدّم
                                               الطلب نفسه لطلباته فقط (استثناء ملكية)
-- PATCH  /committee-requests/{id}          → committees.request.create (draft/ملكية)
-                                              أو committees.request.update (بعد الإرسال)
-- POST   /{id}/submit                      → committees.request.create + ملكية
+- PATCH  /committee-requests/{id}          → committees.request.create (draft/returned + ملكية)
+                                              أو committees.request.update (submitted/under_review)
+- POST   /{id}/submit                      → committees.request.create + ملكية (draft أو returned)
+- POST   /{id}/return-to-admin             → committees.request.update (المكتب التنفيذي → الادمن)
 - POST   /{id}/escalate                    → committees.request.escalate (المكتب التنفيذي)
-- POST   /{id}/approve, /{id}/reject       → committees.request.approve (الرئيس التنفيذي)
+- POST   /{id}/approve, /{id}/reject       → committees.request.approve (الرئيس التنفيذي، نهائي)
+- POST   /{id}/return-to-office            → committees.request.approve (الرئيس التنفيذي → المكتب، غير نهائي)
 
 قرار موثّق: لا يوجد أي endpoint هنا لتعديل أعضاء/بيانات اللجنة بعد
 الاعتماد — مقفلة نهائيًا لكل الأدوار (راجعي committee_service.py).
@@ -30,6 +32,7 @@ from app.schemas.committee import (
     CommitteeFormationRequestUpdate,
     CommitteeOut,
     CommitteeRejectRequest,
+    CommitteeReturnRequest,
 )
 from app.services import committee_service
 from app.services.committee_service import (
@@ -172,6 +175,54 @@ async def submit_committee_request(
         CommitteeRequestForbiddenError,
         CommitteeRequestInvalidTransitionError,
     ) as exc:
+        raise _handle_errors(exc) from exc
+    return CommitteeFormationRequestOut.model_validate(request)
+
+
+@router.post(
+    "/{request_id}/return-to-admin",
+    response_model=CommitteeFormationRequestOut,
+    dependencies=[Depends(require_permission("committees.request.update"))],
+)
+async def return_committee_request_to_admin(
+    request_id: uuid.UUID,
+    payload: CommitteeReturnRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CommitteeFormationRequestOut:
+    """
+    المكتب التنفيذي يرجع الطلب لمقدّمه (الادمن) مع سبب — بدل التعديل
+    المباشر أو الرفع للاعتماد (submitted/under_review → returned).
+    """
+    try:
+        request = await committee_service.return_to_admin_request(
+            db, actor=current_user, request_id=request_id, return_reason=payload.return_reason
+        )
+    except (CommitteeRequestNotFoundError, CommitteeRequestInvalidTransitionError) as exc:
+        raise _handle_errors(exc) from exc
+    return CommitteeFormationRequestOut.model_validate(request)
+
+
+@router.post(
+    "/{request_id}/return-to-office",
+    response_model=CommitteeFormationRequestOut,
+    dependencies=[Depends(require_permission("committees.request.approve"))],
+)
+async def return_committee_request_to_office(
+    request_id: uuid.UUID,
+    payload: CommitteeReturnRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CommitteeFormationRequestOut:
+    """
+    الرئيس التنفيذي يرجع الطلب للمكتب التنفيذي مع سبب — بدل الاعتماد أو
+    الرفض النهائي (pending_approval → under_review، غير نهائي).
+    """
+    try:
+        request = await committee_service.return_to_office_request(
+            db, actor=current_user, request_id=request_id, return_reason=payload.return_reason
+        )
+    except (CommitteeRequestNotFoundError, CommitteeRequestInvalidTransitionError) as exc:
         raise _handle_errors(exc) from exc
     return CommitteeFormationRequestOut.model_validate(request)
 

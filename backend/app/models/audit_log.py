@@ -41,6 +41,7 @@ class AuditAction(str, enum.Enum):
     escalate = "escalate"
     approve = "approve"
     reject = "reject"
+    returned = "returned"  # ليس "return" (كلمة محجوزة بلغة Python) — راجعي db/migrations/0010
 
 
 class AuditLog(Base):
