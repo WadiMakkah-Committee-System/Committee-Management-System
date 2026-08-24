@@ -17,6 +17,7 @@ import {
   UserRound,
   ChevronDown,
   ClipboardList,
+  CheckCircle2,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -57,6 +58,12 @@ const NAV_ITEMS: NavItem[] = [
         icon: ClipboardList,
         path: '/committees/requests',
         requiredPermission: ['committees.request.create', 'committees.request.view'],
+      },
+      {
+        label: 'اللجان المعتمدة',
+        icon: CheckCircle2,
+        path: '/committees/approved',
+        requiredPermission: ['committees.view_authorized'],
       },
     ],
   },
