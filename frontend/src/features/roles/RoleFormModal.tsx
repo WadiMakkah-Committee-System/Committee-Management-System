@@ -40,6 +40,7 @@ export function RoleFormModal({
   const isEdit = !!role
   const { data: permissions, isLoading: permissionsLoading } = usePermissionsCatalog()
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [permissionsError, setPermissionsError] = useState<string | null>(null)
 
   const {
     register,
@@ -52,11 +53,17 @@ export function RoleFormModal({
     if (open) {
       reset({ name: role?.name ?? '', description: role?.description ?? '' })
       setSelected(new Set((role?.permissions ?? []).map((p: Permission) => p.code)))
+      setPermissionsError(null)
     }
   }, [open, role, reset])
 
   function onValid(values: FormValues) {
     const permission_codes = Array.from(selected)
+    if (permission_codes.length === 0) {
+      setPermissionsError('يجب اختيار صلاحية واحدة على الأقل')
+      return
+    }
+    setPermissionsError(null)
     if (isEdit) {
       onSubmitEdit({
         name: role!.is_system ? undefined : values.name,
@@ -110,8 +117,16 @@ export function RoleFormModal({
           {permissionsLoading ? (
             <TableSkeleton />
           ) : (
-            <PermissionsPicker permissions={permissions ?? []} selected={selected} onChange={setSelected} />
+            <PermissionsPicker
+              permissions={permissions ?? []}
+              selected={selected}
+              onChange={(next) => {
+                setSelected(next)
+                if (next.size > 0) setPermissionsError(null)
+              }}
+            />
           )}
+          {permissionsError && <p className="mt-2 text-sm font-medium text-danger">{permissionsError}</p>}
         </div>
 
         {serverError && (
