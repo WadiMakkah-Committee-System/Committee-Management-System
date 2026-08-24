@@ -506,3 +506,66 @@ async def test_office_cannot_return_to_office(
         headers=actors["office_headers"],
     )
     assert forbidden.status_code == 403
+
+
+async def test_get_committee_detail_returns_full_data(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    تغطية سطح القراءة committees_router (GET /committees/{id}) — لم يكن
+    مغطّى سابقًا إلا ضمنيًا عبر GET /committees بقائمة الطلبات. تتأكد أن
+    اللجنة المُنشأة تلقائيًا عند الاعتماد تحمل نفس بيانات الطلب المصدر
+    (الاسم، البيان، التواريخ، الأعضاء) وrequest_id الصحيح.
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    create = await client.post(
+        "/api/v1/committee-requests",
+        json=_valid_payload(actors["member_id"], name="لجنة التدقيق"),
+        headers=actors["admin_headers"],
+    )
+    request_id = create.json()["request_id"]
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+    await client.post(f"/api/v1/committee-requests/{request_id}/escalate", headers=actors["office_headers"])
+    approve = await client.post(
+        f"/api/v1/committee-requests/{request_id}/approve", headers=actors["ceo_headers"]
+    )
+    assert approve.status_code == 200, approve.text
+
+    committees = await client.get("/api/v1/committees", headers=actors["admin_headers"])
+    committee_id = next(
+        c["committee_id"] for c in committees.json() if c["source_request_id"] == request_id
+    )
+
+    detail = await client.get(f"/api/v1/committees/{committee_id}", headers=actors["admin_headers"])
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["name"] == "لجنة التدقيق"
+    assert body["source_request_id"] == request_id
+    assert [m["user_id"] for m in body["members"]] == [actors["member_id"]]
+
+    not_found = await client.get(
+        f"/api/v1/committees/{uuid.uuid4()}", headers=actors["admin_headers"]
+    )
+    assert not_found.status_code == 404
+
+
+async def test_view_committees_requires_view_authorized_permission(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    committees.view_authorized مقصورة على admin (وsuper_admin) حسب
+    permissions.xlsx — المكتب التنفيذي والرئيس التنفيذي لا يملكانها
+    (لا يظهر لهما True بعمود "عرض اللجان المصرح بها لكل عضو"، وهو أصلًا
+    مرتبط ببند BRS المستقبلي لعضوية/مناصب اللجان الفعلية، خارج نطاق Phase
+    2). راجعي project_memory: phase2-committee-formation-requests.md.
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+
+    forbidden_office = await client.get("/api/v1/committees", headers=actors["office_headers"])
+    assert forbidden_office.status_code == 403
+
+    forbidden_ceo = await client.get("/api/v1/committees", headers=actors["ceo_headers"])
+    assert forbidden_ceo.status_code == 403
+
+    allowed_admin = await client.get("/api/v1/committees", headers=actors["admin_headers"])
+    assert allowed_admin.status_code == 200
