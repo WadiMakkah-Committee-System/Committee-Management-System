@@ -1,9 +1,27 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowRight, CalendarDays, FileText, Mail, Pencil, Send, UserRound, Users as UsersIcon } from 'lucide-react'
 import {
+  ArrowRight,
+  ArrowUpCircle,
+  CalendarDays,
+  CheckCircle2,
+  FileText,
+  Mail,
+  Pencil,
+  Send,
+  Undo2,
+  UserRound,
+  Users as UsersIcon,
+  XCircle,
+} from 'lucide-react'
+import {
+  useApproveCommitteeRequest,
   useCommitteeRequestDetail,
+  useEscalateCommitteeRequest,
+  useRejectCommitteeRequest,
+  useReturnCommitteeRequestToAdmin,
+  useReturnCommitteeRequestToOffice,
   useSubmitCommitteeRequest,
   useUpdateCommitteeRequest,
 } from '@/hooks/useCommitteeRequests'
@@ -15,15 +33,19 @@ import { Skeleton, TableSkeleton } from '@/components/ui/Skeleton'
 import { Avatar } from '@/components/ui/Avatar'
 import { CommitteeRequestStatusBadge } from '@/components/ui/StatusBadge'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { ReasonConfirmDialog } from '@/components/ui/ReasonConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from './CommitteeRequestFormModal'
 import { extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
 
 /**
- * صفحة تفاصيل طلب تشكيل لجنة واحد — عرض كامل + تعديل/إرسال حسب القواعد
- * الموثّقة بـ committee_service.py (راجعي project_memory:
- * phase2-committee-formation-requests.md). أزرار قرار المكتب/الرئيس
- * التنفيذي (إرجاع/رفع/اعتماد/رفض) متعمَّدة الغياب هنا — تخص Phase 4.
+ * صفحة تفاصيل طلب تشكيل لجنة واحد — عرض كامل + كل إجراءات دورة الحياة
+ * حسب القواعد الموثّقة بـ committee_service.py بالضبط (راجعي
+ * project_memory: phase2-committee-formation-requests.md لآلة الحالة
+ * الكاملة). Phase 3 (تعديل/إرسال لصاحب الطلب) + Phase 4 (واجهات المراجعة
+ * والاعتماد: إرجاع مع سبب، رفع، اعتماد/رفض مع سبب) مبنيّتان معًا هنا —
+ * نفس الصفحة، لأن كل الإجراءات تتشارك نفس بيانات الطلب وتُفرَّق فقط
+ * بالحالة + صلاحية الفاعل، تمامًا كما في الباك-إند.
  */
 export function CommitteeRequestDetailPage() {
   const { requestId } = useParams<{ requestId: string }>()
@@ -32,12 +54,27 @@ export function CommitteeRequestDetailPage() {
   const { data: request, isLoading, isError, refetch } = useCommitteeRequestDetail(requestId)
   const updateMutation = useUpdateCommitteeRequest()
   const submitMutation = useSubmitCommitteeRequest()
+  const returnToAdminMutation = useReturnCommitteeRequestToAdmin()
+  const escalateMutation = useEscalateCommitteeRequest()
+  const returnToOfficeMutation = useReturnCommitteeRequestToOffice()
+  const approveMutation = useApproveCommitteeRequest()
+  const rejectMutation = useRejectCommitteeRequest()
   const { showToast } = useToast()
 
   const [formOpen, setFormOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [returnToAdminOpen, setReturnToAdminOpen] = useState(false)
+  const [returnToAdminError, setReturnToAdminError] = useState<string | null>(null)
+  const [escalateConfirmOpen, setEscalateConfirmOpen] = useState(false)
+  const [escalateError, setEscalateError] = useState<string | null>(null)
+  const [returnToOfficeOpen, setReturnToOfficeOpen] = useState(false)
+  const [returnToOfficeError, setReturnToOfficeError] = useState<string | null>(null)
+  const [approveConfirmOpen, setApproveConfirmOpen] = useState(false)
+  const [approveError, setApproveError] = useState<string | null>(null)
+  const [rejectOpen, setRejectOpen] = useState(false)
+  const [rejectError, setRejectError] = useState<string | null>(null)
 
   if (isLoading) {
     return (
@@ -64,6 +101,7 @@ export function CommitteeRequestDetailPage() {
   const isOwner = user?.user_id === request.requester.user_id
   const isDraftLike = request.status === 'draft' || request.status === 'returned'
   const isPendingOfficeStage = request.status === 'submitted' || request.status === 'under_review'
+  const isPendingApproval = request.status === 'pending_approval'
 
   const canEditAsOwner =
     isDraftLike && (isOwner || isSuperAdmin) && (isSuperAdmin || permissions.includes('committees.request.create'))
@@ -71,6 +109,13 @@ export function CommitteeRequestDetailPage() {
     isPendingOfficeStage && (isSuperAdmin || permissions.includes('committees.request.update'))
   const canEdit = canEditAsOwner || canEditAsOffice
   const canSubmit = canEditAsOwner
+
+  // Phase 4 — إجراءات المكتب التنفيذي (submitted/under_review فقط):
+  const canReturnToAdmin = isPendingOfficeStage && (isSuperAdmin || permissions.includes('committees.request.update'))
+  const canEscalate = isPendingOfficeStage && (isSuperAdmin || permissions.includes('committees.request.escalate'))
+
+  // Phase 4 — إجراءات الرئيس التنفيذي (pending_approval فقط، القرار الثلاثي):
+  const canDecide = isPendingApproval && (isSuperAdmin || permissions.includes('committees.request.approve'))
 
   function handleEdit(values: CommitteeRequestFormSubmitValues) {
     if (!requestId) return
@@ -99,6 +144,75 @@ export function CommitteeRequestDetailPage() {
     })
   }
 
+  function handleReturnToAdmin(reason: string) {
+    if (!requestId) return
+    setReturnToAdminError(null)
+    returnToAdminMutation.mutate(
+      { requestId, returnReason: reason },
+      {
+        onSuccess: () => {
+          setReturnToAdminOpen(false)
+          showToast('تم إرجاع الطلب لمقدّمه للتعديل', 'success')
+        },
+        onError: (err) => setReturnToAdminError(extractErrorMessage(err)),
+      },
+    )
+  }
+
+  function handleEscalate() {
+    if (!requestId) return
+    setEscalateError(null)
+    escalateMutation.mutate(requestId, {
+      onSuccess: () => {
+        setEscalateConfirmOpen(false)
+        showToast('تم رفع الطلب للرئيس التنفيذي للاعتماد', 'success')
+      },
+      onError: (err) => setEscalateError(extractErrorMessage(err)),
+    })
+  }
+
+  function handleReturnToOffice(reason: string) {
+    if (!requestId) return
+    setReturnToOfficeError(null)
+    returnToOfficeMutation.mutate(
+      { requestId, returnReason: reason },
+      {
+        onSuccess: () => {
+          setReturnToOfficeOpen(false)
+          showToast('تم إرجاع الطلب للمكتب التنفيذي للتعديل', 'success')
+        },
+        onError: (err) => setReturnToOfficeError(extractErrorMessage(err)),
+      },
+    )
+  }
+
+  function handleApprove() {
+    if (!requestId) return
+    setApproveError(null)
+    approveMutation.mutate(requestId, {
+      onSuccess: () => {
+        setApproveConfirmOpen(false)
+        showToast('تم اعتماد الطلب — تم تشكيل اللجنة رسميًا', 'success')
+      },
+      onError: (err) => setApproveError(extractErrorMessage(err)),
+    })
+  }
+
+  function handleReject(reason: string) {
+    if (!requestId) return
+    setRejectError(null)
+    rejectMutation.mutate(
+      { requestId, rejectionReason: reason },
+      {
+        onSuccess: () => {
+          setRejectOpen(false)
+          showToast('تم رفض الطلب', 'success')
+        },
+        onError: (err) => setRejectError(extractErrorMessage(err)),
+      },
+    )
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
@@ -120,7 +234,7 @@ export function CommitteeRequestDetailPage() {
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           {canEdit && (
             <Button
               variant="secondary"
@@ -138,6 +252,50 @@ export function CommitteeRequestDetailPage() {
               إرسال الطلب
             </Button>
           )}
+          {canReturnToAdmin && (
+            <Button
+              variant="secondary"
+              icon={<Undo2 size={16} />}
+              onClick={() => {
+                setReturnToAdminError(null)
+                setReturnToAdminOpen(true)
+              }}
+            >
+              إرجاع لمقدّم الطلب
+            </Button>
+          )}
+          {canEscalate && (
+            <Button icon={<ArrowUpCircle size={16} />} onClick={() => setEscalateConfirmOpen(true)}>
+              رفع للرئيس التنفيذي
+            </Button>
+          )}
+          {canDecide && (
+            <>
+              <Button
+                variant="secondary"
+                icon={<Undo2 size={16} />}
+                onClick={() => {
+                  setReturnToOfficeError(null)
+                  setReturnToOfficeOpen(true)
+                }}
+              >
+                إرجاع للمكتب التنفيذي
+              </Button>
+              <Button
+                variant="danger"
+                icon={<XCircle size={16} />}
+                onClick={() => {
+                  setRejectError(null)
+                  setRejectOpen(true)
+                }}
+              >
+                رفض
+              </Button>
+              <Button icon={<CheckCircle2 size={16} />} onClick={() => setApproveConfirmOpen(true)}>
+                اعتماد
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -147,10 +305,21 @@ export function CommitteeRequestDetailPage() {
           <p className="mt-1 text-text-secondary">{request.return_reason}</p>
         </div>
       )}
+      {request.status === 'under_review' && request.return_reason && (
+        <div className="rounded-md border border-warning-border/30 bg-warning-bg px-4 py-3 text-sm text-warning">
+          <p className="font-semibold">أرجع الرئيس التنفيذي هذا الطلب للمكتب التنفيذي</p>
+          <p className="mt-1 text-text-secondary">{request.return_reason}</p>
+        </div>
+      )}
       {request.status === 'rejected' && request.rejection_reason && (
         <div className="rounded-md border border-danger-border/30 bg-danger-bg px-4 py-3 text-sm text-danger">
           <p className="font-semibold">تم رفض هذا الطلب</p>
           <p className="mt-1 text-text-secondary">{request.rejection_reason}</p>
+        </div>
+      )}
+      {request.status === 'approved' && (
+        <div className="rounded-md border border-success-border/30 bg-success-bg px-4 py-3 text-sm text-success">
+          <p className="font-semibold">تم اعتماد هذا الطلب وتشكيل اللجنة رسميًا</p>
         </div>
       )}
 
@@ -266,6 +435,69 @@ export function CommitteeRequestDetailPage() {
         variant="primary"
         loading={submitMutation.isPending}
         errorMessage={submitError}
+      />
+
+      <ReasonConfirmDialog
+        open={returnToAdminOpen}
+        onClose={() => setReturnToAdminOpen(false)}
+        onConfirm={handleReturnToAdmin}
+        title="إرجاع الطلب لمقدّمه"
+        description="سيُرجَع الطلب لمقدّمه (الادمن) ليعدّله ويعيد إرساله من جديد — اذكري سبب الإرجاع."
+        reasonLabel="سبب الإرجاع"
+        confirmLabel="إرجاع الطلب"
+        variant="danger"
+        loading={returnToAdminMutation.isPending}
+        errorMessage={returnToAdminError}
+      />
+
+      <ConfirmDialog
+        open={escalateConfirmOpen}
+        onClose={() => setEscalateConfirmOpen(false)}
+        onConfirm={handleEscalate}
+        title="رفع الطلب للرئيس التنفيذي"
+        description="سيُرفَع الطلب للرئيس التنفيذي لاتخاذ قرار الاعتماد النهائي، ولن تقدري تعديله بعدها إلا إذا أرجعه لكم. هل تريدين المتابعة؟"
+        confirmLabel="رفع الطلب"
+        variant="primary"
+        loading={escalateMutation.isPending}
+        errorMessage={escalateError}
+      />
+
+      <ReasonConfirmDialog
+        open={returnToOfficeOpen}
+        onClose={() => setReturnToOfficeOpen(false)}
+        onConfirm={handleReturnToOffice}
+        title="إرجاع الطلب للمكتب التنفيذي"
+        description="سيُرجَع الطلب للمكتب التنفيذي ليعدّله ويرفعه إليك مرة أخرى — هذا إجراء غير نهائي، بخلاف الرفض. اذكري سبب الإرجاع."
+        reasonLabel="سبب الإرجاع"
+        confirmLabel="إرجاع للمكتب"
+        variant="danger"
+        loading={returnToOfficeMutation.isPending}
+        errorMessage={returnToOfficeError}
+      />
+
+      <ConfirmDialog
+        open={approveConfirmOpen}
+        onClose={() => setApproveConfirmOpen(false)}
+        onConfirm={handleApprove}
+        title="اعتماد طلب تشكيل اللجنة"
+        description="سيُعتمَد الطلب نهائيًا وتُشكَّل اللجنة رسميًا بالأعضاء المقترحين — لا يمكن التراجع عن هذا القرار. هل تريدين المتابعة؟"
+        confirmLabel="اعتماد الطلب"
+        variant="primary"
+        loading={approveMutation.isPending}
+        errorMessage={approveError}
+      />
+
+      <ReasonConfirmDialog
+        open={rejectOpen}
+        onClose={() => setRejectOpen(false)}
+        onConfirm={handleReject}
+        title="رفض طلب تشكيل اللجنة"
+        description="سيُرفَض الطلب نهائيًا ولا يمكن التراجع عن هذا القرار — اذكري سبب الرفض."
+        reasonLabel="سبب الرفض"
+        confirmLabel="رفض الطلب"
+        variant="danger"
+        loading={rejectMutation.isPending}
+        errorMessage={rejectError}
       />
     </div>
   )
