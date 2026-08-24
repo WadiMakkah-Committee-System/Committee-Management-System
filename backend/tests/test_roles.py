@@ -83,6 +83,51 @@ async def test_create_role_with_unknown_permission_rejected(
     assert response.status_code == 400
 
 
+async def test_create_role_without_permissions_rejected(
+    client: AsyncClient, auth_headers
+) -> None:
+    """لا يمكن إنشاء دور بدون تحديد صلاحية واحدة على الأقل."""
+    response = await client.post(
+        "/api/v1/roles",
+        json={"name": "دور بلا صلاحيات", "permission_codes": []},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+    assert "صلاحية واحدة" in response.json()["detail"]
+
+
+async def test_create_role_with_omitted_permissions_rejected(
+    client: AsyncClient, auth_headers
+) -> None:
+    """حتى لو لم يُرسل الحقل أصلًا (يعتمد على القيمة الافتراضية []) يُرفض بنفس الطريقة."""
+    response = await client.post(
+        "/api/v1/roles",
+        json={"name": "دور بلا حقل صلاحيات"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+
+
+async def test_update_role_cannot_clear_all_permissions(
+    client: AsyncClient, auth_headers
+) -> None:
+    """لا يمكن تعديل دور موجود بحيث تصبح صلاحياته صفرًا."""
+    role_response = await client.post(
+        "/api/v1/roles",
+        json={"name": "دور قابل للتعديل", "permission_codes": ["departments.view"]},
+        headers=auth_headers,
+    )
+    role_id = role_response.json()["role_id"]
+
+    response = await client.patch(
+        f"/api/v1/roles/{role_id}",
+        json={"permission_codes": []},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+    assert "صلاحية واحدة" in response.json()["detail"]
+
+
 async def test_new_role_grants_matching_access(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
@@ -136,7 +181,7 @@ async def test_cannot_delete_role_with_active_users(
 ) -> None:
     role_response = await client.post(
         "/api/v1/roles",
-        json={"name": "دور مستخدَم", "permission_codes": []},
+        json={"name": "دور مستخدَم", "permission_codes": ["departments.view"]},
         headers=auth_headers,
     )
     role_id = role_response.json()["role_id"]
