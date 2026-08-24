@@ -91,11 +91,9 @@ export function CommitteesPage() {
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
             >
               <Card
+                interactive
                 onClick={() => navigate(`/committees/approved/${committee.committee_id}`)}
-                className={cn(
-                  'flex h-full cursor-pointer flex-col gap-3 transition-shadow hover:shadow-md',
-                  cardToneClass(i),
-                )}
+                className={cn('flex h-full flex-col gap-3', cardToneClass(i))}
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-success-bg text-success">
                   <CheckCircle2 size={18} />

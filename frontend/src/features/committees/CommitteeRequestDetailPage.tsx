@@ -39,6 +39,50 @@ import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from
 import { RequestPipeline } from './RequestPipeline'
 import { cn, extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
 
+type BannerTone = 'warning' | 'danger' | 'success'
+
+const BANNER_TONE_CLASSES: Record<BannerTone, { border: string; bg: string; text: string; iconBg: string }> = {
+  warning: { border: 'border-warning-border/30', bg: 'bg-warning-bg', text: 'text-warning', iconBg: 'bg-bg-surface' },
+  danger: { border: 'border-danger-border/30', bg: 'bg-danger-bg', text: 'text-danger', iconBg: 'bg-bg-surface' },
+  success: { border: 'border-success-border/30', bg: 'bg-success-bg', text: 'text-success', iconBg: 'bg-bg-surface' },
+}
+
+/**
+ * شريط تنبيه حالة الطلب (إرجاع/رفض/اعتماد) — بنمط أيقونة داخل دائرة
+ * يطابق لغة التصميم المستخدمة في ErrorState/ConfirmDialog/ReasonConfirmDialog
+ * بدل نص عادي فقط، لتحسين التسلسل البصري (Hierarchy) ووضوح الرسالة
+ * لمستخدم غير تقني.
+ */
+function StatusBanner({
+  tone,
+  icon,
+  title,
+  description,
+}: {
+  tone: BannerTone
+  icon: React.ReactNode
+  title: string
+  description?: string | null
+}) {
+  const classes = BANNER_TONE_CLASSES[tone]
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className={cn('flex items-start gap-3 rounded-md border px-4 py-3', classes.border, classes.bg)}
+    >
+      <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-full', classes.iconBg, classes.text)}>
+        {icon}
+      </div>
+      <div className="flex flex-col gap-0.5 pt-1">
+        <p className={cn('text-sm font-semibold', classes.text)}>{title}</p>
+        {description && <p className="text-sm leading-relaxed text-text-secondary">{description}</p>}
+      </div>
+    </motion.div>
+  )
+}
+
 /**
  * صفحة تفاصيل طلب تشكيل لجنة واحد — عرض كامل + كل إجراءات دورة الحياة
  * حسب القواعد الموثّقة بـ committee_service.py بالضبط (راجعي
@@ -81,6 +125,14 @@ export function CommitteeRequestDetailPage() {
     return (
       <div className="flex flex-col gap-6">
         <Skeleton className="h-8 w-56" />
+        <div className="hidden items-center gap-2 rounded-md border border-border-default bg-bg-surface p-5 sm:flex">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex flex-1 items-center gap-2">
+              <Skeleton className="h-11 w-11 shrink-0 rounded-full" />
+              {i < 3 && <Skeleton className="h-0.5 flex-1" />}
+            </div>
+          ))}
+        </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
@@ -303,27 +355,35 @@ export function CommitteeRequestDetailPage() {
       <RequestPipeline status={request.status} returnReason={request.return_reason} />
 
       {request.status === 'returned' && request.return_reason && (
-        <div className="rounded-md border border-warning-border/30 bg-warning-bg px-4 py-3 text-sm text-warning">
-          <p className="font-semibold">أُعيد هذا الطلب للتعديل</p>
-          <p className="mt-1 text-text-secondary">{request.return_reason}</p>
-        </div>
+        <StatusBanner
+          tone="warning"
+          icon={<Undo2 size={18} />}
+          title="أُعيد هذا الطلب للتعديل"
+          description={request.return_reason}
+        />
       )}
       {request.status === 'under_review' && request.return_reason && (
-        <div className="rounded-md border border-warning-border/30 bg-warning-bg px-4 py-3 text-sm text-warning">
-          <p className="font-semibold">أرجع الرئيس التنفيذي هذا الطلب للمكتب التنفيذي</p>
-          <p className="mt-1 text-text-secondary">{request.return_reason}</p>
-        </div>
+        <StatusBanner
+          tone="warning"
+          icon={<Undo2 size={18} />}
+          title="أرجع الرئيس التنفيذي هذا الطلب للمكتب التنفيذي"
+          description={request.return_reason}
+        />
       )}
       {request.status === 'rejected' && request.rejection_reason && (
-        <div className="rounded-md border border-danger-border/30 bg-danger-bg px-4 py-3 text-sm text-danger">
-          <p className="font-semibold">تم رفض هذا الطلب</p>
-          <p className="mt-1 text-text-secondary">{request.rejection_reason}</p>
-        </div>
+        <StatusBanner
+          tone="danger"
+          icon={<XCircle size={18} />}
+          title="تم رفض هذا الطلب"
+          description={request.rejection_reason}
+        />
       )}
       {request.status === 'approved' && (
-        <div className="rounded-md border border-success-border/30 bg-success-bg px-4 py-3 text-sm text-success">
-          <p className="font-semibold">تم اعتماد هذا الطلب وتشكيل اللجنة رسميًا</p>
-        </div>
+        <StatusBanner
+          tone="success"
+          icon={<CheckCircle2 size={18} />}
+          title="تم اعتماد هذا الطلب وتشكيل اللجنة رسميًا"
+        />
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

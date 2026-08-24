@@ -154,7 +154,15 @@ export function CommitteeRequestsPage() {
                       animate={{ opacity: 1 }}
                       transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
                       onClick={() => navigate(`/committees/requests/${req.request_id}`)}
-                      className="group cursor-pointer border-b border-border-default transition-colors last:border-0 hover:bg-table-hover"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          navigate(`/committees/requests/${req.request_id}`)
+                        }
+                      }}
+                      className="group cursor-pointer border-b border-border-default transition-colors last:border-0 hover:bg-table-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent"
                     >
                       <td className="px-4 py-3 font-medium text-text-primary">{req.committee_name}</td>
                       <td className="px-4 py-3 text-text-secondary">
@@ -185,8 +193,9 @@ export function CommitteeRequestsPage() {
                 transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
               >
                 <Card
+                  interactive
                   onClick={() => navigate(`/committees/requests/${req.request_id}`)}
-                  className="flex cursor-pointer flex-col gap-2.5 active:scale-[0.99]"
+                  className="flex flex-col gap-2.5 active:scale-[0.99]"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-semibold text-text-primary">{req.committee_name}</p>
