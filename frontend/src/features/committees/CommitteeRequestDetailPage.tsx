@@ -36,6 +36,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ReasonConfirmDialog } from '@/components/ui/ReasonConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from './CommitteeRequestFormModal'
+import { RequestPipeline } from './RequestPipeline'
 import { extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
 
 /**
@@ -298,6 +299,8 @@ export function CommitteeRequestDetailPage() {
           )}
         </div>
       </div>
+
+      <RequestPipeline status={request.status} returnReason={request.return_reason} />
 
       {request.status === 'returned' && request.return_reason && (
         <div className="rounded-md border border-warning-border/30 bg-warning-bg px-4 py-3 text-sm text-warning">
