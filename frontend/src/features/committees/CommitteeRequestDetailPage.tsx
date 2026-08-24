@@ -443,42 +443,30 @@ export function CommitteeRequestDetailPage() {
             الأعضاء المقترحون
           </h2>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[480px] text-right text-sm">
-            <thead>
-              <tr className="border-b border-border-default bg-table-header">
-                <th className="px-4 py-3 font-semibold text-text-secondary">العضو</th>
-                <th className="px-4 py-3 font-semibold text-text-secondary">البريد الإلكتروني</th>
-              </tr>
-            </thead>
-            <tbody>
-              {request.proposed_members.map((member, i) => (
-                <motion.tr
-                  key={member.user_id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-                  className="border-b border-border-default last:border-0"
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <Avatar firstName={member.first_name} lastName={member.last_name} />
-                      <p className="font-medium text-text-primary">
-                        {member.first_name} {member.last_name}
-                      </p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="flex items-center gap-1.5 text-text-secondary">
-                      <Mail size={13} />
-                      {member.email}
-                    </span>
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* قائمة أعضاء بصف مرن بدل جدول — يتكيّف تلقائيًا على الجوال (البريد
+            ينزل تحت الاسم) بدل جدول بعرض ثابت يحتاج تمريرًا أفقيًا. */}
+        <ul>
+          {request.proposed_members.map((member, i) => (
+            <motion.li
+              key={member.user_id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
+              className="flex flex-col gap-1.5 border-b border-border-default px-4 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+            >
+              <div className="flex items-center gap-3">
+                <Avatar firstName={member.first_name} lastName={member.last_name} />
+                <p className="font-medium text-text-primary">
+                  {member.first_name} {member.last_name}
+                </p>
+              </div>
+              <span className="flex items-center gap-1.5 text-sm text-text-secondary">
+                <Mail size={13} className="shrink-0" />
+                {member.email}
+              </span>
+            </motion.li>
+          ))}
+        </ul>
       </Card>
 
       <p className="text-xs text-text-muted">
