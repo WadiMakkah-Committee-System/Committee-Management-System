@@ -101,6 +101,9 @@ async def create_role(
     if existing.scalar_one_or_none() is not None:
         raise ValueError("اسم الدور مستخدم مسبقًا")
 
+    if not permission_codes:
+        raise ValueError("يجب تحديد صلاحية واحدة على الأقل عند إنشاء الدور")
+
     permissions = await _permissions_by_codes(db, permission_codes)
 
     role = Role(name=name, description=description, is_system=False, is_super_admin=False)
@@ -152,6 +155,8 @@ async def update_role(
         role.description = description
 
     if permission_codes is not None:
+        if not permission_codes:
+            raise ValueError("يجب أن يحتفظ الدور بصلاحية واحدة على الأقل")
         role.permissions = await _permissions_by_codes(db, permission_codes)
 
     await audit_service.log_action(
