@@ -1,7 +1,21 @@
 import type { ReactNode } from 'react'
-import { CheckCircle2, PauseCircle, ShieldCheck, User2, Crown, Briefcase, Sparkles } from 'lucide-react'
+import {
+  CheckCircle2,
+  PauseCircle,
+  ShieldCheck,
+  User2,
+  Crown,
+  Briefcase,
+  Sparkles,
+  FileEdit,
+  Send,
+  Eye,
+  Undo2,
+  Clock3,
+  XCircle,
+} from 'lucide-react'
 import { cn, roleLabel } from '@/lib/utils'
-import type { RoleSummary, SystemRoleName, UserStatus } from '@/types'
+import type { CommitteeRequestStatus, RoleSummary, SystemRoleName, UserStatus } from '@/types'
 
 type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
@@ -62,6 +76,29 @@ export function RoleBadge({ role }: { role: RoleSummary }) {
   return (
     <Badge tone={tone} icon={icon}>
       {roleLabel(role)}
+    </Badge>
+  )
+}
+
+/** تسميات وألوان حالات طلب تشكيل اللجنة — تطابق CommitteeRequestStatus (راجعي types/index.ts). */
+const COMMITTEE_REQUEST_STATUS_META: Record<
+  CommitteeRequestStatus,
+  { label: string; tone: BadgeTone; icon: ReactNode }
+> = {
+  draft: { label: 'مسودة', tone: 'neutral', icon: <FileEdit size={13} /> },
+  submitted: { label: 'مُرسَل', tone: 'info', icon: <Send size={13} /> },
+  under_review: { label: 'قيد المراجعة', tone: 'info', icon: <Eye size={13} /> },
+  returned: { label: 'مُعاد للتعديل', tone: 'warning', icon: <Undo2 size={13} /> },
+  pending_approval: { label: 'بانتظار الاعتماد', tone: 'warning', icon: <Clock3 size={13} /> },
+  approved: { label: 'معتمد', tone: 'success', icon: <CheckCircle2 size={13} /> },
+  rejected: { label: 'مرفوض', tone: 'danger', icon: <XCircle size={13} /> },
+}
+
+export function CommitteeRequestStatusBadge({ status }: { status: CommitteeRequestStatus }) {
+  const meta = COMMITTEE_REQUEST_STATUS_META[status]
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
     </Badge>
   )
 }
