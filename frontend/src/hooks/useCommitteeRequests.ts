@@ -62,3 +62,46 @@ export function useSubmitCommitteeRequest() {
     onSuccess: (_data, requestId) => invalidateCommitteeRequestQueries(queryClient, requestId),
   })
 }
+
+export function useReturnCommitteeRequestToAdmin() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ requestId, returnReason }: { requestId: string; returnReason: string }) =>
+      committeeRequestsApi.returnCommitteeRequestToAdmin(requestId, returnReason),
+    onSuccess: (_data, variables) => invalidateCommitteeRequestQueries(queryClient, variables.requestId),
+  })
+}
+
+export function useReturnCommitteeRequestToOffice() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ requestId, returnReason }: { requestId: string; returnReason: string }) =>
+      committeeRequestsApi.returnCommitteeRequestToOffice(requestId, returnReason),
+    onSuccess: (_data, variables) => invalidateCommitteeRequestQueries(queryClient, variables.requestId),
+  })
+}
+
+export function useEscalateCommitteeRequest() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (requestId: string) => committeeRequestsApi.escalateCommitteeRequest(requestId),
+    onSuccess: (_data, requestId) => invalidateCommitteeRequestQueries(queryClient, requestId),
+  })
+}
+
+export function useApproveCommitteeRequest() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (requestId: string) => committeeRequestsApi.approveCommitteeRequest(requestId),
+    onSuccess: (_data, requestId) => invalidateCommitteeRequestQueries(queryClient, requestId),
+  })
+}
+
+export function useRejectCommitteeRequest() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ requestId, rejectionReason }: { requestId: string; rejectionReason: string }) =>
+      committeeRequestsApi.rejectCommitteeRequest(requestId, rejectionReason),
+    onSuccess: (_data, variables) => invalidateCommitteeRequestQueries(queryClient, variables.requestId),
+  })
+}
