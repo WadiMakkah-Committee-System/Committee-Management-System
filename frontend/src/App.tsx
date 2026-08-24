@@ -9,6 +9,8 @@ import { UsersPage } from '@/features/users/UsersPage'
 import { RolesPermissionsPage } from '@/features/roles/RolesPermissionsPage'
 import { DepartmentsPage } from '@/features/departments/DepartmentsPage'
 import { DepartmentDetailPage } from '@/features/departments/DepartmentDetailPage'
+import { CommitteeRequestsPage } from '@/features/committees/CommitteeRequestsPage'
+import { CommitteeRequestDetailPage } from '@/features/committees/CommitteeRequestDetailPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { usersKeys } from '@/hooks/useUsers'
@@ -71,6 +73,15 @@ function App() {
             <Route element={<ProtectedRoute anyPermission={['departments.view']} />}>
               <Route path="/departments" element={<DepartmentsPage />} />
               <Route path="/departments/:depId" element={<DepartmentDetailPage />} />
+            </Route>
+
+            <Route
+              element={
+                <ProtectedRoute anyPermission={['committees.request.create', 'committees.request.view']} />
+              }
+            >
+              <Route path="/committees/requests" element={<CommitteeRequestsPage />} />
+              <Route path="/committees/requests/:requestId" element={<CommitteeRequestDetailPage />} />
             </Route>
 
             <Route path="/" element={<Navigate to="/users" replace />} />

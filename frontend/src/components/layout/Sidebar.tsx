@@ -16,6 +16,7 @@ import {
   ShieldQuestion,
   UserRound,
   ChevronDown,
+  ClipboardList,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -47,7 +48,18 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   { label: 'الإدارات', icon: Building2, path: '/departments', requiredPermission: ['departments.view'] },
-  { label: 'اللجان', icon: Users2, comingSoon: true },
+  {
+    label: 'اللجان',
+    icon: Users2,
+    children: [
+      {
+        label: 'طلبات تشكيل اللجان',
+        icon: ClipboardList,
+        path: '/committees/requests',
+        requiredPermission: ['committees.request.create', 'committees.request.view'],
+      },
+    ],
+  },
   { label: 'الاجتماعات', icon: CalendarDays, comingSoon: true },
   { label: 'المهام', icon: ListChecks, comingSoon: true },
   { label: 'القرارات', icon: Gavel, comingSoon: true },
@@ -56,6 +68,16 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'الإشعارات', icon: Bell, comingSoon: true },
   { label: 'التقارير', icon: BarChart3, comingSoon: true },
 ]
+
+/**
+ * يقارن مسار الصفحة الحالية بمسار عنصر تنقّل فرعي — تطابق تام أو صفحة
+ * تفاصيل متفرّعة منه (مثال: /committees/requests/{id} تُبقي عنصر "طلبات
+ * تشكيل اللجان" نشطًا ومفتوحًا)، بدل التطابق التام فقط الذي يفشل مع أي
+ * صفحة تفاصيل مستقبلية تحت نفس العنصر الفرعي.
+ */
+function isChildPathActive(pathname: string, childPath: string): boolean {
+  return pathname === childPath || pathname.startsWith(`${childPath}/`)
+}
 
 /** يفلتر عنصرًا (وأبناءه إن وُجدوا) حسب صلاحيات المستخدم — يُسقط أي عنصر فرعي غير مسموح به،
  *  ويُسقط العنصر الأب بالكامل إذا لم يتبقَّ له أي عنصر فرعي ظاهر. */
@@ -90,7 +112,7 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
   // ويبقى مفتوحًا طالما المستخدم لم يطوِه يدويًا بعد ذلك.
   useEffect(() => {
     const parentWithActiveChild = items.find((item) =>
-      item.children?.some((child) => child.path === location.pathname),
+      item.children?.some((child) => child.path && isChildPathActive(location.pathname, child.path)),
     )
     if (parentWithActiveChild) {
       setOpenLabel(parentWithActiveChild.label)
@@ -122,7 +144,9 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
             {items.map((item) => {
               if (item.children) {
                 const isOpen = openLabel === item.label
-                const hasActiveChild = item.children.some((child) => child.path === location.pathname)
+                const hasActiveChild = item.children.some(
+                  (child) => child.path && isChildPathActive(location.pathname, child.path),
+                )
                 return (
                   <li key={item.label}>
                     <button
@@ -159,7 +183,6 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
                             <li key={child.path}>
                               <NavLink
                                 to={child.path!}
-                                end
                                 onClick={onCloseMobile}
                                 className={({ isActive }) =>
                                   cn(

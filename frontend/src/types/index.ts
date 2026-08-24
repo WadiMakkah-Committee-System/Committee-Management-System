@@ -169,3 +169,70 @@ export interface ApiErrorShape {
     | string
     | { msg: string; loc?: (string | number)[] }[]
 }
+
+/**
+ * أنواع وحدة "طلبات تشكيل اللجان" — مطابقة تمامًا لـ
+ * backend/app/schemas/committee.py وbackend/app/models/committee_request.py
+ * (Phase 2، مصحَّحة بـ PR #15). راجعي project_memory:
+ * phase2-committee-formation-requests.md لآلة الحالة الكاملة والقرارات
+ * الموثّقة قبل أي تعديل على هذه الأنواع.
+ */
+export type CommitteeRequestStatus =
+  | 'draft'
+  | 'submitted'
+  | 'under_review'
+  | 'returned'
+  | 'pending_approval'
+  | 'approved'
+  | 'rejected'
+
+export interface CommitteeMemberUser {
+  user_id: string
+  first_name: string
+  middle_name: string
+  last_name: string
+  email: string
+}
+
+export interface CommitteeFormationRequest {
+  request_id: string
+  committee_name: string
+  statement: string | null
+  start_date: string
+  end_date: string
+  status: CommitteeRequestStatus
+  requester: CommitteeMemberUser
+  proposed_members: CommitteeMemberUser[]
+  rejection_reason: string | null
+  return_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CommitteeFormationRequestCreatePayload {
+  committee_name: string
+  statement: string | null
+  start_date: string
+  end_date: string
+  proposed_member_ids: string[]
+}
+
+export interface CommitteeFormationRequestUpdatePayload {
+  committee_name?: string
+  statement?: string | null
+  start_date?: string
+  end_date?: string
+  proposed_member_ids?: string[]
+}
+
+/** اللجنة المعتمدة رسميًا — سطح قراءة بسيط فقط (Phase 5 لاحقًا لإدارتها الكاملة). */
+export interface Committee {
+  committee_id: string
+  name: string
+  statement: string | null
+  start_date: string
+  end_date: string
+  source_request_id: string
+  members: CommitteeMemberUser[]
+  created_at: string
+}

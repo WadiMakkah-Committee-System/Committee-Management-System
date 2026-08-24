@@ -1,0 +1,171 @@
+import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import { CheckCircle2, Clock3, FileEdit, Plus, Users2 } from 'lucide-react'
+import {
+  useCreateCommitteeRequest,
+  useCommitteeRequests,
+} from '@/hooks/useCommitteeRequests'
+import { useAuthStore } from '@/store/authStore'
+import { Card } from '@/components/ui/Card'
+import { Button } from '@/components/ui/Button'
+import { SearchInput } from '@/components/ui/SearchInput'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { ErrorState } from '@/components/ui/ErrorState'
+import { TableSkeleton } from '@/components/ui/Skeleton'
+import { StatCard } from '@/components/ui/StatCard'
+import { CommitteeRequestStatusBadge } from '@/components/ui/StatusBadge'
+import { useToast } from '@/components/ui/Toast'
+import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from './CommitteeRequestFormModal'
+import { extractErrorMessage, formatDate } from '@/lib/utils'
+
+export function CommitteeRequestsPage() {
+  const navigate = useNavigate()
+  const user = useAuthStore((s) => s.user)
+  const { data: requests, isLoading, isError, refetch } = useCommitteeRequests()
+  const createMutation = useCreateCommitteeRequest()
+  const { showToast } = useToast()
+
+  const [search, setSearch] = useState('')
+  const [formOpen, setFormOpen] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const canCreate =
+    !!user?.role.is_super_admin || !!user?.permissions.includes('committees.request.create')
+
+  const filtered = useMemo(() => {
+    if (!requests) return []
+    const q = search.trim().toLowerCase()
+    if (!q) return requests
+    return requests.filter(
+      (r) =>
+        r.committee_name.toLowerCase().includes(q) ||
+        `${r.requester.first_name} ${r.requester.last_name}`.toLowerCase().includes(q),
+    )
+  }, [requests, search])
+
+  const stats = useMemo(() => {
+    const all = requests ?? []
+    return {
+      total: all.length,
+      draftOrReturned: all.filter((r) => r.status === 'draft' || r.status === 'returned').length,
+      inProgress: all.filter((r) => r.status === 'submitted' || r.status === 'under_review' || r.status === 'pending_approval').length,
+      approved: all.filter((r) => r.status === 'approved').length,
+    }
+  }, [requests])
+
+  function handleCreate(values: CommitteeRequestFormSubmitValues) {
+    setFormError(null)
+    createMutation.mutate(values, {
+      onSuccess: (created) => {
+        setFormOpen(false)
+        showToast('تم حفظ طلب تشكيل اللجنة كمسودة', 'success')
+        navigate(`/committees/requests/${created.request_id}`)
+      },
+      onError: (err) => setFormError(extractErrorMessage(err)),
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+        <div>
+          <h1 className="text-xl font-bold text-text-primary">طلبات تشكيل اللجان</h1>
+          <p className="mt-1 text-sm text-text-muted">
+            {canCreate ? 'إنشاء ومتابعة طلبات تشكيل اللجان الخاصة بك' : 'متابعة طلبات تشكيل اللجان المُرسَلة'}
+          </p>
+        </div>
+        {canCreate && (
+          <Button
+            icon={<Plus size={16} />}
+            onClick={() => {
+              setFormError(null)
+              setFormOpen(true)
+            }}
+          >
+            طلب تشكيل لجنة جديد
+          </Button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="إجمالي الطلبات" value={stats.total} icon={<Users2 size={20} />} tone="brand" />
+        <StatCard label="مسودات ومُعادة للتعديل" value={stats.draftOrReturned} icon={<FileEdit size={20} />} tone="orange" />
+        <StatCard label="قيد الإجراء" value={stats.inProgress} icon={<Clock3 size={20} />} tone="purple" />
+        <StatCard label="معتمدة" value={stats.approved} icon={<CheckCircle2 size={20} />} tone="success" />
+      </div>
+
+      <SearchInput value={search} onChange={setSearch} placeholder="ابحث باسم اللجنة أو مقدّم الطلب..." />
+
+      {isLoading ? (
+        <Card className="p-0">
+          <TableSkeleton />
+        </Card>
+      ) : isError ? (
+        <ErrorState onRetry={() => refetch()} />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<Users2 size={26} />}
+          title={search ? 'لا توجد نتائج مطابقة' : 'لا توجد طلبات تشكيل لجان بعد'}
+          description={
+            search ? 'جرّب كلمات بحث مختلفة' : canCreate ? 'ابدأ بإنشاء أول طلب تشكيل لجنة' : undefined
+          }
+          action={
+            !search &&
+            canCreate && (
+              <Button size="sm" icon={<Plus size={14} />} onClick={() => setFormOpen(true)}>
+                طلب تشكيل لجنة جديد
+              </Button>
+            )
+          }
+        />
+      ) : (
+        <Card className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-right text-sm">
+              <thead>
+                <tr className="border-b border-border-default bg-table-header">
+                  <th className="px-4 py-3 font-semibold text-text-secondary">اسم اللجنة</th>
+                  <th className="px-4 py-3 font-semibold text-text-secondary">مقدّم الطلب</th>
+                  <th className="px-4 py-3 font-semibold text-text-secondary">عدد الأعضاء المقترحين</th>
+                  <th className="px-4 py-3 font-semibold text-text-secondary">الحالة</th>
+                  <th className="px-4 py-3 font-semibold text-text-secondary">تاريخ الإنشاء</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((req, i) => (
+                  <motion.tr
+                    key={req.request_id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
+                    onClick={() => navigate(`/committees/requests/${req.request_id}`)}
+                    className="cursor-pointer border-b border-border-default transition-colors last:border-0 hover:bg-table-hover"
+                  >
+                    <td className="px-4 py-3 font-medium text-text-primary">{req.committee_name}</td>
+                    <td className="px-4 py-3 text-text-secondary">
+                      {req.requester.first_name} {req.requester.last_name}
+                    </td>
+                    <td className="px-4 py-3 text-text-secondary">{req.proposed_members.length}</td>
+                    <td className="px-4 py-3">
+                      <CommitteeRequestStatusBadge status={req.status} />
+                    </td>
+                    <td className="px-4 py-3 text-text-muted">{formatDate(req.created_at)}</td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <CommitteeRequestFormModal
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        onSubmit={handleCreate}
+        loading={createMutation.isPending}
+        serverError={formError}
+      />
+    </div>
+  )
+}
