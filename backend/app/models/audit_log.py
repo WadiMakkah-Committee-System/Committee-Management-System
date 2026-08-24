@@ -33,6 +33,14 @@ class AuditAction(str, enum.Enum):
     delete = "delete"
     suspend = "suspend"
     reactivate = "reactivate"
+    # انتقالات حالة طلب تشكيل اللجنة (Phase 2 — committee_service.py) —
+    # أُضيفت بدل إعادة استخدام "update" العام، لأن لكل منها دلالة عمل
+    # مختلفة يهم تتبعها في سجل التدقيق (من أرسل/رفع/اعتمد/رفض الطلب).
+    # مطابقة تمامًا لقيم enum "audit_action" بعد db/migrations/0009.
+    submit = "submit"
+    escalate = "escalate"
+    approve = "approve"
+    reject = "reject"
 
 
 class AuditLog(Base):

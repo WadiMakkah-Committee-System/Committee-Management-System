@@ -25,7 +25,8 @@ async def test_permissions_catalog_marks_enforced_categories(
     client: AsyncClient, auth_headers
 ) -> None:
     """
-    departments/users فقط عليها endpoints تتحقق منها فعليًا حاليًا — الحقل
+    departments/users/committees عليها endpoints تتحقق منها فعليًا حاليًا
+    (committees أُضيفت بعد Phase 2 — طلبات تشكيل اللجان) — الحقل
     is_enforced يسمح للواجهة بعرض بقية الأقسام كـ "قريبًا" بدون تكرار هذه
     القائمة يدويًا في الفرونت.
     """
@@ -33,8 +34,8 @@ async def test_permissions_catalog_marks_enforced_categories(
     body = response.json()
     enforced = {p["category"] for p in body if p["is_enforced"]}
     not_enforced = {p["category"] for p in body if not p["is_enforced"]}
-    assert enforced == {"departments", "users"}
-    assert "committees" in not_enforced and "meetings" in not_enforced
+    assert enforced == {"departments", "users", "committees"}
+    assert "meetings" in not_enforced and "tasks" in not_enforced
 
 
 async def test_system_roles_seeded(client: AsyncClient, auth_headers) -> None:
