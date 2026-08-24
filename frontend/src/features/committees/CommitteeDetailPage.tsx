@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton, TableSkeleton } from '@/components/ui/Skeleton'
 import { Avatar } from '@/components/ui/Avatar'
-import { formatDate, formatDateTime } from '@/lib/utils'
+import { cn, formatDate, formatDateTime } from '@/lib/utils'
 
 /**
  * تفاصيل لجنة معتمدة واحدة — Phase 5، عرض فقط (Read-only). لا أي إجراء
@@ -73,35 +73,43 @@ export function CommitteeDetailPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-teal/10 text-brand-teal">
-            <CalendarDays size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">
-              {formatDate(committee.start_date)} — {formatDate(committee.end_date)}
-            </p>
-            <p className="mt-1 text-xs text-text-muted">فترة عمل اللجنة</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-purple/10 text-brand-purple">
-            <UsersIcon size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">{committee.members.length}</p>
-            <p className="mt-1 text-xs text-text-muted">عدد الأعضاء</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-primary/10 text-brand-primary">
-            <CalendarDays size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">{formatDate(committee.created_at)}</p>
-            <p className="mt-1 text-xs text-text-muted">تاريخ الاعتماد</p>
-          </div>
-        </Card>
+        {[
+          {
+            icon: <CalendarDays size={20} />,
+            tone: 'bg-brand-teal/10 text-brand-teal',
+            value: `${formatDate(committee.start_date)} — ${formatDate(committee.end_date)}`,
+            label: 'فترة عمل اللجنة',
+          },
+          {
+            icon: <UsersIcon size={20} />,
+            tone: 'bg-brand-purple/10 text-brand-purple',
+            value: String(committee.members.length),
+            label: 'عدد الأعضاء',
+          },
+          {
+            icon: <CalendarDays size={20} />,
+            tone: 'bg-brand-primary/10 text-brand-primary',
+            value: formatDate(committee.created_at),
+            label: 'تاريخ الاعتماد',
+          },
+        ].map((item, i) => (
+          <motion.div
+            key={item.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+          >
+            <Card className="flex items-center gap-4">
+              <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-full', item.tone)}>
+                {item.icon}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-text-primary">{item.value}</p>
+                <p className="mt-1 text-xs text-text-muted">{item.label}</p>
+              </div>
+            </Card>
+          </motion.div>
+        ))}
       </div>
 
       {committee.statement && (

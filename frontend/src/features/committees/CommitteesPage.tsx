@@ -46,8 +46,19 @@ export function CommitteesPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <StatCard label="عدد اللجان" value={committees?.length ?? 0} icon={<CheckCircle2 size={20} />} tone="success" />
-        <StatCard label="إجمالي الأعضاء" value={totalMembers} icon={<Users2 size={20} />} tone="brand" />
+        {[
+          { label: 'عدد اللجان', value: committees?.length ?? 0, icon: <CheckCircle2 size={20} />, tone: 'success' as const },
+          { label: 'إجمالي الأعضاء', value: totalMembers, icon: <Users2 size={20} />, tone: 'brand' as const },
+        ].map((stat, i) => (
+          <motion.div
+            key={stat.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+          >
+            <StatCard label={stat.label} value={stat.value} icon={stat.icon} tone={stat.tone} />
+          </motion.div>
+        ))}
       </div>
 
       <SearchInput value={search} onChange={setSearch} placeholder="ابحث باسم اللجنة أو بيانها..." />

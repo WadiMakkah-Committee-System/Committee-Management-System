@@ -37,7 +37,7 @@ import { ReasonConfirmDialog } from '@/components/ui/ReasonConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from './CommitteeRequestFormModal'
 import { RequestPipeline } from './RequestPipeline'
-import { extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
+import { cn, extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
 
 /**
  * صفحة تفاصيل طلب تشكيل لجنة واحد — عرض كامل + كل إجراءات دورة الحياة
@@ -327,37 +327,43 @@ export function CommitteeRequestDetailPage() {
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-primary/10 text-brand-primary">
-            <UserRound size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">
-              {request.requester.first_name} {request.requester.last_name}
-            </p>
-            <p className="mt-1 text-xs text-text-muted">مقدّم الطلب</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-teal/10 text-brand-teal">
-            <CalendarDays size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">
-              {formatDate(request.start_date)} — {formatDate(request.end_date)}
-            </p>
-            <p className="mt-1 text-xs text-text-muted">فترة عمل اللجنة</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-purple/10 text-brand-purple">
-            <UsersIcon size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">{request.proposed_members.length}</p>
-            <p className="mt-1 text-xs text-text-muted">الأعضاء المقترحون</p>
-          </div>
-        </Card>
+        {[
+          {
+            icon: <UserRound size={20} />,
+            tone: 'bg-brand-primary/10 text-brand-primary',
+            value: `${request.requester.first_name} ${request.requester.last_name}`,
+            label: 'مقدّم الطلب',
+          },
+          {
+            icon: <CalendarDays size={20} />,
+            tone: 'bg-brand-teal/10 text-brand-teal',
+            value: `${formatDate(request.start_date)} — ${formatDate(request.end_date)}`,
+            label: 'فترة عمل اللجنة',
+          },
+          {
+            icon: <UsersIcon size={20} />,
+            tone: 'bg-brand-purple/10 text-brand-purple',
+            value: String(request.proposed_members.length),
+            label: 'الأعضاء المقترحون',
+          },
+        ].map((item, i) => (
+          <motion.div
+            key={item.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+          >
+            <Card className="flex items-center gap-4">
+              <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-full', item.tone)}>
+                {item.icon}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-text-primary">{item.value}</p>
+                <p className="mt-1 text-xs text-text-muted">{item.label}</p>
+              </div>
+            </Card>
+          </motion.div>
+        ))}
       </div>
 
       {request.statement && (
