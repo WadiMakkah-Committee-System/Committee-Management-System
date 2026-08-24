@@ -3,35 +3,47 @@
 منطق العمل (Business Logic) لوحدة "طلبات تشكيل اللجان" — RF-COM-100 →
 RF-COM-700 (SRS)، يطبّق دورة الحياة الكاملة للطلب حسب التدفق الموثّق في
 BRS (ص12) وSRS (Use Cases 1-8، ص19)، بعد تصحيحه بقرارات موثّقة مع
-المستخدمة (Lama) بتاريخ 2026-08-24 — راجعي project_memory:
-phase1-committee-formation.md لتفاصيل القرارات.
+المستخدمة (Lama) — آخرها بتاريخ 2026-08-24 (تصحيح مسار الإرجاع). راجعي
+project_memory: phase2-committee-formation-requests.md لتفاصيل القرارات
+كاملة.
 
 آلة الحالات المعتمدة (Requirements & Business Rules — موثّقة، وليست
-اختراعًا):
-    draft → submitted → (under_review) → pending_approval → approved
-                                                            → rejected
+اختراعًا، وصفتها المستخدمة حرفيًا):
+
+    draft ──submit──> submitted ──edit(مباشر)──> submitted (نفس الحالة)
+      ^                  │  │
+      │        return_to_admin  escalate
+      │                  │       │
+      └──returned<───────┘       v
+              (الادمن يعدّل    under_review ──edit/escalate──> under_review/pending_approval
+               ويعيد الإرسال)                                    │        │
+                                                          return_to_office   approve/reject
+                                                                   │             │
+                                                                   v             v
+                                                            under_review   approved (نهائية)
+                                                                          rejected (نهائية)
 
 من يقدر يفعل ماذا (RBAC مفروض هنا + على مستوى الراوت):
-- draft: يُنشئه ويعدّله فقط مقدّم الطلب نفسه (requested_by) — صلاحية
-  committees.request.create تكفي طالما الطلب لسا بحالة draft وهو صاحبه.
-- draft → submitted: مقدّم الطلب فقط (زر "إرسال للمكتب التنفيذي" —
-  RF-COM-300). بعدها **لا يقدر مقدّم الطلب يعدّله إطلاقًا** (قرار موثّق
-  صراحة من المستخدمة، يخالف الأصل الافتراضي بلا "إرجاع للادمن").
-- submitted/under_review/pending_approval: يعدّله فقط من يملك صلاحية
-  committees.request.update (المكتب التنفيذي حصرًا) — بلا قيد ملكية،
-  وبدون أي مسار "إرجاع لمقدّم الطلب" (SRS Use Case #2: التعديل مباشر من
-  المكتب التنفيذي نفسه).
-- submitted/under_review → pending_approval: committees.request.escalate
-  (المكتب التنفيذي — RF-COM-400 / Use Case #4).
-- pending_approval → approved/rejected: committees.request.approve
-  (الرئيس التنفيذي حصرًا — RF-COM-500/600). الموافقة تُنشئ تلقائيًا سجل
-  committees + committee_members من proposed_members اللحظية (Use Case #6،
-  BRS ص12).
+- draft/returned: يعدّله فقط مقدّم الطلب نفسه (requested_by) — صلاحية
+  committees.request.create تكفي. submit_request يرسله من أي من الحالتين
+  إلى submitted.
+- submitted/under_review: يعدّله (تعديل مباشر)، أو يرجعه لمقدّم الطلب مع
+  سبب (return_to_admin_request → returned)، أو يرفعه للرئيس التنفيذي
+  (escalate_request → pending_approval) — كلها حصرًا لمن يملك الصلاحية
+  المناسبة (المكتب التنفيذي). **لا يقدر مقدّم الطلب يعدّله إطلاقًا بعد
+  الإرسال** — التعديل حصرًا للمكتب التنفيذي، أو الإرجاع الصريح له بسبب.
+- pending_approval: **مقفول تمامًا على الجميع** — ولا حتى المكتب التنفيذي
+  يعدّل بهذه الحالة (قرار موثّق صراحة 2026-08-24، يصحّح افتراضًا سابقًا).
+  الرئيس التنفيذي حصرًا (committees.request.approve) يقرر: يعتمد (approved
+  — تُنشئ تلقائيًا سجل committees + committee_members، Use Case #6)، يرفض
+  نهائيًا (rejected، مع rejection_reason إلزامي)، أو يرجعه للمكتب التنفيذي
+  مع سبب (return_to_office_request → under_review، ليعدّل المكتب ويرفعه
+  مرة ثانية).
 
 قرار موثّق مهم (يخالف SRS Use Case #5 وpermissions.xlsx عمدًا، بموافقة
-المستخدمة — راجعي المذكرة أعلاه): عضوية اللجنة وبياناتها بعد الاعتماد
-**مقفلة نهائيًا لكل الأدوار بدون استثناء** — لا يوجد هنا ولا في طبقة الـ
-API أي دالة تعدّل committees/committee_members بعد approved.
+المستخدمة): عضوية اللجنة وبياناتها بعد الاعتماد **مقفلة نهائيًا لكل
+الأدوار بدون استثناء** — لا يوجد هنا ولا في طبقة الـAPI أي دالة تعدّل
+committees/committee_members بعد approved.
 
 الإشعارات (RF-COM-700: إشعار الأعضاء فور الاعتماد) خارج نطاق هذه الخدمة
 — لا يوجد جدول notifications عام بالمشروع بعد (قرار موثّق مسبقًا في Phase
@@ -199,28 +211,36 @@ async def update_request(
     can_edit_any_pending: bool,
 ) -> CommitteeFormationRequest:
     """
-    تعديل طلب قائم. القاعدة (موثّقة صراحة من المستخدمة):
-    - draft: مقدّم الطلب نفسه فقط (وليس أي حامل لصلاحية request.create).
-    - submitted/under_review/pending_approval: من يملك committees.request.update
-      فقط (can_edit_any_pending) — بلا قيد ملكية.
-    - approved/rejected/returned: نهائية، لا تعديل إطلاقًا.
+    تعديل طلب قائم. القاعدة (موثّقة صراحة من المستخدمة، مصحَّحة 2026-08-24):
+    - draft/returned: مقدّم الطلب نفسه فقط (وليس أي حامل لصلاحية request.create).
+      returned تحديدًا تعني أن المكتب التنفيذي أرجع الطلب له مع سبب — يعدّل
+      ويعيد إرساله (submit_request) من جديد.
+    - submitted/under_review: من يملك committees.request.update فقط
+      (can_edit_any_pending) — بلا قيد ملكية.
+    - pending_approval: **مقفول على الجميع** — لا حتى المكتب التنفيذي.
+      الرئيس التنفيذي يقدر يرجعه (return_to_office_request) لو احتاج تعديل،
+      لا يعدّله مباشرة.
+    - approved/rejected: نهائية، لا تعديل إطلاقًا.
     """
     request = await _get_request_or_raise(db, request_id)
 
-    if request.status == CommitteeRequestStatus.draft:
+    if request.status in (CommitteeRequestStatus.draft, CommitteeRequestStatus.returned):
         if request.requested_by != actor.user_id and not actor.role.is_super_admin:
             raise CommitteeRequestForbiddenError(
-                "لا يقدر إلا مقدّم الطلب على تعديله وهو ما زال مسودة"
+                "لا يقدر إلا مقدّم الطلب على تعديله بهذه الحالة"
             )
     elif request.status in (
         CommitteeRequestStatus.submitted,
         CommitteeRequestStatus.under_review,
-        CommitteeRequestStatus.pending_approval,
     ):
         if not can_edit_any_pending and not actor.role.is_super_admin:
             raise CommitteeRequestForbiddenError(
                 "تعديل الطلب بعد إرساله متاح فقط للمكتب التنفيذي"
             )
+    elif request.status == CommitteeRequestStatus.pending_approval:
+        raise CommitteeRequestInvalidTransitionError(
+            "الطلب بانتظار اعتماد الرئيس التنفيذي، ولا يمكن تعديله إلا بعد إرجاعه"
+        )
     else:
         raise CommitteeRequestInvalidTransitionError(
             "الطلب في حالة نهائية (معتمد أو مرفوض) ولا يمكن تعديله"
@@ -263,15 +283,23 @@ async def update_request(
 async def submit_request(
     db: AsyncSession, *, actor: User, request_id: uuid.UUID
 ) -> CommitteeFormationRequest:
-    """draft → submitted (RF-COM-300). مقدّم الطلب نفسه فقط."""
+    """
+    draft/returned → submitted (RF-COM-300). مقدّم الطلب نفسه فقط. returned
+    مسموحة أيضًا (وليس فقط draft) — بعد إرجاع المكتب التنفيذي الطلب مع
+    سبب، يعدّله مقدّم الطلب ثم يعيد إرساله بنفس هذا الإجراء.
+    """
     request = await _get_request_or_raise(db, request_id)
 
-    if request.status != CommitteeRequestStatus.draft:
-        raise CommitteeRequestInvalidTransitionError("لا يمكن إرسال طلب ليس بحالة مسودة")
+    if request.status not in (CommitteeRequestStatus.draft, CommitteeRequestStatus.returned):
+        raise CommitteeRequestInvalidTransitionError(
+            "لا يمكن إرسال طلب ليس بحالة مسودة أو مُعاد"
+        )
     if request.requested_by != actor.user_id and not actor.role.is_super_admin:
         raise CommitteeRequestForbiddenError("لا يقدر إلا مقدّم الطلب على إرساله")
 
+    from_status = request.status
     request.status = CommitteeRequestStatus.submitted
+    request.return_reason = None  # سبب الإرجاع لم يعد ساريًا بعد إعادة الإرسال (السجل الكامل في audit_logs)
 
     await audit_service.log_action(
         db,
@@ -279,7 +307,74 @@ async def submit_request(
         action_type="submit",
         target_type="committee_formation_request",
         target_id=request.request_id,
-        metadata={"to_status": request.status.value},
+        metadata={"from_status": from_status.value, "to_status": request.status.value},
+    )
+
+    await db.commit()
+    return await _get_request_or_raise(db, request.request_id)
+
+
+async def return_to_admin_request(
+    db: AsyncSession, *, actor: User, request_id: uuid.UUID, return_reason: str
+) -> CommitteeFormationRequest:
+    """
+    submitted/under_review → returned. المكتب التنفيذي يرجع الطلب لمقدّمه
+    (الادمن) مع سبب إلزامي، بدل تعديله مباشرة — خيار ثانٍ متاح له إلى جانب
+    التعديل المباشر (update_request) والرفع للاعتماد (escalate_request).
+    مقدّم الطلب يعدّله ويعيد إرساله عبر submit_request.
+    """
+    request = await _get_request_or_raise(db, request_id)
+
+    if request.status not in (
+        CommitteeRequestStatus.submitted,
+        CommitteeRequestStatus.under_review,
+    ):
+        raise CommitteeRequestInvalidTransitionError(
+            "لا يمكن إرجاع طلب للادمن إلا وهو submitted أو under_review"
+        )
+
+    request.status = CommitteeRequestStatus.returned
+    request.return_reason = return_reason
+
+    await audit_service.log_action(
+        db,
+        actor_user_id=actor.user_id,
+        action_type="returned",
+        target_type="committee_formation_request",
+        target_id=request.request_id,
+        metadata={"direction": "office_to_admin", "return_reason": return_reason},
+    )
+
+    await db.commit()
+    return await _get_request_or_raise(db, request.request_id)
+
+
+async def return_to_office_request(
+    db: AsyncSession, *, actor: User, request_id: uuid.UUID, return_reason: str
+) -> CommitteeFormationRequest:
+    """
+    pending_approval → under_review. الرئيس التنفيذي يرجع الطلب للمكتب
+    التنفيذي مع سبب إلزامي، بدل اعتماده أو رفضه نهائيًا — المكتب يعدّل
+    ويرفعه مرة ثانية عبر escalate_request. مختلف عمدًا عن reject_request
+    (رفض نهائي، لا رجعة فيه) — هذا مسار غير نهائي.
+    """
+    request = await _get_request_or_raise(db, request_id)
+
+    if request.status != CommitteeRequestStatus.pending_approval:
+        raise CommitteeRequestInvalidTransitionError(
+            "لا يمكن إرجاع طلب للمكتب التنفيذي إلا وهو بانتظار الاعتماد"
+        )
+
+    request.status = CommitteeRequestStatus.under_review
+    request.return_reason = return_reason
+
+    await audit_service.log_action(
+        db,
+        actor_user_id=actor.user_id,
+        action_type="returned",
+        target_type="committee_formation_request",
+        target_id=request.request_id,
+        metadata={"direction": "ceo_to_office", "return_reason": return_reason},
     )
 
     await db.commit()
@@ -305,6 +400,7 @@ async def escalate_request(
         )
 
     request.status = CommitteeRequestStatus.pending_approval
+    request.return_reason = None  # لو كان راجعًا من الرئيس التنفيذي سابقًا، السبب لم يعد ساريًا
 
     await audit_service.log_action(
         db,

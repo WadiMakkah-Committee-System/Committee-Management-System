@@ -81,9 +81,19 @@ class CommitteeFormationRequestUpdate(BaseModel):
 
 
 class CommitteeRejectRequest(BaseModel):
-    """سبب الرفض — إلزامي عند رفض الرئيس التنفيذي لطلب التشكيل (RF-COM-600)."""
+    """سبب الرفض — إلزامي عند رفض الرئيس التنفيذي لطلب التشكيل (RF-COM-600، نهائي)."""
 
     rejection_reason: str = Field(min_length=3, max_length=1000)
+
+
+class CommitteeReturnRequest(BaseModel):
+    """
+    سبب الإرجاع — إلزامي، تُستخدم لمسارين غير نهائيين (قرار موثّق
+    2026-08-24): المكتب التنفيذي يرجع الطلب لمقدّمه، أو الرئيس التنفيذي
+    يرجعه للمكتب التنفيذي.
+    """
+
+    return_reason: str = Field(min_length=3, max_length=1000)
 
 
 class CommitteeFormationRequestOut(BaseModel):
@@ -98,6 +108,7 @@ class CommitteeFormationRequestOut(BaseModel):
     requester: CommitteeMemberUserOut
     proposed_members: list[CommitteeMemberUserOut]
     rejection_reason: str | None
+    return_reason: str | None
     created_at: datetime
     updated_at: datetime
 

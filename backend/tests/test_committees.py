@@ -359,3 +359,150 @@ async def test_create_request_requires_authentication(client: AsyncClient) -> No
         "/api/v1/committee-requests", json=_valid_payload(str(uuid.uuid4()))
     )
     assert response.status_code == 401
+
+
+async def test_office_returns_request_to_admin_who_edits_and_resubmits(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """قرار موثّق 2026-08-24: المكتب يرجع الطلب للادمن بسبب، الادمن يعدّل ويعيد الإرسال."""
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    create = await client.post(
+        "/api/v1/committee-requests",
+        json=_valid_payload(actors["member_id"]),
+        headers=actors["admin_headers"],
+    )
+    request_id = create.json()["request_id"]
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+
+    missing_reason = await client.post(
+        f"/api/v1/committee-requests/{request_id}/return-to-admin",
+        json={},
+        headers=actors["office_headers"],
+    )
+    assert missing_reason.status_code == 422
+
+    ret = await client.post(
+        f"/api/v1/committee-requests/{request_id}/return-to-admin",
+        json={"return_reason": "بيانات اللجنة ناقصة"},
+        headers=actors["office_headers"],
+    )
+    assert ret.status_code == 200, ret.text
+    assert ret.json()["status"] == "returned"
+    assert ret.json()["return_reason"] == "بيانات اللجنة ناقصة"
+
+    # الادمن يقدر يعدّل الآن (returned مثل draft)
+    edit = await client.patch(
+        f"/api/v1/committee-requests/{request_id}",
+        json={"committee_name": "لجنة الجودة (بعد التعديل)"},
+        headers=actors["admin_headers"],
+    )
+    assert edit.status_code == 200, edit.text
+
+    # المكتب التنفيذي ما يقدر يعدّل وهي returned (ملك الادمن فقط بهذه الحالة)
+    office_edit_returned = await client.patch(
+        f"/api/v1/committee-requests/{request_id}",
+        json={"statement": "محاولة من المكتب"},
+        headers=actors["office_headers"],
+    )
+    assert office_edit_returned.status_code == 403
+
+    resubmit = await client.post(
+        f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"]
+    )
+    assert resubmit.status_code == 200, resubmit.text
+    assert resubmit.json()["status"] == "submitted"
+    assert resubmit.json()["return_reason"] is None  # السبب يُمسح بعد إعادة الإرسال
+
+
+async def test_ceo_returns_request_to_office_who_edits_and_escalates_again(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """قرار موثّق 2026-08-24: الرئيس التنفيذي يرجع الطلب للمكتب (غير نهائي)، يعدّل المكتب ويرفعه ثانية."""
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    create = await client.post(
+        "/api/v1/committee-requests",
+        json=_valid_payload(actors["member_id"]),
+        headers=actors["admin_headers"],
+    )
+    request_id = create.json()["request_id"]
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+    await client.post(f"/api/v1/committee-requests/{request_id}/escalate", headers=actors["office_headers"])
+
+    # لا أحد يعدّل وهي pending_approval — ولا حتى المكتب التنفيذي
+    locked_edit = await client.patch(
+        f"/api/v1/committee-requests/{request_id}",
+        json={"statement": "محاولة تعديل وهي بانتظار الاعتماد"},
+        headers=actors["office_headers"],
+    )
+    assert locked_edit.status_code == 409
+
+    ret = await client.post(
+        f"/api/v1/committee-requests/{request_id}/return-to-office",
+        json={"return_reason": "محتاج تفاصيل أكثر عن أهداف اللجنة"},
+        headers=actors["ceo_headers"],
+    )
+    assert ret.status_code == 200, ret.text
+    assert ret.json()["status"] == "under_review"
+    assert ret.json()["return_reason"] == "محتاج تفاصيل أكثر عن أهداف اللجنة"
+
+    # المكتب يعدّل وهي under_review
+    office_edit = await client.patch(
+        f"/api/v1/committee-requests/{request_id}",
+        json={"statement": "تفاصيل إضافية عن أهداف اللجنة"},
+        headers=actors["office_headers"],
+    )
+    assert office_edit.status_code == 200, office_edit.text
+
+    re_escalate = await client.post(
+        f"/api/v1/committee-requests/{request_id}/escalate", headers=actors["office_headers"]
+    )
+    assert re_escalate.status_code == 200, re_escalate.text
+    assert re_escalate.json()["status"] == "pending_approval"
+    assert re_escalate.json()["return_reason"] is None
+
+    approve = await client.post(
+        f"/api/v1/committee-requests/{request_id}/approve", headers=actors["ceo_headers"]
+    )
+    assert approve.status_code == 200, approve.text
+
+
+async def test_admin_cannot_return_request(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    create = await client.post(
+        "/api/v1/committee-requests",
+        json=_valid_payload(actors["member_id"]),
+        headers=actors["admin_headers"],
+    )
+    request_id = create.json()["request_id"]
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+
+    forbidden = await client.post(
+        f"/api/v1/committee-requests/{request_id}/return-to-admin",
+        json={"return_reason": "محاولة من الادمن نفسه"},
+        headers=actors["admin_headers"],
+    )
+    assert forbidden.status_code == 403
+
+
+async def test_office_cannot_return_to_office(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """return-to-office حصرية على الرئيس التنفيذي فقط."""
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    create = await client.post(
+        "/api/v1/committee-requests",
+        json=_valid_payload(actors["member_id"]),
+        headers=actors["admin_headers"],
+    )
+    request_id = create.json()["request_id"]
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+    await client.post(f"/api/v1/committee-requests/{request_id}/escalate", headers=actors["office_headers"])
+
+    forbidden = await client.post(
+        f"/api/v1/committee-requests/{request_id}/return-to-office",
+        json={"return_reason": "محاولة من المكتب"},
+        headers=actors["office_headers"],
+    )
+    assert forbidden.status_code == 403
