@@ -18,13 +18,13 @@ export function UserManagementPage() {
   const isSuperAdmin = !!user?.role.is_super_admin
   const canViewUsers = isSuperAdmin || !!user?.permissions.includes('users.view')
 
-  const [tab, setTab] = useState<TabKey>(canViewUsers ? 'users' : 'roles')
+  const [tab, setTab] = useState<TabKey>(isSuperAdmin ? 'roles' : 'users')
 
   const items = [
-    ...(canViewUsers ? [{ key: 'users', label: 'المستخدمون', icon: <UsersIcon size={15} /> }] : []),
     ...(isSuperAdmin
       ? [{ key: 'roles', label: 'الأدوار والصلاحيات', icon: <ShieldQuestion size={15} /> }]
       : []),
+    ...(canViewUsers ? [{ key: 'users', label: 'المستخدمون', icon: <UsersIcon size={15} /> }] : []),
   ]
 
   return (
