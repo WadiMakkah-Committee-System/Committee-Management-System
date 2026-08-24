@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { CheckCircle2, Clock3, FileEdit, Plus, Users2 } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, Clock3, FileEdit, Plus, Users2 } from 'lucide-react'
 import {
   useCreateCommitteeRequest,
   useCommitteeRequests,
@@ -89,10 +89,21 @@ export function CommitteeRequestsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="إجمالي الطلبات" value={stats.total} icon={<Users2 size={20} />} tone="brand" />
-        <StatCard label="مسودات ومُعادة للتعديل" value={stats.draftOrReturned} icon={<FileEdit size={20} />} tone="orange" />
-        <StatCard label="قيد الإجراء" value={stats.inProgress} icon={<Clock3 size={20} />} tone="purple" />
-        <StatCard label="معتمدة" value={stats.approved} icon={<CheckCircle2 size={20} />} tone="success" />
+        {[
+          { label: 'إجمالي الطلبات', value: stats.total, icon: <Users2 size={20} />, tone: 'brand' as const },
+          { label: 'مسودات ومُعادة للتعديل', value: stats.draftOrReturned, icon: <FileEdit size={20} />, tone: 'orange' as const },
+          { label: 'قيد الإجراء', value: stats.inProgress, icon: <Clock3 size={20} />, tone: 'purple' as const },
+          { label: 'معتمدة', value: stats.approved, icon: <CheckCircle2 size={20} />, tone: 'success' as const },
+        ].map((stat, i) => (
+          <motion.div
+            key={stat.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+          >
+            <StatCard label={stat.label} value={stat.value} icon={stat.icon} tone={stat.tone} />
+          </motion.div>
+        ))}
       </div>
 
       <SearchInput value={search} onChange={setSearch} placeholder="ابحث باسم اللجنة أو مقدّم الطلب..." />
@@ -120,43 +131,91 @@ export function CommitteeRequestsPage() {
           }
         />
       ) : (
-        <Card className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-right text-sm">
-              <thead>
-                <tr className="border-b border-border-default bg-table-header">
-                  <th className="px-4 py-3 font-semibold text-text-secondary">اسم اللجنة</th>
-                  <th className="px-4 py-3 font-semibold text-text-secondary">مقدّم الطلب</th>
-                  <th className="px-4 py-3 font-semibold text-text-secondary">عدد الأعضاء المقترحين</th>
-                  <th className="px-4 py-3 font-semibold text-text-secondary">الحالة</th>
-                  <th className="px-4 py-3 font-semibold text-text-secondary">تاريخ الإنشاء</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((req, i) => (
-                  <motion.tr
-                    key={req.request_id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-                    onClick={() => navigate(`/committees/requests/${req.request_id}`)}
-                    className="cursor-pointer border-b border-border-default transition-colors last:border-0 hover:bg-table-hover"
-                  >
-                    <td className="px-4 py-3 font-medium text-text-primary">{req.committee_name}</td>
-                    <td className="px-4 py-3 text-text-secondary">
+        <>
+          {/* سطح المكتب / التابلت: جدول */}
+          <Card className="hidden p-0 sm:block">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-right text-sm">
+                <thead>
+                  <tr className="border-b border-border-default bg-table-header">
+                    <th className="px-4 py-3 font-semibold text-text-secondary">اسم اللجنة</th>
+                    <th className="px-4 py-3 font-semibold text-text-secondary">مقدّم الطلب</th>
+                    <th className="px-4 py-3 font-semibold text-text-secondary">عدد الأعضاء المقترحين</th>
+                    <th className="px-4 py-3 font-semibold text-text-secondary">الحالة</th>
+                    <th className="px-4 py-3 font-semibold text-text-secondary">تاريخ الإنشاء</th>
+                    <th className="w-10 px-2 py-3" aria-hidden="true" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((req, i) => (
+                    <motion.tr
+                      key={req.request_id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
+                      onClick={() => navigate(`/committees/requests/${req.request_id}`)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          navigate(`/committees/requests/${req.request_id}`)
+                        }
+                      }}
+                      className="group cursor-pointer border-b border-border-default transition-colors last:border-0 hover:bg-table-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent"
+                    >
+                      <td className="px-4 py-3 font-medium text-text-primary">{req.committee_name}</td>
+                      <td className="px-4 py-3 text-text-secondary">
+                        {req.requester.first_name} {req.requester.last_name}
+                      </td>
+                      <td className="px-4 py-3 text-text-secondary">{req.proposed_members.length}</td>
+                      <td className="px-4 py-3">
+                        <CommitteeRequestStatusBadge status={req.status} />
+                      </td>
+                      <td className="px-4 py-3 text-text-muted">{formatDate(req.created_at)}</td>
+                      <td className="px-2 py-3 text-text-muted opacity-0 transition-opacity group-hover:opacity-100">
+                        <ChevronLeft size={16} />
+                      </td>
+                    </motion.tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          {/* الجوال: بطاقات بدل جدول أفقي التمرير */}
+          <div className="flex flex-col gap-3 sm:hidden">
+            {filtered.map((req, i) => (
+              <motion.div
+                key={req.request_id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
+              >
+                <Card
+                  interactive
+                  onClick={() => navigate(`/committees/requests/${req.request_id}`)}
+                  className="flex flex-col gap-2.5 active:scale-[0.99]"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-semibold text-text-primary">{req.committee_name}</p>
+                    <CommitteeRequestStatusBadge status={req.status} />
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-text-muted">
+                    <span>
                       {req.requester.first_name} {req.requester.last_name}
-                    </td>
-                    <td className="px-4 py-3 text-text-secondary">{req.proposed_members.length}</td>
-                    <td className="px-4 py-3">
-                      <CommitteeRequestStatusBadge status={req.status} />
-                    </td>
-                    <td className="px-4 py-3 text-text-muted">{formatDate(req.created_at)}</td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
+                    </span>
+                    <span>{req.proposed_members.length} أعضاء</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-border-default pt-2 text-xs text-text-muted">
+                    <span>{formatDate(req.created_at)}</span>
+                    <ChevronLeft size={14} />
+                  </div>
+                </Card>
+              </motion.div>
+            ))}
           </div>
-        </Card>
+        </>
       )}
 
       <CommitteeRequestFormModal

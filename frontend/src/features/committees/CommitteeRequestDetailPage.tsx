@@ -36,7 +36,52 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ReasonConfirmDialog } from '@/components/ui/ReasonConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from './CommitteeRequestFormModal'
-import { extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
+import { RequestPipeline } from './RequestPipeline'
+import { cn, extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
+
+type BannerTone = 'warning' | 'danger' | 'success'
+
+const BANNER_TONE_CLASSES: Record<BannerTone, { border: string; bg: string; text: string; iconBg: string }> = {
+  warning: { border: 'border-warning-border/30', bg: 'bg-warning-bg', text: 'text-warning', iconBg: 'bg-bg-surface' },
+  danger: { border: 'border-danger-border/30', bg: 'bg-danger-bg', text: 'text-danger', iconBg: 'bg-bg-surface' },
+  success: { border: 'border-success-border/30', bg: 'bg-success-bg', text: 'text-success', iconBg: 'bg-bg-surface' },
+}
+
+/**
+ * شريط تنبيه حالة الطلب (إرجاع/رفض/اعتماد) — بنمط أيقونة داخل دائرة
+ * يطابق لغة التصميم المستخدمة في ErrorState/ConfirmDialog/ReasonConfirmDialog
+ * بدل نص عادي فقط، لتحسين التسلسل البصري (Hierarchy) ووضوح الرسالة
+ * لمستخدم غير تقني.
+ */
+function StatusBanner({
+  tone,
+  icon,
+  title,
+  description,
+}: {
+  tone: BannerTone
+  icon: React.ReactNode
+  title: string
+  description?: string | null
+}) {
+  const classes = BANNER_TONE_CLASSES[tone]
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className={cn('flex items-start gap-3 rounded-md border px-4 py-3', classes.border, classes.bg)}
+    >
+      <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-full', classes.iconBg, classes.text)}>
+        {icon}
+      </div>
+      <div className="flex flex-col gap-0.5 pt-1">
+        <p className={cn('text-sm font-semibold', classes.text)}>{title}</p>
+        {description && <p className="text-sm leading-relaxed text-text-secondary">{description}</p>}
+      </div>
+    </motion.div>
+  )
+}
 
 /**
  * صفحة تفاصيل طلب تشكيل لجنة واحد — عرض كامل + كل إجراءات دورة الحياة
@@ -80,6 +125,14 @@ export function CommitteeRequestDetailPage() {
     return (
       <div className="flex flex-col gap-6">
         <Skeleton className="h-8 w-56" />
+        <div className="hidden items-center gap-2 rounded-md border border-border-default bg-bg-surface p-5 sm:flex">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex flex-1 items-center gap-2">
+              <Skeleton className="h-11 w-11 shrink-0 rounded-full" />
+              {i < 3 && <Skeleton className="h-0.5 flex-1" />}
+            </div>
+          ))}
+        </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
@@ -299,62 +352,78 @@ export function CommitteeRequestDetailPage() {
         </div>
       </div>
 
+      <RequestPipeline status={request.status} returnReason={request.return_reason} />
+
       {request.status === 'returned' && request.return_reason && (
-        <div className="rounded-md border border-warning-border/30 bg-warning-bg px-4 py-3 text-sm text-warning">
-          <p className="font-semibold">أُعيد هذا الطلب للتعديل</p>
-          <p className="mt-1 text-text-secondary">{request.return_reason}</p>
-        </div>
+        <StatusBanner
+          tone="warning"
+          icon={<Undo2 size={18} />}
+          title="أُعيد هذا الطلب للتعديل"
+          description={request.return_reason}
+        />
       )}
       {request.status === 'under_review' && request.return_reason && (
-        <div className="rounded-md border border-warning-border/30 bg-warning-bg px-4 py-3 text-sm text-warning">
-          <p className="font-semibold">أرجع الرئيس التنفيذي هذا الطلب للمكتب التنفيذي</p>
-          <p className="mt-1 text-text-secondary">{request.return_reason}</p>
-        </div>
+        <StatusBanner
+          tone="warning"
+          icon={<Undo2 size={18} />}
+          title="أرجع الرئيس التنفيذي هذا الطلب للمكتب التنفيذي"
+          description={request.return_reason}
+        />
       )}
       {request.status === 'rejected' && request.rejection_reason && (
-        <div className="rounded-md border border-danger-border/30 bg-danger-bg px-4 py-3 text-sm text-danger">
-          <p className="font-semibold">تم رفض هذا الطلب</p>
-          <p className="mt-1 text-text-secondary">{request.rejection_reason}</p>
-        </div>
+        <StatusBanner
+          tone="danger"
+          icon={<XCircle size={18} />}
+          title="تم رفض هذا الطلب"
+          description={request.rejection_reason}
+        />
       )}
       {request.status === 'approved' && (
-        <div className="rounded-md border border-success-border/30 bg-success-bg px-4 py-3 text-sm text-success">
-          <p className="font-semibold">تم اعتماد هذا الطلب وتشكيل اللجنة رسميًا</p>
-        </div>
+        <StatusBanner
+          tone="success"
+          icon={<CheckCircle2 size={18} />}
+          title="تم اعتماد هذا الطلب وتشكيل اللجنة رسميًا"
+        />
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-primary/10 text-brand-primary">
-            <UserRound size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">
-              {request.requester.first_name} {request.requester.last_name}
-            </p>
-            <p className="mt-1 text-xs text-text-muted">مقدّم الطلب</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-teal/10 text-brand-teal">
-            <CalendarDays size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">
-              {formatDate(request.start_date)} — {formatDate(request.end_date)}
-            </p>
-            <p className="mt-1 text-xs text-text-muted">فترة عمل اللجنة</p>
-          </div>
-        </Card>
-        <Card className="flex items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand-purple/10 text-brand-purple">
-            <UsersIcon size={20} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">{request.proposed_members.length}</p>
-            <p className="mt-1 text-xs text-text-muted">الأعضاء المقترحون</p>
-          </div>
-        </Card>
+        {[
+          {
+            icon: <UserRound size={20} />,
+            tone: 'bg-brand-primary/10 text-brand-primary',
+            value: `${request.requester.first_name} ${request.requester.last_name}`,
+            label: 'مقدّم الطلب',
+          },
+          {
+            icon: <CalendarDays size={20} />,
+            tone: 'bg-brand-teal/10 text-brand-teal',
+            value: `${formatDate(request.start_date)} — ${formatDate(request.end_date)}`,
+            label: 'فترة عمل اللجنة',
+          },
+          {
+            icon: <UsersIcon size={20} />,
+            tone: 'bg-brand-purple/10 text-brand-purple',
+            value: String(request.proposed_members.length),
+            label: 'الأعضاء المقترحون',
+          },
+        ].map((item, i) => (
+          <motion.div
+            key={item.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+          >
+            <Card className="flex items-center gap-4">
+              <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-full', item.tone)}>
+                {item.icon}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-text-primary">{item.value}</p>
+                <p className="mt-1 text-xs text-text-muted">{item.label}</p>
+              </div>
+            </Card>
+          </motion.div>
+        ))}
       </div>
 
       {request.statement && (
@@ -374,42 +443,30 @@ export function CommitteeRequestDetailPage() {
             الأعضاء المقترحون
           </h2>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[480px] text-right text-sm">
-            <thead>
-              <tr className="border-b border-border-default bg-table-header">
-                <th className="px-4 py-3 font-semibold text-text-secondary">العضو</th>
-                <th className="px-4 py-3 font-semibold text-text-secondary">البريد الإلكتروني</th>
-              </tr>
-            </thead>
-            <tbody>
-              {request.proposed_members.map((member, i) => (
-                <motion.tr
-                  key={member.user_id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-                  className="border-b border-border-default last:border-0"
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <Avatar firstName={member.first_name} lastName={member.last_name} />
-                      <p className="font-medium text-text-primary">
-                        {member.first_name} {member.last_name}
-                      </p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="flex items-center gap-1.5 text-text-secondary">
-                      <Mail size={13} />
-                      {member.email}
-                    </span>
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {/* قائمة أعضاء بصف مرن بدل جدول — يتكيّف تلقائيًا على الجوال (البريد
+            ينزل تحت الاسم) بدل جدول بعرض ثابت يحتاج تمريرًا أفقيًا. */}
+        <ul>
+          {request.proposed_members.map((member, i) => (
+            <motion.li
+              key={member.user_id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
+              className="flex flex-col gap-1.5 border-b border-border-default px-4 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+            >
+              <div className="flex items-center gap-3">
+                <Avatar firstName={member.first_name} lastName={member.last_name} />
+                <p className="font-medium text-text-primary">
+                  {member.first_name} {member.last_name}
+                </p>
+              </div>
+              <span className="flex items-center gap-1.5 text-sm text-text-secondary">
+                <Mail size={13} className="shrink-0" />
+                {member.email}
+              </span>
+            </motion.li>
+          ))}
+        </ul>
       </Card>
 
       <p className="text-xs text-text-muted">

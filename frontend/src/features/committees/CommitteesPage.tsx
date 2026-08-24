@@ -46,8 +46,19 @@ export function CommitteesPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <StatCard label="عدد اللجان" value={committees?.length ?? 0} icon={<CheckCircle2 size={20} />} tone="success" />
-        <StatCard label="إجمالي الأعضاء" value={totalMembers} icon={<Users2 size={20} />} tone="brand" />
+        {[
+          { label: 'عدد اللجان', value: committees?.length ?? 0, icon: <CheckCircle2 size={20} />, tone: 'success' as const },
+          { label: 'إجمالي الأعضاء', value: totalMembers, icon: <Users2 size={20} />, tone: 'brand' as const },
+        ].map((stat, i) => (
+          <motion.div
+            key={stat.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+          >
+            <StatCard label={stat.label} value={stat.value} icon={stat.icon} tone={stat.tone} />
+          </motion.div>
+        ))}
       </div>
 
       <SearchInput value={search} onChange={setSearch} placeholder="ابحث باسم اللجنة أو بيانها..." />
@@ -80,11 +91,9 @@ export function CommitteesPage() {
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
             >
               <Card
+                interactive
                 onClick={() => navigate(`/committees/approved/${committee.committee_id}`)}
-                className={cn(
-                  'flex h-full cursor-pointer flex-col gap-3 transition-shadow hover:shadow-md',
-                  cardToneClass(i),
-                )}
+                className={cn('flex h-full flex-col gap-3', cardToneClass(i))}
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-success-bg text-success">
                   <CheckCircle2 size={18} />

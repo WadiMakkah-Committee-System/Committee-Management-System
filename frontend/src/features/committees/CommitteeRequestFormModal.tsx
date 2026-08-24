@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Save } from 'lucide-react'
+import { CalendarRange, FileText, Save, Users as UsersIcon } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
@@ -25,6 +25,34 @@ const schema = z
   })
 
 type FormValues = z.infer<typeof schema>
+
+/** عنوان فرعي لتقسيم النموذج بصريًا — يوضّح التسلسل المنطقي (Hierarchy) لمستخدم غير تقني. */
+function FormSection({
+  icon,
+  title,
+  required,
+  children,
+}: {
+  icon: React.ReactNode
+  title: string
+  required?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2 border-b border-border-default pb-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded-xs bg-brand-primary/10 text-brand-primary">
+          {icon}
+        </span>
+        <h3 className="text-xs font-bold uppercase tracking-wide text-text-secondary">
+          {title}
+          {required && <span className="text-danger"> *</span>}
+        </h3>
+      </div>
+      {children}
+    </div>
+  )
+}
 
 export interface CommitteeRequestFormSubmitValues {
   committee_name: string
@@ -114,49 +142,58 @@ export function CommitteeRequestFormModal({
             proposed_member_ids: values.proposed_member_ids,
           }),
         )}
-        className="flex flex-col gap-4"
+        className="flex flex-col gap-6"
       >
-        <Input
-          label="اسم اللجنة"
-          required
-          placeholder="مثال: لجنة تطوير الأنظمة الداخلية"
-          error={errors.committee_name?.message}
-          {...register('committee_name')}
-        />
-        <Textarea
-          label="بيان/غرض اللجنة"
-          placeholder="وصف مختصر للهدف من تشكيل اللجنة (اختياري)"
-          error={errors.statement?.message}
-          {...register('statement')}
-        />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <FormSection icon={<FileText size={13} />} title="بيانات اللجنة">
           <Input
-            type="date"
-            label="تاريخ بداية عمل اللجنة"
+            label="اسم اللجنة"
             required
-            error={errors.start_date?.message}
-            {...register('start_date')}
+            placeholder="مثال: لجنة تطوير الأنظمة الداخلية"
+            error={errors.committee_name?.message}
+            {...register('committee_name')}
           />
-          <Input
-            type="date"
-            label="تاريخ نهاية عمل اللجنة"
-            required
-            error={errors.end_date?.message}
-            {...register('end_date')}
+          <Textarea
+            label="بيان/غرض اللجنة"
+            placeholder="وصف مختصر للهدف من تشكيل اللجنة (اختياري)"
+            error={errors.statement?.message}
+            {...register('statement')}
           />
-        </div>
-        <Controller
-          control={control}
-          name="proposed_member_ids"
-          render={({ field }) => (
-            <MemberPicker
-              users={users ?? []}
-              selected={field.value ?? []}
-              onChange={field.onChange}
-              error={errors.proposed_member_ids?.message}
+        </FormSection>
+
+        <FormSection icon={<CalendarRange size={13} />} title="الفترة الزمنية">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input
+              type="date"
+              label="تاريخ بداية عمل اللجنة"
+              required
+              error={errors.start_date?.message}
+              {...register('start_date')}
             />
-          )}
-        />
+            <Input
+              type="date"
+              label="تاريخ نهاية عمل اللجنة"
+              required
+              error={errors.end_date?.message}
+              {...register('end_date')}
+            />
+          </div>
+        </FormSection>
+
+        <FormSection icon={<UsersIcon size={13} />} title="الأعضاء المقترحون" required>
+          <Controller
+            control={control}
+            name="proposed_member_ids"
+            render={({ field }) => (
+              <MemberPicker
+                users={users ?? []}
+                selected={field.value ?? []}
+                onChange={field.onChange}
+                error={errors.proposed_member_ids?.message}
+              />
+            )}
+          />
+        </FormSection>
+
         {serverError && (
           <p className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
             {serverError}
