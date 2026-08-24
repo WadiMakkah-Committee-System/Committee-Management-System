@@ -5,7 +5,8 @@ import { useAuthStore } from '@/store/authStore'
 import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute } from '@/routes/ProtectedRoute'
 import { LoginPage } from '@/features/auth/LoginPage'
-import { UserManagementPage } from '@/features/users/UserManagementPage'
+import { UsersPage } from '@/features/users/UsersPage'
+import { RolesPermissionsPage } from '@/features/roles/RolesPermissionsPage'
 import { DepartmentsPage } from '@/features/departments/DepartmentsPage'
 import { DepartmentDetailPage } from '@/features/departments/DepartmentDetailPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
@@ -60,7 +61,11 @@ function App() {
             <Route path="/profile" element={<ProfilePage />} />
 
             <Route element={<ProtectedRoute anyPermission={['users.view']} />}>
-              <Route path="/users" element={<UserManagementPage />} />
+              <Route path="/users" element={<UsersPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute superAdminOnly />}>
+              <Route path="/users/roles" element={<RolesPermissionsPage />} />
             </Route>
 
             <Route element={<ProtectedRoute anyPermission={['departments.view']} />}>

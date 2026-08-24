@@ -47,7 +47,7 @@ type PendingAction =
   | { type: 'reactivate'; user: User }
   | null
 
-export function UsersTab() {
+export function UsersPage() {
   const { data: users, isLoading, isError, refetch } = useUsers()
   const { data: departments } = useDepartments()
   const { data: roles } = useRoles()
