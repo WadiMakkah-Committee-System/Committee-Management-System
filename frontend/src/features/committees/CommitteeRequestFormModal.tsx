@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { CalendarRange, FileText, Save, Users as UsersIcon } from 'lucide-react'
+import { CalendarRange, FileText, Save, Send, Users as UsersIcon } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
@@ -67,7 +67,15 @@ interface CommitteeRequestFormModalProps {
   onClose: () => void
   request?: CommitteeFormationRequest | null
   onSubmit: (values: CommitteeRequestFormSubmitValues) => void
+  /**
+   * تُمرَّر فقط عندما يكون بإمكان المستخدم الحالي إرسال الطلب مباشرة
+   * (صاحب الطلب بحالة draft/returned) — إن لم تُمرَّر، لا يظهر زر
+   * "حفظ وإرسال" إطلاقًا (المسار القديم "حفظ فقط" يبقى يعمل كما هو).
+   */
+  onSubmitAndSend?: (values: CommitteeRequestFormSubmitValues) => void
   loading?: boolean
+  /** حالة التحميل الخاصة بزر "حفظ وإرسال" فقط — منفصلة عن loading الخاص بالحفظ العادي. */
+  sendLoading?: boolean
   serverError?: string | null
 }
 
@@ -83,7 +91,9 @@ export function CommitteeRequestFormModal({
   onClose,
   request,
   onSubmit,
+  onSubmitAndSend,
   loading,
+  sendLoading,
   serverError,
 }: CommitteeRequestFormModalProps) {
   const isEdit = !!request
@@ -96,6 +106,22 @@ export function CommitteeRequestFormModal({
     control,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
+
+  /** تحويل قيم النموذج (FormValues) إلى شكل الإرسال النهائي (trim + null بدل فراغ). */
+  function toSubmitValues(values: FormValues): CommitteeRequestFormSubmitValues {
+    return {
+      committee_name: values.committee_name,
+      statement: values.statement?.trim() || null,
+      start_date: values.start_date,
+      end_date: values.end_date,
+      proposed_member_ids: values.proposed_member_ids,
+    }
+  }
+
+  const submitDraft = handleSubmit((values) => onSubmit(toSubmitValues(values)))
+  const submitAndSend = onSubmitAndSend
+    ? handleSubmit((values) => onSubmitAndSend(toSubmitValues(values)))
+    : undefined
 
   useEffect(() => {
     if (open) {
@@ -122,28 +148,34 @@ export function CommitteeRequestFormModal({
       size="lg"
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} disabled={loading}>
+          <Button variant="ghost" onClick={onClose} disabled={loading || sendLoading}>
             إلغاء
           </Button>
-          <Button form="committee-request-form" type="submit" loading={loading} icon={<Save size={16} />}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={submitDraft}
+            loading={loading}
+            disabled={sendLoading}
+            icon={<Save size={16} />}
+          >
             {isEdit ? 'حفظ التعديلات' : 'حفظ كمسودة'}
           </Button>
+          {submitAndSend && (
+            <Button
+              type="button"
+              onClick={submitAndSend}
+              loading={sendLoading}
+              disabled={loading}
+              icon={<Send size={16} />}
+            >
+              حفظ وإرسال
+            </Button>
+          )}
         </>
       }
     >
-      <form
-        id="committee-request-form"
-        onSubmit={handleSubmit((values) =>
-          onSubmit({
-            committee_name: values.committee_name,
-            statement: values.statement?.trim() || null,
-            start_date: values.start_date,
-            end_date: values.end_date,
-            proposed_member_ids: values.proposed_member_ids,
-          }),
-        )}
-        className="flex flex-col gap-6"
-      >
+      <form id="committee-request-form" className="flex flex-col gap-6">
         <FormSection icon={<FileText size={13} />} title="بيانات اللجنة">
           <Input
             label="اسم اللجنة"

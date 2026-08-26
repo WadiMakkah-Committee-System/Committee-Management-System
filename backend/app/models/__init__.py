@@ -8,6 +8,7 @@ from app.models.audit_log import AuditAction, AuditLog
 from app.models.committee import Committee
 from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
 from app.models.department import Department
+from app.models.job_title import JobTitle
 from app.models.password_reset_token import PasswordResetToken
 from app.models.role import Permission, Role
 from app.models.user import User, UserStatus
@@ -19,6 +20,7 @@ __all__ = [
     "CommitteeFormationRequest",
     "CommitteeRequestStatus",
     "Department",
+    "JobTitle",
     "PasswordResetToken",
     "Permission",
     "Role",

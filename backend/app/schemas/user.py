@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.core.security import validate_password_policy
 from app.models.user import UserStatus
 from app.schemas.department import DepartmentOut
+from app.schemas.job_title import JobTitleOut
 from app.schemas.role import RoleSummaryOut
 
 
@@ -32,6 +33,7 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     role_id: uuid.UUID
     dep_id: uuid.UUID | None = None
+    job_title_id: uuid.UUID | None = None
     status: UserStatus = UserStatus.active
 
     @field_validator("password")
@@ -53,6 +55,7 @@ class UserUpdate(BaseModel):
     email: EmailStr | None = None
     role_id: uuid.UUID | None = None
     dep_id: uuid.UUID | None = None
+    job_title_id: uuid.UUID | None = None
 
 
 class UserOut(BaseModel):
@@ -74,6 +77,8 @@ class UserOut(BaseModel):
     role: RoleSummaryOut
     dep_id: uuid.UUID | None
     department: DepartmentOut | None = None
+    job_title_id: uuid.UUID | None
+    job_title: JobTitleOut | None = None
     status: UserStatus
     must_change_password: bool
     last_login_at: datetime | None

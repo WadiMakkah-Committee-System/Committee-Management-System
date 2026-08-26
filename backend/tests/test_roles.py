@@ -2,6 +2,9 @@
 
 from httpx import AsyncClient
 
+from app.db.session import AsyncSessionLocal
+from app.models.role import Role
+
 
 async def test_permissions_catalog_has_all_categories(client: AsyncClient, auth_headers) -> None:
     response = await client.get("/api/v1/permissions", headers=auth_headers)
@@ -18,6 +21,7 @@ async def test_permissions_catalog_has_all_categories(client: AsyncClient, auth_
         "ai_items",
         "documents",
         "minutes",
+        "job_titles",
     }
 
 
@@ -25,16 +29,16 @@ async def test_permissions_catalog_marks_enforced_categories(
     client: AsyncClient, auth_headers
 ) -> None:
     """
-    departments/users/committees عليها endpoints تتحقق منها فعليًا حاليًا
-    (committees أُضيفت بعد Phase 2 — طلبات تشكيل اللجان) — الحقل
-    is_enforced يسمح للواجهة بعرض بقية الأقسام كـ "قريبًا" بدون تكرار هذه
-    القائمة يدويًا في الفرونت.
+    departments/users/committees/job_titles عليها endpoints تتحقق منها
+    فعليًا حاليًا (job_titles أُضيفت بعد Phase 7 — المسميات الوظيفية) —
+    الحقل is_enforced يسمح للواجهة بعرض بقية الأقسام كـ "قريبًا" بدون
+    تكرار هذه القائمة يدويًا في الفرونت.
     """
     response = await client.get("/api/v1/permissions", headers=auth_headers)
     body = response.json()
     enforced = {p["category"] for p in body if p["is_enforced"]}
     not_enforced = {p["category"] for p in body if not p["is_enforced"]}
-    assert enforced == {"departments", "users", "committees"}
+    assert enforced == {"departments", "users", "committees", "job_titles"}
     assert "meetings" in not_enforced and "tasks" in not_enforced
 
 
@@ -51,7 +55,7 @@ async def test_system_roles_seeded(client: AsyncClient, auth_headers) -> None:
     }
     super_admin = next(r for r in response.json() if r["name"] == "super_admin")
     assert super_admin["is_super_admin"] is True
-    assert super_admin["permission_count"] == 75
+    assert super_admin["permission_count"] == 79
 
 
 async def test_create_custom_role_with_selected_permissions(
@@ -172,9 +176,24 @@ async def test_new_role_grants_matching_access(
     assert cannot_manage_users.status_code == 403
 
 
-async def test_cannot_delete_system_role(client: AsyncClient, auth_headers, roles_by_name: dict[str, str]) -> None:
-    response = await client.delete(f"/api/v1/roles/{roles_by_name['admin']}", headers=auth_headers)
-    assert response.status_code == 400
+async def test_can_delete_system_role_without_users(client: AsyncClient, auth_headers) -> None:
+    """
+    قرار عمل موثّق: فُكّت الحماية بالكامل عن الأدوار النظامية الخمسة —
+    لم يعد is_system يمنع الحذف. نستخدم دورًا مؤقتًا مُعلَّمًا يدويًا
+    is_system=true (وليس أحد الأدوار الخمسة الحقيقية المشتركة مع بقية
+    ملفات الاختبار عبر roles_by_name) تجنبًا لإفساد تلك البيانات
+    للاختبارات الأخرى — الحماية الوحيدة المتبقية هي عدم وجود مستخدمين
+    مرتبطين بالدور.
+    """
+    async with AsyncSessionLocal() as db:
+        temp_role = Role(name="دور نظامي مؤقت للاختبار", is_system=True, is_super_admin=False)
+        db.add(temp_role)
+        await db.commit()
+        await db.refresh(temp_role)
+        temp_role_id = str(temp_role.role_id)
+
+    response = await client.delete(f"/api/v1/roles/{temp_role_id}", headers=auth_headers)
+    assert response.status_code == 204
 
 
 async def test_cannot_delete_role_with_active_users(

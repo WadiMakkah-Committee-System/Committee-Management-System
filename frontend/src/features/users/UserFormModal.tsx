@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Save } from 'lucide-react'
@@ -7,7 +7,9 @@ import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
+import { CreatableSelect } from '@/components/ui/CreatableSelect'
 import { useRoles } from '@/hooks/useRoles'
+import { useCreateJobTitle, useJobTitles } from '@/hooks/useJobTitles'
 import { roleLabel } from '@/lib/utils'
 import type { Department, User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
@@ -18,6 +20,7 @@ const baseFields = {
   email: z.string().email('بريد إلكتروني غير صحيح'),
   role_id: z.string().min(1, 'الدور مطلوب'),
   dep_id: z.string(),
+  job_title_id: z.string(),
 }
 
 const createSchema = z.object({
@@ -67,7 +70,10 @@ export function UserFormModal({
 }: UserFormModalProps) {
   const isEdit = !!user
   const { data: roles } = useRoles()
+  const { data: jobTitles } = useJobTitles()
+  const createJobTitleMutation = useCreateJobTitle()
   const roleOptions = (roles ?? []).map((r) => ({ value: r.role_id, label: roleLabel(r) }))
+  const jobTitleOptions = (jobTitles ?? []).map((jt) => ({ value: jt.job_title_id, label: jt.name }))
   const depOptions = [
     { value: '', label: 'بدون إدارة' },
     ...departments.map((d) => ({ value: d.dep_id, label: d.name })),
@@ -81,6 +87,7 @@ export function UserFormModal({
     register,
     handleSubmit,
     reset,
+    control,
     formState: { errors },
   } = useForm<CreateFormValues | EditFormValues>({
     resolver: zodResolver(isEdit ? editSchema : createSchema),
@@ -95,6 +102,7 @@ export function UserFormModal({
         email: user?.email ?? '',
         role_id: user?.role.role_id ?? '',
         dep_id: user?.dep_id ?? defaultDepId ?? '',
+        job_title_id: user?.job_title_id ?? '',
         ...(isEdit ? {} : { username: '', password: '', status: 'active' }),
       } as CreateFormValues)
     }
@@ -110,6 +118,7 @@ export function UserFormModal({
         email: v.email,
         role_id: v.role_id,
         dep_id: v.dep_id || null,
+        job_title_id: v.job_title_id || null,
       })
     } else {
       const v = values as CreateFormValues
@@ -122,6 +131,7 @@ export function UserFormModal({
         password: v.password,
         role_id: v.role_id,
         dep_id: v.dep_id || null,
+        job_title_id: v.job_title_id || null,
         status: v.status,
       })
     }
@@ -189,6 +199,25 @@ export function UserFormModal({
           />
           <Select label="الإدارة" placeholder="اختر الإدارة" options={depOptions} {...register('dep_id')} />
         </div>
+
+        <Controller
+          name="job_title_id"
+          control={control}
+          render={({ field }) => (
+            <CreatableSelect
+              label="المسمى الوظيفي"
+              placeholder="اختر المسمى الوظيفي"
+              clearLabel="بدون مسمى وظيفي"
+              options={jobTitleOptions}
+              value={field.value ?? ''}
+              onChange={field.onChange}
+              onCreate={async (name) => {
+                const created = await createJobTitleMutation.mutateAsync({ name })
+                return { value: created.job_title_id, label: created.name }
+              }}
+            />
+          )}
+        />
 
         {!isEdit && (
           <Select

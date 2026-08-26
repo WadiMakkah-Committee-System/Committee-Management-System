@@ -7,6 +7,8 @@ import { ProtectedRoute } from '@/routes/ProtectedRoute'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { UsersPage } from '@/features/users/UsersPage'
 import { RolesPermissionsPage } from '@/features/roles/RolesPermissionsPage'
+import { RoleDetailPage } from '@/features/roles/RoleDetailPage'
+import { JobTitlesPage } from '@/features/jobTitles/JobTitlesPage'
 import { DepartmentsPage } from '@/features/departments/DepartmentsPage'
 import { DepartmentDetailPage } from '@/features/departments/DepartmentDetailPage'
 import { CommitteeRequestsPage } from '@/features/committees/CommitteeRequestsPage'
@@ -70,6 +72,11 @@ function App() {
 
             <Route element={<ProtectedRoute superAdminOnly />}>
               <Route path="/users/roles" element={<RolesPermissionsPage />} />
+              <Route path="/users/roles/:roleId" element={<RoleDetailPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute anyPermission={['job_titles.view']} />}>
+              <Route path="/users/job-titles" element={<JobTitlesPage />} />
             </Route>
 
             <Route element={<ProtectedRoute anyPermission={['departments.view']} />}>

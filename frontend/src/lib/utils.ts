@@ -27,6 +27,7 @@ export function roleLabel(role: Pick<RoleSummary, 'name'>): string {
 export const PERMISSION_CATEGORY_LABELS: Record<string, string> = {
   departments: 'الإدارات',
   users: 'المستخدمون',
+  job_titles: 'المسميات الوظيفية',
   committees: 'اللجان',
   meetings: 'الاجتماعات',
   tasks: 'المهام',
@@ -40,6 +41,7 @@ export const PERMISSION_CATEGORY_LABELS: Record<string, string> = {
 export const PERMISSION_CATEGORY_ORDER = [
   'departments',
   'users',
+  'job_titles',
   'committees',
   'meetings',
   'tasks',

@@ -70,6 +70,7 @@ async def create_user(
             password=payload.password,
             role_id=payload.role_id,
             dep_id=payload.dep_id,
+            job_title_id=payload.job_title_id,
             status=payload.status,
         )
     except ValueError as exc:
@@ -125,6 +126,7 @@ async def update_user(
             email=payload.email,
             role_id=payload.role_id,
             dep_id=payload.dep_id,
+            job_title_id=payload.job_title_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

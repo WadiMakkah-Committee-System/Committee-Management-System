@@ -29,7 +29,9 @@ export function MemberPicker({ users, selected, onChange, error }: MemberPickerP
     return users.filter(
       (u) =>
         `${u.first_name} ${u.last_name}`.toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q),
+        u.email.toLowerCase().includes(q) ||
+        (u.department?.name.toLowerCase().includes(q) ?? false) ||
+        (u.job_title?.name.toLowerCase().includes(q) ?? false),
     )
   }, [users, search])
 
@@ -137,7 +139,11 @@ export function MemberPicker({ users, selected, onChange, error }: MemberPickerP
                   <p className="truncate font-medium text-text-primary">
                     {u.first_name} {u.last_name}
                   </p>
-                  <p className="truncate text-xs text-text-muted">{u.email}</p>
+                  <p className="truncate text-xs text-text-muted">
+                    {u.department?.name && u.job_title?.name
+                      ? `${u.department.name} — ${u.job_title.name}`
+                      : u.department?.name || u.job_title?.name || u.email}
+                  </p>
                 </div>
               </label>
             )

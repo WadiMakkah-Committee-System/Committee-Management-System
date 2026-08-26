@@ -5,6 +5,7 @@ import { CheckCircle2, ChevronLeft, Clock3, FileEdit, Plus, Users2 } from 'lucid
 import {
   useCreateCommitteeRequest,
   useCommitteeRequests,
+  useSubmitCommitteeRequest,
 } from '@/hooks/useCommitteeRequests'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
@@ -24,11 +25,13 @@ export function CommitteeRequestsPage() {
   const user = useAuthStore((s) => s.user)
   const { data: requests, isLoading, isError, refetch } = useCommitteeRequests()
   const createMutation = useCreateCommitteeRequest()
+  const submitMutation = useSubmitCommitteeRequest()
   const { showToast } = useToast()
 
   const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
 
   const canCreate =
     !!user?.role.is_super_admin || !!user?.permissions.includes('committees.request.create')
@@ -64,6 +67,31 @@ export function CommitteeRequestsPage() {
       },
       onError: (err) => setFormError(extractErrorMessage(err)),
     })
+  }
+
+  /**
+   * الهدف: إنشاء طلب تشكيل اللجنة وإرساله مباشرة بضغطة واحدة ("حفظ وإرسال")
+   * بدل تركه كمسودة، دون الحاجة لفتح تفاصيل الطلب بعد إنشائه ثم الضغط على
+   * زر الإرسال المنفصل هناك.
+   *
+   * التأثيرات الجانبية: تنشئ الطلب (createMutation) ثم ترسله فورًا
+   * (submitMutation) — عمليتان متتاليتان عبر mutateAsync؛ عند فشل أي
+   * منهما تُعرض رسالة الخطأ بالنموذج ويبقى مفتوحًا.
+   */
+  async function handleCreateAndSend(values: CommitteeRequestFormSubmitValues) {
+    setFormError(null)
+    setSending(true)
+    try {
+      const created = await createMutation.mutateAsync(values)
+      await submitMutation.mutateAsync(created.request_id)
+      setFormOpen(false)
+      showToast('تم حفظ طلب تشكيل اللجنة وإرساله بنجاح', 'success')
+      navigate(`/committees/requests/${created.request_id}`)
+    } catch (err) {
+      setFormError(extractErrorMessage(err))
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -222,7 +250,9 @@ export function CommitteeRequestsPage() {
         open={formOpen}
         onClose={() => setFormOpen(false)}
         onSubmit={handleCreate}
-        loading={createMutation.isPending}
+        onSubmitAndSend={canCreate ? handleCreateAndSend : undefined}
+        loading={createMutation.isPending && !sending}
+        sendLoading={sending}
         serverError={formError}
       />
     </div>
