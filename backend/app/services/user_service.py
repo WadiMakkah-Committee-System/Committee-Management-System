@@ -25,6 +25,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password
 from app.models.department import Department
+from app.models.job_title import JobTitle
 from app.models.role import Role
 from app.models.user import User, UserStatus
 from app.services import audit_service
@@ -66,6 +67,7 @@ async def create_user(
     password: str,
     role_id: uuid.UUID,
     dep_id: uuid.UUID | None,
+    job_title_id: uuid.UUID | None = None,
     status: UserStatus = UserStatus.active,
 ) -> User | None:
     """
@@ -88,6 +90,11 @@ async def create_user(
     if role is None:
         raise ValueError("الدور المحدد غير موجود")
 
+    if job_title_id is not None:
+        job_title = await db.get(JobTitle, job_title_id)
+        if job_title is None:
+            raise ValueError("المسمى الوظيفي المحدد غير موجود")
+
     user = User(
         first_name=first_name,
         middle_name=middle_name,
@@ -97,6 +104,7 @@ async def create_user(
         password_hash=hash_password(password),
         role_id=role_id,
         dep_id=dep_id,
+        job_title_id=job_title_id,
         status=status,
         must_change_password=True,  # FR-UM-016: يُفرض تغيير كلمة المرور عند أول دخول
     )
@@ -174,6 +182,7 @@ async def update_user(
     email: str | None = None,
     role_id: uuid.UUID | None = None,
     dep_id: uuid.UUID | None = None,
+    job_title_id: uuid.UUID | None = None,
 ) -> User | None:
     """
     تعديل بيانات مستخدم موجود. يرجع None إذا لم يوجد.
@@ -212,9 +221,14 @@ async def update_user(
         user.role_id = new_role.role_id
     if dep_id is not None:
         user.dep_id = dep_id
+    if job_title_id is not None:
+        job_title = await db.get(JobTitle, job_title_id)
+        if job_title is None:
+            raise ValueError("المسمى الوظيفي المحدد غير موجود")
+        user.job_title_id = job_title_id
 
     await db.flush()
-    await db.refresh(user, attribute_names=["role"])
+    await db.refresh(user, attribute_names=["role", "job_title"])
 
     await audit_service.log_action(
         db,

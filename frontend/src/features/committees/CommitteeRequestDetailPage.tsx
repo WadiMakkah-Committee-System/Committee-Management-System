@@ -108,6 +108,7 @@ export function CommitteeRequestDetailPage() {
 
   const [formOpen, setFormOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [returnToAdminOpen, setReturnToAdminOpen] = useState(false)
@@ -183,6 +184,32 @@ export function CommitteeRequestDetailPage() {
         onError: (err) => setFormError(extractErrorMessage(err)),
       },
     )
+  }
+
+  /**
+   * الهدف: حفظ تعديلات الطلب (مسودة/معاد) ثم إرساله للمكتب التنفيذي
+   * مباشرة بضغطة واحدة من داخل نموذج التعديل، دون المرور بزر "إرسال
+   * الطلب" المنفصل وتأكيده. يبقى ذلك الزر ومربّع تأكيده كما هما كمسار
+   * بديل مستقل (لإرسال الطلب دون فتح نموذج التعديل أصلًا).
+   *
+   * التأثيرات الجانبية: تحديث الطلب (updateMutation) ثم إرساله فورًا
+   * (submitMutation) — عمليتان متتاليتان عبر mutateAsync؛ عند فشل أي
+   * منهما تُعرض رسالة الخطأ بالنموذج ويبقى مفتوحًا.
+   */
+  async function handleEditAndSend(values: CommitteeRequestFormSubmitValues) {
+    if (!requestId) return
+    setFormError(null)
+    setSending(true)
+    try {
+      await updateMutation.mutateAsync({ requestId, payload: values })
+      await submitMutation.mutateAsync(requestId)
+      setFormOpen(false)
+      showToast('تم حفظ الطلب وإرساله إلى المكتب التنفيذي بنجاح', 'success')
+    } catch (err) {
+      setFormError(extractErrorMessage(err))
+    } finally {
+      setSending(false)
+    }
   }
 
   function handleSubmit() {
@@ -478,7 +505,9 @@ export function CommitteeRequestDetailPage() {
         onClose={() => setFormOpen(false)}
         request={request}
         onSubmit={handleEdit}
-        loading={updateMutation.isPending}
+        onSubmitAndSend={canSubmit ? handleEditAndSend : undefined}
+        loading={updateMutation.isPending && !sending}
+        sendLoading={sending}
         serverError={formError}
       />
 

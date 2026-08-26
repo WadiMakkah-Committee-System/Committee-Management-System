@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Pencil, Plus, ShieldQuestion, Trash2, Users2, KeySquare } from 'lucide-react'
 import { useCreateRole, useDeleteRole, useRoles, useUpdateRole } from '@/hooks/useRoles'
@@ -15,6 +16,7 @@ import { cardToneClass, cn, extractErrorMessage, roleLabel } from '@/lib/utils'
 import type { Role, RoleCreatePayload, RoleUpdatePayload } from '@/types'
 
 export function RolesPermissionsPage() {
+  const navigate = useNavigate()
   const { data: roles, isLoading, isError, refetch } = useRoles()
   const createMutation = useCreateRole()
   const updateMutation = useUpdateRole()
@@ -119,7 +121,13 @@ export function RolesPermissionsPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
             >
-              <Card className={cn('flex h-full flex-col gap-3 transition-shadow hover:shadow-md', cardToneClass(i))}>
+              <Card
+                onClick={() => navigate(`/users/roles/${role.role_id}`)}
+                className={cn(
+                  'flex h-full cursor-pointer flex-col gap-3 transition-shadow hover:shadow-md',
+                  cardToneClass(i),
+                )}
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div
                     className={cn(
@@ -129,21 +137,22 @@ export function RolesPermissionsPage() {
                   >
                     <ShieldQuestion size={18} />
                   </div>
-                  <ActionMenu
-                    items={[
-                      { label: 'تعديل', icon: <Pencil size={14} />, onClick: () => openEditForm(role) },
-                      {
-                        label: 'حذف',
-                        icon: <Trash2 size={14} />,
-                        tone: 'danger',
-                        disabled: role.is_system,
-                        onClick: () => {
-                          setDeleteError(null)
-                          setDeleteTarget(role)
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <ActionMenu
+                      items={[
+                        { label: 'تعديل', icon: <Pencil size={14} />, onClick: () => openEditForm(role) },
+                        {
+                          label: 'حذف',
+                          icon: <Trash2 size={14} />,
+                          tone: 'danger',
+                          onClick: () => {
+                            setDeleteError(null)
+                            setDeleteTarget(role)
+                          },
                         },
-                      },
-                    ]}
-                  />
+                      ]}
+                    />
+                  </div>
                 </div>
                 <div>
                   <div className="flex items-center gap-2">

@@ -15,6 +15,7 @@ import {
   BarChart3,
   ShieldQuestion,
   UserRound,
+  Briefcase,
   ChevronDown,
   ClipboardList,
   CheckCircle2,
@@ -46,6 +47,7 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { label: 'الأدوار والصلاحيات', icon: ShieldQuestion, path: '/users/roles', superAdminOnly: true },
       { label: 'المستخدمون', icon: UserRound, path: '/users', requiredPermission: ['users.view'] },
+      { label: 'المسميات الوظيفية', icon: Briefcase, path: '/users/job-titles', requiredPermission: ['job_titles.view'] },
     ],
   },
   { label: 'الإدارات', icon: Building2, path: '/departments', requiredPermission: ['departments.view'] },

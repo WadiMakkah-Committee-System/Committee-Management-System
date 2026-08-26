@@ -73,6 +73,21 @@ export interface Department {
   updated_at: string
 }
 
+export interface JobTitle {
+  job_title_id: string
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface JobTitleCreatePayload {
+  name: string
+}
+
+export interface JobTitleUpdatePayload {
+  name: string
+}
+
 export interface User {
   user_id: string
   first_name: string
@@ -83,6 +98,8 @@ export interface User {
   role: RoleSummary
   dep_id: string | null
   department: Department | null
+  job_title_id: string | null
+  job_title: JobTitle | null
   status: UserStatus
   must_change_password: boolean
   last_login_at: string | null
@@ -108,6 +125,7 @@ export interface UserCreatePayload {
   password: string
   role_id: string
   dep_id: string | null
+  job_title_id: string | null
   status: UserStatus
 }
 
@@ -118,6 +136,7 @@ export interface UserUpdatePayload {
   email?: string
   role_id?: string
   dep_id?: string | null
+  job_title_id?: string | null
 }
 
 export interface DepartmentCreatePayload {

@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 #: القادمة — is_enforced تسمح للواجهة بعرضها كـ "قريبًا" بدل تكرار هذه
 #: القائمة يدويًا في كود الفرونت. "committees" أُضيفت بعد تفعيل Phase 2
 #: (طلبات تشكيل اللجان — db/migrations/0009 + app/api/v1/committees.py).
-ENFORCED_CATEGORIES = {"departments", "users", "committees"}
+ENFORCED_CATEGORIES = {"departments", "users", "committees", "job_titles"}
 
 
 class PermissionOut(BaseModel):

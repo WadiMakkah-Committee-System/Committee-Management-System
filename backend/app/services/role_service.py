@@ -7,8 +7,9 @@
 المسؤولية:
 - إنشاء/عرض/تعديل/حذف الأدوار.
 - ربط دور بمجموعة صلاحيات (عبر أكوادها code) من كتالوج permissions.
-- حماية الأدوار النظامية (is_system) من الحذف أو تغيير الاسم.
-- منع حذف أي دور لا يزال مستخدَمًا من قِبل مستخدم واحد على الأقل.
+- منع حذف أي دور (نظاميًا كان أم لا) لا يزال مستخدَمًا من قِبل مستخدم
+  واحد على الأقل — هذه هي الحماية الوحيدة المتبقية على الحذف؛ لا يوجد
+  أي استثناء أو حماية أخرى مرتبطة بـ is_system بعد الآن (قرار عمل موثّق).
 """
 
 import uuid
@@ -134,16 +135,16 @@ async def update_role(
     permission_codes: list[str] | None,
 ) -> Role | None:
     """
-    تعديل دور موجود. الأدوار النظامية (is_system) يمكن تعديل وصفها
-    وصلاحياتها، لكن لا يمكن تغيير اسمها أبدًا (لحماية أي منطق يعتمد عليه).
+    تعديل دور موجود. قرار عمل موثّق: فُكّت الحماية بالكامل عن الأدوار
+    النظامية الخمسة (is_system) — يمكن تعديل اسمها ووصفها وصلاحياتها
+    بحرية، تمامًا مثل أي دور آخر. الحماية الوحيدة المتبقية هي حارس
+    user_count > 0 عند الحذف (أسفل)، وغير مرتبطة بـ is_system إطلاقًا.
     """
     role = await get_role(db, role_id)
     if role is None:
         return None
 
     if name is not None and name.strip().lower() != role.name.lower():
-        if role.is_system:
-            raise ValueError("لا يمكن تغيير اسم دور نظامي")
         duplicate = await db.execute(
             select(Role).where(func.lower(Role.name) == name.lower(), Role.role_id != role_id)
         )
@@ -174,15 +175,14 @@ async def update_role(
 
 async def delete_role(db: AsyncSession, *, actor_user_id: uuid.UUID, role_id: uuid.UUID) -> Role | None:
     """
-    حذف دور. يرفع ValueError إذا كان الدور نظاميًا، أو لا يزال هناك
-    مستخدم واحد على الأقل مرتبط به.
+    حذف دور. قرار عمل موثّق: لا يوجد أي استثناء للأدوار النظامية بعد
+    الآن — الحماية الوحيدة هي عدم وجود مستخدمين مرتبطين بالدور (سواء كان
+    is_system أم لا). يرفع ValueError إذا كان لا يزال هناك مستخدم واحد
+    على الأقل مرتبط به.
     """
     role = await get_role(db, role_id)
     if role is None:
         return None
-
-    if role.is_system:
-        raise ValueError("لا يمكن حذف دور نظامي")
 
     count_result = await db.execute(
         select(func.count())

@@ -53,6 +53,9 @@ class User(Base):
     dep_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("departments.dep_id"), nullable=True
     )
+    job_title_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("job_titles.job_title_id"), nullable=True
+    )
 
     status: Mapped[UserStatus] = mapped_column(
         SAEnum(UserStatus, name="user_status", native_enum=True),
@@ -82,6 +85,9 @@ class User(Base):
         back_populates="users", foreign_keys=[dep_id]
     )
     role: Mapped["Role"] = relationship(back_populates="users", lazy="selectin")  # noqa: F821
+    job_title: Mapped["JobTitle | None"] = relationship(  # noqa: F821
+        foreign_keys=[job_title_id], lazy="selectin"
+    )
 
     @property
     def is_deleted(self) -> bool:

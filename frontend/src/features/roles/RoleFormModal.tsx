@@ -66,7 +66,7 @@ export function RoleFormModal({
     setPermissionsError(null)
     if (isEdit) {
       onSubmitEdit({
-        name: role!.is_system ? undefined : values.name,
+        name: values.name,
         description: values.description || null,
         permission_codes,
       })
@@ -81,11 +81,7 @@ export function RoleFormModal({
       onClose={onClose}
       title={isEdit ? 'تعديل الدور' : 'إنشاء دور جديد'}
       description={
-        isEdit
-          ? role?.is_system
-            ? 'هذا دور نظامي — يمكن تعديل وصفه وصلاحياته، لكن ليس اسمه'
-            : `تعديل "${role?.name}"`
-          : 'حدد اسم الدور ووصفه، ثم اختر صلاحياته من الأقسام أدناه'
+        isEdit ? `تعديل "${role?.name}"` : 'حدد اسم الدور ووصفه، ثم اختر صلاحياته من الأقسام أدناه'
       }
       size="lg"
       footer={
@@ -104,8 +100,6 @@ export function RoleFormModal({
           <Input
             label="اسم الدور"
             required
-            disabled={role?.is_system}
-            hint={role?.is_system ? 'الأدوار النظامية لا يمكن تغيير اسمها' : undefined}
             error={errors.name?.message}
             {...register('name')}
           />

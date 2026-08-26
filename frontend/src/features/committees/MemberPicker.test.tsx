@@ -15,6 +15,8 @@ function makeUser(overrides: Partial<User>): User {
     role: { role_id: 'r-1', name: 'admin', description: null, is_super_admin: false },
     dep_id: null,
     department: null,
+    job_title_id: null,
+    job_title: null,
     status: 'active',
     must_change_password: false,
     last_login_at: null,
@@ -66,6 +68,39 @@ describe('MemberPicker', () => {
     render(<MemberPicker users={USERS} selected={[]} onChange={() => {}} />)
     await userEvent.type(screen.getByPlaceholderText('ابحث بالاسم أو البريد الإلكتروني...'), 'محمد')
     expect(screen.getByText('محمد القحطاني')).toBeInTheDocument()
+    expect(screen.queryByText('سارة العتيبي')).not.toBeInTheDocument()
+  })
+
+  it('يعرض الإدارة والمسمى الوظيفي بدل البريد الإلكتروني عند توفرهما', () => {
+    const usersWithDetails: User[] = [
+      makeUser({
+        user_id: 'u-3',
+        first_name: 'نورة',
+        last_name: 'الحربي',
+        email: 'noura@example.com',
+        department: { dep_id: 'd-1', name: 'إدارة الجودة', code: null } as User['department'],
+        job_title: { job_title_id: 'jt-1', name: 'محلل جودة' } as User['job_title'],
+      }),
+    ]
+    render(<MemberPicker users={usersWithDetails} selected={[]} onChange={() => {}} />)
+    expect(screen.getByText('إدارة الجودة — محلل جودة')).toBeInTheDocument()
+    expect(screen.queryByText('noura@example.com')).not.toBeInTheDocument()
+  })
+
+  it('يفلتر القائمة بالبحث بالمسمى الوظيفي', async () => {
+    const usersWithDetails: User[] = [
+      ...USERS,
+      makeUser({
+        user_id: 'u-3',
+        first_name: 'نورة',
+        last_name: 'الحربي',
+        email: 'noura@example.com',
+        job_title: { job_title_id: 'jt-1', name: 'محلل جودة' } as User['job_title'],
+      }),
+    ]
+    render(<MemberPicker users={usersWithDetails} selected={[]} onChange={() => {}} />)
+    await userEvent.type(screen.getByPlaceholderText('ابحث بالاسم أو البريد الإلكتروني...'), 'محلل جودة')
+    expect(screen.getByText('نورة الحربي')).toBeInTheDocument()
     expect(screen.queryByText('سارة العتيبي')).not.toBeInTheDocument()
   })
 })
