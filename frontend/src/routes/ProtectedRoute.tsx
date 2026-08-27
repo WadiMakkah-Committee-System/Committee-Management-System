@@ -6,6 +6,8 @@ interface ProtectedRouteProps {
    * يكفي أن يملك المستخدم واحدة على الأقل من هذه الصلاحيات للوصول — نفس
    * منطق require_permission في الباك-إند (core/dependencies.py)، عشان
    * قيود الفرونت تطابق قيود الـ API الفعلية بدل افتراض قائمة أدوار ثابتة.
+   * لا يوجد تجاوز تلقائي لـsuper_admin (قرار موثّق من صاحبة المشروع
+   * 2026-08-27) — المسار الآمن الوحيد المتبقّي هو superAdminOnly أدناه.
    */
   anyPermission?: string[]
   /** يقيّد الوصول بدور الجذر (is_super_admin) فقط — لشاشات إدارة الأدوار نفسها. */
@@ -25,7 +27,7 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     if (superAdminOnly && !isSuperAdmin) {
       return <Navigate to="/profile" replace />
     }
-    if (anyPermission && !isSuperAdmin && !anyPermission.some((code) => user.permissions.includes(code))) {
+    if (anyPermission && !anyPermission.some((code) => user.permissions.includes(code))) {
       return <Navigate to="/profile" replace />
     }
   }

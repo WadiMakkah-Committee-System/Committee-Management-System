@@ -222,6 +222,10 @@ export interface CommitteeFormationRequest {
   status: CommitteeRequestStatus
   requester: CommitteeMemberUser
   proposed_members: CommitteeMemberUser[]
+  chair_user_id: string | null
+  chair: CommitteeMemberUser | null
+  /** معرّف اللجنة المعتمدة الناتجة عن هذا الطلب — null قبل الاعتماد (approved فقط). */
+  committee_id: string | null
   rejection_reason: string | null
   return_reason: string | null
   created_at: string
@@ -234,6 +238,7 @@ export interface CommitteeFormationRequestCreatePayload {
   start_date: string
   end_date: string
   proposed_member_ids: string[]
+  chair_user_id: string
 }
 
 export interface CommitteeFormationRequestUpdatePayload {
@@ -242,6 +247,7 @@ export interface CommitteeFormationRequestUpdatePayload {
   start_date?: string
   end_date?: string
   proposed_member_ids?: string[]
+  chair_user_id?: string
 }
 
 /** اللجنة المعتمدة رسميًا — سطح قراءة بسيط فقط (Phase 5 لاحقًا لإدارتها الكاملة). */
@@ -253,5 +259,7 @@ export interface Committee {
   end_date: string
   source_request_id: string
   members: CommitteeMemberUser[]
+  chair_user_id: string | null
+  chair: CommitteeMemberUser | null
   created_at: string
 }

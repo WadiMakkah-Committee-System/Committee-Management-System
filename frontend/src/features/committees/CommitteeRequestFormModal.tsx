@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { CalendarRange, FileText, Save, Send, Users as UsersIcon } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
+import { DateField } from '@/components/ui/DateField'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
 import { useUsers } from '@/hooks/useUsers'
@@ -18,10 +19,18 @@ const schema = z
     start_date: z.string().min(1, 'تاريخ البداية مطلوب'),
     end_date: z.string().min(1, 'تاريخ النهاية مطلوب'),
     proposed_member_ids: z.array(z.string()).min(1, 'اختاري عضوًا واحدًا على الأقل'),
+    // رئيس اللجنة (Committee Role مؤقت) — يُختار من ضمن الأعضاء المقترحين
+    // فقط، وليس دورًا عامًا بجدول الأدوار (System Role)؛ نفس القيد مطبّق
+    // بالباك-إند (CommitteeFormationRequestCreate._chair_must_be_a_proposed_member).
+    chair_user_id: z.string().min(1, 'يجب اختيار رئيس للجنة'),
   })
   .refine((v) => v.end_date > v.start_date, {
     message: 'تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية',
     path: ['end_date'],
+  })
+  .refine((v) => !v.chair_user_id || v.proposed_member_ids.includes(v.chair_user_id), {
+    message: 'رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب',
+    path: ['chair_user_id'],
   })
 
 type FormValues = z.infer<typeof schema>
@@ -60,6 +69,7 @@ export interface CommitteeRequestFormSubmitValues {
   start_date: string
   end_date: string
   proposed_member_ids: string[]
+  chair_user_id: string
 }
 
 interface CommitteeRequestFormModalProps {
@@ -115,6 +125,7 @@ export function CommitteeRequestFormModal({
       start_date: values.start_date,
       end_date: values.end_date,
       proposed_member_ids: values.proposed_member_ids,
+      chair_user_id: values.chair_user_id,
     }
   }
 
@@ -131,6 +142,7 @@ export function CommitteeRequestFormModal({
         start_date: request?.start_date ?? '',
         end_date: request?.end_date ?? '',
         proposed_member_ids: request?.proposed_members.map((m) => m.user_id) ?? [],
+        chair_user_id: request?.chair_user_id ?? '',
       })
     }
   }, [open, request, reset])
@@ -194,33 +206,54 @@ export function CommitteeRequestFormModal({
 
         <FormSection icon={<CalendarRange size={13} />} title="الفترة الزمنية">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input
-              type="date"
-              label="تاريخ بداية عمل اللجنة"
-              required
-              error={errors.start_date?.message}
-              {...register('start_date')}
+            <Controller
+              control={control}
+              name="start_date"
+              render={({ field }) => (
+                <DateField
+                  label="تاريخ بداية عمل اللجنة"
+                  required
+                  error={errors.start_date?.message}
+                  value={field.value ?? ''}
+                  onChange={field.onChange}
+                />
+              )}
             />
-            <Input
-              type="date"
-              label="تاريخ نهاية عمل اللجنة"
-              required
-              error={errors.end_date?.message}
-              {...register('end_date')}
+            <Controller
+              control={control}
+              name="end_date"
+              render={({ field }) => (
+                <DateField
+                  label="تاريخ نهاية عمل اللجنة"
+                  required
+                  error={errors.end_date?.message}
+                  value={field.value ?? ''}
+                  onChange={field.onChange}
+                />
+              )}
             />
           </div>
         </FormSection>
 
-        <FormSection icon={<UsersIcon size={13} />} title="الأعضاء المقترحون" required>
+        <FormSection icon={<UsersIcon size={13} />} title="الأعضاء المقترحون ورئيس اللجنة" required>
           <Controller
             control={control}
             name="proposed_member_ids"
-            render={({ field }) => (
-              <MemberPicker
-                users={users ?? []}
-                selected={field.value ?? []}
-                onChange={field.onChange}
-                error={errors.proposed_member_ids?.message}
+            render={({ field: membersField }) => (
+              <Controller
+                control={control}
+                name="chair_user_id"
+                render={({ field: chairField }) => (
+                  <MemberPicker
+                    users={users ?? []}
+                    selected={membersField.value ?? []}
+                    onChange={membersField.onChange}
+                    chairId={chairField.value || null}
+                    onChairChange={chairField.onChange}
+                    error={errors.proposed_member_ids?.message}
+                    chairError={errors.chair_user_id?.message}
+                  />
+                )}
               />
             )}
           />
