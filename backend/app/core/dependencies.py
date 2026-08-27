@@ -93,13 +93,16 @@ def require_permission(*required_codes: str):
     قاعدة البيانات (عبر get_current_user)، وليس من التوكن مباشرة.
 
     يكفي أن يملك المستخدم واحدة على الأقل من required_codes للسماح بالطلب.
-    دور super_admin (is_super_admin=True) يتجاوز أي فحص تلقائيًا — فهو
-    الدور الجذري الذي يملك كل الصلاحيات دائمًا حتى لو تغيّر الكتالوج لاحقًا.
+    ملاحظة أمنية (قرار موثّق من صاحبة المشروع 2026-08-27): لا يوجد أي
+    تجاوز تلقائي لـsuper_admin هنا — الوصول محكوم فعليًا بقائمة
+    permission_codes المحفوظة لدور المستخدم بقاعدة البيانات، حتى لو كان
+    الدور هو super_admin. المسار الآمن الوحيد المتبقّي لاستعادة أي صلاحية
+    فُقدت بالخطأ هو شاشة "الأدوار والصلاحيات" نفسها، المحمية بـ
+    require_super_admin (يفحص is_super_admin مباشرة، بلا علاقة بقائمة
+    الصلاحيات) — فلا يوجد خطر قفل كامل من النظام.
     """
 
     async def _checker(current_user: CurrentUser) -> User:
-        if current_user.role.is_super_admin:
-            return current_user
         user_codes = current_user.role.permission_codes
         if not any(code in user_codes for code in required_codes):
             raise HTTPException(

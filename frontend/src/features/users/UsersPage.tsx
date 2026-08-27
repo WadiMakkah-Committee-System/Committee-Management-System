@@ -268,12 +268,13 @@ export function UsersPage() {
       ) : (
         <div className="overflow-hidden rounded-md border border-border-default bg-bg-surface">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-right text-sm">
+            <table className="w-full min-w-[860px] text-right text-sm">
               <thead>
                 <tr className="border-b border-border-default bg-table-header">
                   <th className="px-4 py-3 font-semibold text-text-secondary">المستخدم</th>
                   <th className="px-4 py-3 font-semibold text-text-secondary">الدور</th>
                   <th className="px-4 py-3 font-semibold text-text-secondary">الإدارة</th>
+                  <th className="px-4 py-3 font-semibold text-text-secondary">المسمى الوظيفي</th>
                   <th className="px-4 py-3 font-semibold text-text-secondary">الحالة</th>
                   <th className="px-4 py-3 font-semibold text-text-secondary"></th>
                 </tr>
@@ -306,6 +307,7 @@ export function UsersPage() {
                       <RoleBadge role={user.role} />
                     </td>
                     <td className="px-4 py-3 text-text-secondary">{user.department?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-text-secondary">{user.job_title?.name ?? '—'}</td>
                     <td className="px-4 py-3">
                       <UserStatusBadge status={user.status} />
                     </td>

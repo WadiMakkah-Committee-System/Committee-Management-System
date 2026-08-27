@@ -21,9 +21,10 @@ export function CommitteeDetailPage() {
   const user = useAuthStore((s) => s.user)
   const { data: committee, isLoading, isError, refetch } = useCommitteeDetail(committeeId)
 
-  const isSuperAdmin = !!user?.role.is_super_admin
   const permissions = user?.permissions ?? []
-  const canViewSourceRequest = isSuperAdmin || permissions.includes('committees.request.view')
+  // لا يوجد تجاوز تلقائي لـsuper_admin هنا (قرار موثّق 2026-08-27) — العرض
+  // محكوم فعليًا بامتلاك الصلاحية، تمامًا مثل الوصول لصفحة الطلب نفسها.
+  const canViewSourceRequest = permissions.includes('committees.request.view')
 
   if (isLoading) {
     return (

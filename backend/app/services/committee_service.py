@@ -86,7 +86,22 @@ async def _load_request(db: AsyncSession, request_id: uuid.UUID) -> CommitteeFor
         .options(
             selectinload(CommitteeFormationRequest.requester),
             selectinload(CommitteeFormationRequest.proposed_members),
+            # صراحةً رغم lazy="selectin" على مستوى الـ Model (نفس نمط
+            # requester/proposed_members أعلاه) — لازم هنا تحديدًا لأن
+            # approve_request يستدعي _get_request_or_raise مرتين: قبل
+            # إنشاء اللجنة (حيث committee لا تزال None) وبعد commit()
+            # لإنشائها.
+            selectinload(CommitteeFormationRequest.committee),
         )
+        # AsyncSessionLocal مُعرَّف بـexpire_on_commit=False (app/db/session.py)
+        # — أي أن الكائن الذي حُمِّل بأول استدعاء لـ_get_request_or_raise
+        # (حيث committee = None، قبل إنشاء اللجنة) يبقى في الـ Identity Map
+        # لنفس الجلسة، ولن يُعاد تحميله تلقائيًا بعد commit() لأنه غير
+        # "منتهي الصلاحية" (Expired). بدون populate_existing=True هنا،
+        # الاستدعاء الثاني لـ_get_request_or_raise (بعد إنشاء اللجنة) كان
+        # يعيد نفس القيمة القديمة (None) رغم وجود اللجنة فعليًا بقاعدة
+        # البيانات — راجع اختبار test_chair_propagates_to_approved_committee.
+        .execution_options(populate_existing=True)
         .where(CommitteeFormationRequest.request_id == request_id)
     )
     return result.scalar_one_or_none()
@@ -130,13 +145,21 @@ async def create_request(
     start_date: date,
     end_date: date,
     proposed_member_ids: list[uuid.UUID],
+    chair_user_id: uuid.UUID,
 ) -> CommitteeFormationRequest:
     """
     إنشاء طلب تشكيل لجنة جديد بحالة draft (RF-COM-100/200) — لا يُرسل
     تلقائيًا للمكتب التنفيذي؛ الإرسال خطوة منفصلة صريحة (submit_request).
+
+    chair_user_id يجب أن يكون أحد proposed_member_ids — Schema (Pydantic)
+    يتحقق من هذا أصلًا عند وجود الحقلين معًا بنفس الطلب، لكن نعيد التحقق
+    هنا أيضًا (طبقة الخدمة هي مصدر الحقيقة الفعلي، والـSchema مجرد تحقق
+    مبكر لتجربة مستخدم أفضل).
     """
     _assert_dates_valid(start_date, end_date)
     members = await _resolve_members(db, proposed_member_ids)
+    if chair_user_id not in {m.user_id for m in members}:
+        raise ValueError("رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
 
     request = CommitteeFormationRequest(
         committee_name=committee_name,
@@ -146,6 +169,7 @@ async def create_request(
         status=CommitteeRequestStatus.draft,
         requested_by=actor_user_id,
         proposed_members=members,
+        chair_user_id=chair_user_id,
     )
     db.add(request)
     await db.flush()
@@ -208,6 +232,7 @@ async def update_request(
     start_date: date | None,
     end_date: date | None,
     proposed_member_ids: list[uuid.UUID] | None,
+    chair_user_id: uuid.UUID | None,
     can_edit_any_pending: bool,
 ) -> CommitteeFormationRequest:
     """
@@ -256,6 +281,7 @@ async def update_request(
         "start_date": request.start_date.isoformat(),
         "end_date": request.end_date.isoformat(),
         "member_ids": sorted(str(u.user_id) for u in request.proposed_members),
+        "chair_user_id": str(request.chair_user_id) if request.chair_user_id else None,
     }
 
     if committee_name is not None:
@@ -266,6 +292,16 @@ async def update_request(
     request.end_date = new_end
     if proposed_member_ids is not None:
         request.proposed_members = await _resolve_members(db, proposed_member_ids)
+
+    if chair_user_id is not None:
+        request.chair_user_id = chair_user_id
+
+    # التحقق النهائي: الرئيس (سواء الجديد أو المحفوظ سابقًا) يجب أن يبقى
+    # أحد الأعضاء الحاليين — يُعاد فحصه هنا لأن أيًّا من proposed_member_ids
+    # أو chair_user_id قد يتغيّر بمعزل عن الآخر بنفس طلب التعديل.
+    current_member_ids = {u.user_id for u in request.proposed_members}
+    if request.chair_user_id is not None and request.chair_user_id not in current_member_ids:
+        raise ValueError("رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
 
     await audit_service.log_action(
         db,
@@ -439,6 +475,7 @@ async def approve_request(
         end_date=request.end_date,
         source_request_id=request.request_id,
         members=list(request.proposed_members),
+        chair_user_id=request.chair_user_id,
     )
     db.add(committee)
 

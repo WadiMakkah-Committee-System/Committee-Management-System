@@ -84,6 +84,12 @@ class CommitteeFormationRequest(Base):
     requested_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False
     )
+    # رئيس اللجنة المقترح — عضو واحد من ضمن proposed_members، يُحدَّده مقدّم
+    # الطلب عند التقديم (قرار موثّق 2026-08-27: فصل عن System Role نهائيًا).
+    # يُتحقَّق من كونه فعلًا أحد الأعضاء المقترحين بطبقة الخدمة، وليس هنا.
+    chair_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True
+    )
     return_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -95,12 +101,31 @@ class CommitteeFormationRequest(Base):
     )
 
     requester: Mapped["User"] = relationship(foreign_keys=[requested_by], lazy="selectin")  # noqa: F821
+    chair: Mapped["User | None"] = relationship(foreign_keys=[chair_user_id], lazy="selectin")  # noqa: F821
     proposed_members: Mapped[list["User"]] = relationship(  # noqa: F821
         secondary=committee_formation_request_members, lazy="selectin"
     )
+    # lazy="selectin" (بنفس نمط chair/requester/proposed_members أعلاه) —
+    # يضمن تحميلها تلقائيًا ضمن نفس الاستعلام دون MissingGreenlet بالسياق
+    # غير المتزامن (Async)، دون الحاجة لإضافتها صراحة بـ.options() بكل
+    # استدعاء (list_requests/get_request/create_request/update_request/
+    # approve_request جميعها تمرّ عبر _load_request في نهاية المطاف).
     committee: Mapped["Committee | None"] = relationship(  # noqa: F821
-        back_populates="source_request", uselist=False
+        back_populates="source_request", uselist=False, lazy="selectin"
     )
+
+    @property
+    def committee_id(self) -> uuid.UUID | None:
+        """
+        معرّف اللجنة المعتمدة الناتجة عن هذا الطلب — None قبل الاعتماد.
+        يُستخدم بالواجهة الأمامية (Task #15) للتنقّل المباشر من قائمة
+        طلبات تشكيل اللجان لصفحة اللجنة نفسها عند اعتماد الطلب، بدل
+        الاكتفاء بصفحة تفاصيل الطلب. لا عمود فعلي بقاعدة البيانات لهذا
+        (عمدًا — راجع تعليق التصميم أعلى committee.py: source_request_id
+        هو مسار التتبّع الوحيد)؛ هذا Property محسوب من علاقة committee
+        فقط، وليس Column جديد.
+        """
+        return self.committee.committee_id if self.committee else None
 
     @property
     def is_editable(self) -> bool:

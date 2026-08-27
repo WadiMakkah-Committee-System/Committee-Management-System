@@ -67,6 +67,12 @@ class Committee(Base):
         unique=True,
     )
 
+    # رئيس اللجنة المعتمدة — يُنسَخ من committee_formation_requests.chair_user_id
+    # لحظة الاعتماد (approve_request)، ولا يُعدَّل بعد ذلك (عضوية اللجنة
+    # المعتمدة نهائية، بنفس منطق members أدناه).
+    chair_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -78,6 +84,7 @@ class Committee(Base):
     source_request: Mapped["CommitteeFormationRequest"] = relationship(  # noqa: F821
         back_populates="committee", foreign_keys=[source_request_id]
     )
+    chair: Mapped["User | None"] = relationship(foreign_keys=[chair_user_id], lazy="selectin")  # noqa: F821
     members: Mapped[list["User"]] = relationship(secondary=committee_members, lazy="selectin")  # noqa: F821
 
     @property

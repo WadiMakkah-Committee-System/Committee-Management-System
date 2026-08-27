@@ -19,6 +19,7 @@ import { CommitteeRequestStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from './CommitteeRequestFormModal'
 import { extractErrorMessage, formatDate } from '@/lib/utils'
+import type { CommitteeFormationRequest } from '@/types'
 
 export function CommitteeRequestsPage() {
   const navigate = useNavigate()
@@ -33,8 +34,30 @@ export function CommitteeRequestsPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
 
-  const canCreate =
-    !!user?.role.is_super_admin || !!user?.permissions.includes('committees.request.create')
+  // لا يوجد تجاوز تلقائي لـsuper_admin هنا (قرار موثّق 2026-08-27).
+  const canCreate = !!user?.permissions.includes('committees.request.create')
+  // committees.view_authorized شرط منفصل تمامًا عن committees.request.view
+  // (بيانات الإنتاج الفعلية: executive_office_manager/executive_president
+  // يملكون request.view لكن ليس view_authorized؛ والعكس صحيح لدور "ادمن")
+  // — لهذا التنقّل الذكي أدناه (Task #15) يتحقق من هذه الصلاحية تحديدًا
+  // قبل توجيه المستخدم لصفحة اللجنة نفسها (/committees/approved/:id)، بدل
+  // افتراض أن كل من يقدر يرى الطلب المعتمد يقدر يرى اللجنة الناتجة عنه.
+  const canViewApprovedCommittee = !!user?.permissions.includes('committees.view_authorized')
+
+  /**
+   * التنقّل الذكي عند الضغط على طلب بقائمة الطلبات (نقطة #4 بمواصفات
+   * لاما 2026-08-27): submitted/under_review وبقية الحالات غير
+   * المعتمدة → صفحة تفاصيل الطلب (تعرض سبب الرفض بوضوح لحالة rejected
+   * أصلًا عبر StatusBanner). approved → صفحة اللجنة الناتجة مباشرة، لكن
+   * فقط إن كان المستخدم يملك فعليًا صلاحية رؤيتها؛ غير ذلك يبقى المسار
+   * الافتراضي (صفحة تفاصيل الطلب) بدل توجيهه لصفحة سيُحجَب عنها فورًا.
+   */
+  function getRequestHref(req: CommitteeFormationRequest): string {
+    if (req.status === 'approved' && req.committee_id && canViewApprovedCommittee) {
+      return `/committees/approved/${req.committee_id}`
+    }
+    return `/committees/requests/${req.request_id}`
+  }
 
   const filtered = useMemo(() => {
     if (!requests) return []
@@ -181,13 +204,13 @@ export function CommitteeRequestsPage() {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-                      onClick={() => navigate(`/committees/requests/${req.request_id}`)}
+                      onClick={() => navigate(getRequestHref(req))}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault()
-                          navigate(`/committees/requests/${req.request_id}`)
+                          navigate(getRequestHref(req))
                         }
                       }}
                       className="group cursor-pointer border-b border-border-default transition-colors last:border-0 hover:bg-table-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent"
@@ -222,7 +245,7 @@ export function CommitteeRequestsPage() {
               >
                 <Card
                   interactive
-                  onClick={() => navigate(`/committees/requests/${req.request_id}`)}
+                  onClick={() => navigate(getRequestHref(req))}
                   className="flex flex-col gap-2.5 active:scale-[0.99]"
                 >
                   <div className="flex items-start justify-between gap-2">

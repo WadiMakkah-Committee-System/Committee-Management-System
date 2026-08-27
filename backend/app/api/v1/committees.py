@@ -84,6 +84,7 @@ async def create_committee_request(
             start_date=payload.start_date,
             end_date=payload.end_date,
             proposed_member_ids=payload.proposed_member_ids,
+            chair_user_id=payload.chair_user_id,
         )
     except ValueError as exc:
         raise _handle_errors(exc) from exc
@@ -94,10 +95,7 @@ async def create_committee_request(
 async def list_committee_requests(
     current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[CommitteeFormationRequestOut]:
-    can_view_all = (
-        current_user.role.is_super_admin
-        or "committees.request.view" in current_user.role.permission_codes
-    )
+    can_view_all = "committees.request.view" in current_user.role.permission_codes
     requests = await committee_service.list_requests(
         db, actor=current_user, can_view_all=can_view_all
     )
@@ -108,10 +106,7 @@ async def list_committee_requests(
 async def get_committee_request(
     request_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> CommitteeFormationRequestOut:
-    can_view_all = (
-        current_user.role.is_super_admin
-        or "committees.request.view" in current_user.role.permission_codes
-    )
+    can_view_all = "committees.request.view" in current_user.role.permission_codes
     try:
         request = await committee_service.get_request(
             db, request_id=request_id, actor=current_user, can_view_all=can_view_all
@@ -145,6 +140,7 @@ async def update_committee_request(
             start_date=payload.start_date,
             end_date=payload.end_date,
             proposed_member_ids=payload.proposed_member_ids,
+            chair_user_id=payload.chair_user_id,
             can_edit_any_pending=can_edit_any_pending,
         )
     except (

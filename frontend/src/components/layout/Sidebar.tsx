@@ -29,7 +29,7 @@ interface NavItem {
   label: string
   icon: LucideIcon
   path?: string
-  /** يكفي امتلاك واحدة من هذه الصلاحيات (أو is_super_admin) لإظهار العنصر. */
+  /** يكفي امتلاك واحدة من هذه الصلاحيات لإظهار العنصر — حتى لو كان المستخدم super_admin. */
   requiredPermission?: string[]
   /** يقيّد ظهور العنصر بدور الجذر (is_super_admin) فقط. */
   superAdminOnly?: boolean
@@ -99,7 +99,7 @@ function filterNavItem(item: NavItem, isSuperAdmin: boolean, permissions: string
     return { ...item, children }
   }
   if (item.superAdminOnly && !isSuperAdmin) return null
-  if (item.requiredPermission && !isSuperAdmin && !item.requiredPermission.some((code) => permissions.includes(code))) {
+  if (item.requiredPermission && !item.requiredPermission.some((code) => permissions.includes(code))) {
     return null
   }
   return item

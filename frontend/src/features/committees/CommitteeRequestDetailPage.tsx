@@ -157,19 +157,22 @@ export function CommitteeRequestDetailPage() {
   const isPendingOfficeStage = request.status === 'submitted' || request.status === 'under_review'
   const isPendingApproval = request.status === 'pending_approval'
 
+  // ملاحظة: isSuperAdmin هنا يبقى فقط كتجاوز *ملكية* (يقدر super_admin يتصرف
+  // بطلب مو طلبه، مطابقةً لنفس المنطق بـcommittee_service.py بالباك-إند) —
+  // لا يوجد أي تجاوز لفحص الصلاحية نفسها بعد الآن (قرار موثّق 2026-08-27):
+  // حتى super_admin يحتاج الصلاحية الفعلية ليقدر يعدّل/يرسل/يقرر.
   const canEditAsOwner =
-    isDraftLike && (isOwner || isSuperAdmin) && (isSuperAdmin || permissions.includes('committees.request.create'))
-  const canEditAsOffice =
-    isPendingOfficeStage && (isSuperAdmin || permissions.includes('committees.request.update'))
+    isDraftLike && (isOwner || isSuperAdmin) && permissions.includes('committees.request.create')
+  const canEditAsOffice = isPendingOfficeStage && permissions.includes('committees.request.update')
   const canEdit = canEditAsOwner || canEditAsOffice
   const canSubmit = canEditAsOwner
 
   // Phase 4 — إجراءات المكتب التنفيذي (submitted/under_review فقط):
-  const canReturnToAdmin = isPendingOfficeStage && (isSuperAdmin || permissions.includes('committees.request.update'))
-  const canEscalate = isPendingOfficeStage && (isSuperAdmin || permissions.includes('committees.request.escalate'))
+  const canReturnToAdmin = isPendingOfficeStage && permissions.includes('committees.request.update')
+  const canEscalate = isPendingOfficeStage && permissions.includes('committees.request.escalate')
 
   // Phase 4 — إجراءات الرئيس التنفيذي (pending_approval فقط، القرار الثلاثي):
-  const canDecide = isPendingApproval && (isSuperAdmin || permissions.includes('committees.request.approve'))
+  const canDecide = isPendingApproval && permissions.includes('committees.request.approve')
 
   function handleEdit(values: CommitteeRequestFormSubmitValues) {
     if (!requestId) return
@@ -406,11 +409,27 @@ export function CommitteeRequestDetailPage() {
         />
       )}
       {request.status === 'approved' && (
-        <StatusBanner
-          tone="success"
-          icon={<CheckCircle2 size={18} />}
-          title="تم اعتماد هذا الطلب وتشكيل اللجنة رسميًا"
-        />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex-1">
+            <StatusBanner
+              tone="success"
+              icon={<CheckCircle2 size={18} />}
+              title="تم اعتماد هذا الطلب وتشكيل اللجنة رسميًا"
+            />
+          </div>
+          {/* يظهر فقط لمن يملك فعليًا committees.view_authorized — نفس منطق
+              التنقّل الذكي بقائمة الطلبات (Task #15)، تفاديًا لتوجيه من لا
+              يملك الصلاحية لصفحة سيُحجَب عنها. */}
+          {request.committee_id && permissions.includes('committees.view_authorized') && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate(`/committees/approved/${request.committee_id}`)}
+            >
+              عرض صفحة اللجنة
+            </Button>
+          )}
+        </div>
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

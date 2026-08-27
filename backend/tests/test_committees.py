@@ -83,6 +83,7 @@ def _valid_payload(member_id: str, *, name: str = "لجنة الجودة") -> di
         "start_date": "2026-09-01",
         "end_date": "2026-12-01",
         "proposed_member_ids": [member_id],
+        "chair_user_id": member_id,
     }
 
 
@@ -569,3 +570,104 @@ async def test_view_committees_requires_view_authorized_permission(
 
     allowed_admin = await client.get("/api/v1/committees", headers=actors["admin_headers"])
     assert allowed_admin.status_code == 200
+
+
+async def test_chair_must_be_a_proposed_member_on_create(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    رئيس اللجنة المقترح (chair_user_id) يجب أن يكون أحد الأعضاء المقترحين
+    فعليًا — قرار موثّق 2026-08-27 (فصل System Role عن Committee Role).
+    التحقق مزدوج (Schema + طبقة الخدمة)؛ هذا الاختبار يغطي مسار الإنشاء.
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    outsider_headers, outsider_id = await _create_user_with_role(
+        client, auth_headers, roles_by_name, username="cf_outsider", role_name="admin"
+    )
+    payload = _valid_payload(actors["member_id"])
+    payload["chair_user_id"] = outsider_id  # ليس ضمن proposed_member_ids
+
+    response = await client.post(
+        "/api/v1/committee-requests", json=payload, headers=actors["admin_headers"]
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_chair_must_remain_a_member_on_update(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    نفس القاعدة أعلاه، بمسار التعديل: لو مقدّم الطلب غيّر قائمة الأعضاء
+    وأزال الرئيس الحالي منها دون تحديد رئيس جديد، يُرفض التعديل — رئيس
+    اللجنة لا يبقى معلّقًا بلا وجود ضمن الأعضاء.
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    other_headers, other_id = await _create_user_with_role(
+        client, auth_headers, roles_by_name, username="cf_other", role_name="admin"
+    )
+    create = await client.post(
+        "/api/v1/committee-requests",
+        json=_valid_payload(actors["member_id"]),
+        headers=actors["admin_headers"],
+    )
+    request_id = create.json()["request_id"]
+
+    # يستبدل قائمة الأعضاء بعضو آخر فقط — الرئيس المحفوظ (member_id) لم
+    # يعد ضمن الأعضاء الجدد، ولم يُرسَل chair_user_id جديد بنفس الطلب.
+    response = await client.patch(
+        f"/api/v1/committee-requests/{request_id}",
+        json={"proposed_member_ids": [other_id]},
+        headers=actors["admin_headers"],
+    )
+    assert response.status_code == 400, response.text
+
+    # يبقى صحيحًا لو حدّدت رئيسًا جديدًا ضمن نفس طلب التعديل.
+    response_ok = await client.patch(
+        f"/api/v1/committee-requests/{request_id}",
+        json={"proposed_member_ids": [other_id], "chair_user_id": other_id},
+        headers=actors["admin_headers"],
+    )
+    assert response_ok.status_code == 200, response_ok.text
+    assert response_ok.json()["chair_user_id"] == other_id
+
+
+async def test_chair_propagates_to_approved_committee(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    رئيس الطلب يُنسَخ تلقائيًا لرئيس اللجنة المعتمدة لحظة approve_request —
+    التغطية الكاملة لتدفق "من رئيس الطلب إلى رئيس اللجنة" المطلوب فصله عن
+    System Role نهائيًا.
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    create = await client.post(
+        "/api/v1/committee-requests",
+        json=_valid_payload(actors["member_id"], name="لجنة رئيس محدد"),
+        headers=actors["admin_headers"],
+    )
+    request_id = create.json()["request_id"]
+    assert create.json()["chair_user_id"] == actors["member_id"]
+    assert create.json()["chair"]["user_id"] == actors["member_id"]
+    # قبل الاعتماد لا توجد لجنة ناتجة بعد — لازم يكون committee_id فارغ
+    # (Task #15: التنقّل الذكي من قائمة الطلبات يعتمد على هذا الحقل).
+    assert create.json()["committee_id"] is None
+
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+    await client.post(f"/api/v1/committee-requests/{request_id}/escalate", headers=actors["office_headers"])
+    approve = await client.post(
+        f"/api/v1/committee-requests/{request_id}/approve", headers=actors["ceo_headers"]
+    )
+    assert approve.status_code == 200, approve.text
+    assert approve.json()["committee_id"] is not None
+
+    committees = await client.get("/api/v1/committees", headers=actors["admin_headers"])
+    created = next(c for c in committees.json() if c["source_request_id"] == request_id)
+    assert created["chair_user_id"] == actors["member_id"]
+    assert created["chair"]["user_id"] == actors["member_id"]
+    # committee_id بالطلب المعاد من approve يطابق فعليًا معرّف اللجنة المُنشأة.
+    assert approve.json()["committee_id"] == created["committee_id"]
+
+    # نفس القيمة تظهر أيضًا عند إعادة جلب الطلب لاحقًا (GET منفصل)، لا فقط
+    # باستجابة approve نفسها — تأكيد أن lazy="selectin" يعمل بكل مسارات القراءة.
+    fetched = await client.get(f"/api/v1/committee-requests/{request_id}", headers=actors["admin_headers"])
+    assert fetched.json()["committee_id"] == created["committee_id"]

@@ -42,6 +42,11 @@ class CommitteeFormationRequestCreate(BaseModel):
     start_date: date
     end_date: date
     proposed_member_ids: list[uuid.UUID] = Field(min_length=1)
+    # رئيس اللجنة — إلزامي دائمًا (حتى بحالة draft)، بنفس منطق proposed_member_ids
+    # أعلاه (قرار موثّق 2026-08-27). التحقق من كونه فعلًا أحد proposed_member_ids
+    # يتم أدناه (نفس الطلب) وبطبقة الخدمة أيضًا عند التعديل (قائمة الأعضاء
+    # قد تتغيّر لاحقًا بينما الرئيس لا).
+    chair_user_id: uuid.UUID
 
     @field_validator("proposed_member_ids")
     @classmethod
@@ -58,6 +63,14 @@ class CommitteeFormationRequestCreate(BaseModel):
             raise ValueError("تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية")
         return v
 
+    @field_validator("chair_user_id")
+    @classmethod
+    def _chair_must_be_a_proposed_member(cls, v: uuid.UUID, info) -> uuid.UUID:
+        members = info.data.get("proposed_member_ids")
+        if members is not None and v not in members:
+            raise ValueError("رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
+        return v
+
 
 class CommitteeFormationRequestUpdate(BaseModel):
     """
@@ -71,6 +84,11 @@ class CommitteeFormationRequestUpdate(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     proposed_member_ids: list[uuid.UUID] | None = Field(default=None, min_length=1)
+    # اختياري بالتعديل الجزئي (نفس نمط بقية الحقول هنا) — لو أُرسل، يُتحقَّق
+    # من كونه أحد الأعضاء المقترحين (سواء القائمة الجديدة إن أُرسلت، أو
+    # القائمة الحالية المحفوظة، تُفرض بطبقة الخدمة لأنها تحتاج قراءة الطلب
+    # الحالي من قاعدة البيانات، وهذا غير متاح هنا بمستوى Schema فقط).
+    chair_user_id: uuid.UUID | None = None
 
     @field_validator("proposed_member_ids")
     @classmethod
@@ -107,6 +125,11 @@ class CommitteeFormationRequestOut(BaseModel):
     status: CommitteeRequestStatus
     requester: CommitteeMemberUserOut
     proposed_members: list[CommitteeMemberUserOut]
+    chair_user_id: uuid.UUID | None
+    chair: CommitteeMemberUserOut | None
+    # اللجنة الناتجة عن اعتماد هذا الطلب — None قبل الاعتماد (Task #15،
+    # للتنقّل المباشر من قائمة الطلبات لصفحة اللجنة نفسها عند approved).
+    committee_id: uuid.UUID | None
     rejection_reason: str | None
     return_reason: str | None
     created_at: datetime
@@ -125,4 +148,6 @@ class CommitteeOut(BaseModel):
     end_date: date
     source_request_id: uuid.UUID
     members: list[CommitteeMemberUserOut]
+    chair_user_id: uuid.UUID | None
+    chair: CommitteeMemberUserOut | None
     created_at: datetime
