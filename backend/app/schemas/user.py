@@ -31,7 +31,9 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    role_id: uuid.UUID
+    # اختياري (مراجعة لاما 2026-08-30 — "لا تجعل حقل الدور إجباريًا عند
+    # إضافة مستخدم"): مستخدم بلا دور يُنشأ بنجاح؛ راجعي user_service.create_user.
+    role_id: uuid.UUID | None = None
     dep_id: uuid.UUID | None = None
     job_title_id: uuid.UUID | None = None
     status: UserStatus = UserStatus.active
@@ -74,7 +76,8 @@ class UserOut(BaseModel):
     last_name: str
     username: str
     email: str
-    role: RoleSummaryOut
+    # اختياري (مراجعة لاما 2026-08-30): مستخدم بدون دور مُعيَّن بعد.
+    role: RoleSummaryOut | None = None
     dep_id: uuid.UUID | None
     department: DepartmentOut | None = None
     job_title_id: uuid.UUID | None

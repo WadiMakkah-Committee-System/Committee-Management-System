@@ -70,7 +70,15 @@ const SYSTEM_ROLE_ICON: Record<SystemRoleName, ReactNode> = {
 }
 
 /** شارة الدور — تدعم الأدوار النظامية (ألوان/أيقونات ثابتة) والمخصَّصة (لون محايد + أيقونة عامة). */
-export function RoleBadge({ role }: { role: RoleSummary }) {
+export function RoleBadge({ role }: { role: RoleSummary | null }) {
+  // مراجعة لاما 2026-08-30: مستخدم بلا دور مُعيَّن (role=null) حالة صالحة الآن.
+  if (!role) {
+    return (
+      <Badge tone="neutral" icon={<Sparkles size={13} />}>
+        {roleLabel(null)}
+      </Badge>
+    )
+  }
   const tone = SYSTEM_ROLE_TONE[role.name as SystemRoleName] ?? 'info'
   const icon = SYSTEM_ROLE_ICON[role.name as SystemRoleName] ?? <Sparkles size={13} />
   return (

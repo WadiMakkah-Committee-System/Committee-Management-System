@@ -150,7 +150,7 @@ export function CommitteeRequestDetailPage() {
     return <ErrorState onRetry={() => refetch()} />
   }
 
-  const isSuperAdmin = !!user?.role.is_super_admin
+  const isSuperAdmin = !!user?.role?.is_super_admin
   const permissions = user?.permissions ?? []
   const isOwner = user?.user_id === request.requester.user_id
   const isDraftLike = request.status === 'draft' || request.status === 'returned'
@@ -161,8 +161,16 @@ export function CommitteeRequestDetailPage() {
   // بطلب مو طلبه، مطابقةً لنفس المنطق بـcommittee_service.py بالباك-إند) —
   // لا يوجد أي تجاوز لفحص الصلاحية نفسها بعد الآن (قرار موثّق 2026-08-27):
   // حتى super_admin يحتاج الصلاحية الفعلية ليقدر يعدّل/يرسل/يقرر.
+  //
+  // مراجعة لاما 2026-08-30: توحيد صلاحية تعديل طلب اللجنة — الباك-إند
+  // صار يتحقق من committees.request.update فقط لكل تعديل (مسودة/معاد
+  // بنطاق own، أو مُرسَل/تحت المراجعة بنطاق أوسع)، بدل الخلط السابق بين
+  // .create (ملكية المسودة) و.update (المكتب التنفيذي). الفرونت يتبع نفس
+  // الصلاحية الآن؛ الفرق الفعلي بين "أنا صاحب الطلب" و"أنا المكتب
+  // التنفيذي" يبقى isDraftLike/isPendingOfficeStage (حالة الطلب)، تمامًا
+  // كما يفرضه الباك-إند فعليًا (وليس الفرونت مصدر الحقيقة أبدًا).
   const canEditAsOwner =
-    isDraftLike && (isOwner || isSuperAdmin) && permissions.includes('committees.request.create')
+    isDraftLike && (isOwner || isSuperAdmin) && permissions.includes('committees.request.update')
   const canEditAsOffice = isPendingOfficeStage && permissions.includes('committees.request.update')
   const canEdit = canEditAsOwner || canEditAsOffice
   const canSubmit = canEditAsOwner
@@ -417,10 +425,10 @@ export function CommitteeRequestDetailPage() {
               title="تم اعتماد هذا الطلب وتشكيل اللجنة رسميًا"
             />
           </div>
-          {/* يظهر فقط لمن يملك فعليًا committees.view_authorized — نفس منطق
+          {/* يظهر فقط لمن يملك فعليًا committees.view — نفس منطق
               التنقّل الذكي بقائمة الطلبات (Task #15)، تفاديًا لتوجيه من لا
               يملك الصلاحية لصفحة سيُحجَب عنها. */}
-          {request.committee_id && permissions.includes('committees.view_authorized') && (
+          {request.committee_id && permissions.includes('committees.view') && (
             <Button
               variant="secondary"
               size="sm"

@@ -2,18 +2,23 @@
 الهدف:
 راوتات وحدة "طلبات تشكيل اللجان" — RF-COM-100 → RF-COM-700 (SRS)، Phase 2.
 
-قواعد الوصول (كل واحدة محكومة بصلاحية فعلية من كتالوج الصلاحيات، وليس
-باسم دور ثابت — راجعي committee_service.py للتفاصيل الكاملة لكل قاعدة):
+قواعد الوصول (كل واحدة محكومة بصلاحية فعلية من كتالوج الصلاحيات + نطاق
+وصول (own/department/all)، وليس باسم دور ثابت — راجعي committee_service.py
+للتفاصيل الكاملة لكل قاعدة. مراجعة لاما 2026-08-30 وحّدت كل تعديل الطلب
+تحت صلاحية واحدة committees.request.update بدل الخلط السابق بين .create
+و.update حسب الحالة):
 - POST   /committee-requests               → committees.request.create (الادمن)
-- GET    /committee-requests, /{id}        → committees.request.view، أو مقدّم
-                                              الطلب نفسه لطلباته فقط (استثناء ملكية)
-- PATCH  /committee-requests/{id}          → committees.request.create (draft/returned + ملكية)
-                                              أو committees.request.update (submitted/under_review)
-- POST   /{id}/submit                      → committees.request.create + ملكية (draft أو returned)
+- GET    /committee-requests, /{id}        → committees.request.view (نطاق own = طلباته
+                                              فقط، نطاق أوسع = كل الطلبات)
+- PATCH  /committee-requests/{id}          → committees.request.update (نطاق own +
+                                              draft/returned، أو نطاق أوسع + submitted/under_review)
+- POST   /{id}/submit                      → committees.request.update + ملكية فعلية (draft أو returned)
 - POST   /{id}/return-to-admin             → committees.request.update (المكتب التنفيذي → الادمن)
 - POST   /{id}/escalate                    → committees.request.escalate (المكتب التنفيذي)
 - POST   /{id}/approve, /{id}/reject       → committees.request.approve (الرئيس التنفيذي، نهائي)
 - POST   /{id}/return-to-office            → committees.request.approve (الرئيس التنفيذي → المكتب، غير نهائي)
+- GET    /committees, /{id}                → committees.view (نطاق own = اللجان التي أنا
+                                              رئيسها/عضو فيها فقط، نطاق أوسع = كل اللجان)
 
 قرار موثّق: لا يوجد أي endpoint هنا لتعديل أعضاء/بيانات اللجنة بعد
 الاعتماد — مقفلة نهائيًا لكل الأدوار (راجعي committee_service.py).
@@ -33,9 +38,11 @@ from app.schemas.committee import (
     CommitteeOut,
     CommitteeRejectRequest,
     CommitteeReturnRequest,
+    DepartmentMemberElsewhereOut,
 )
 from app.services import committee_service
 from app.services.committee_service import (
+    CommitteeForbiddenError,
     CommitteeNotFoundError,
     CommitteeRequestForbiddenError,
     CommitteeRequestInvalidTransitionError,
@@ -53,7 +60,7 @@ def _handle_errors(exc: Exception) -> HTTPException:
     """يترجم استثناءات طبقة الخدمة إلى استجابات HTTP مناسبة، مركزيًا."""
     if isinstance(exc, (CommitteeRequestNotFoundError, CommitteeNotFoundError)):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    if isinstance(exc, CommitteeRequestForbiddenError):
+    if isinstance(exc, (CommitteeRequestForbiddenError, CommitteeForbiddenError)):
         return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     if isinstance(exc, CommitteeRequestInvalidTransitionError):
         # 409 Conflict أدق من 400 هنا: الطلب صحيح شكليًا، لكنه يتعارض مع
@@ -91,11 +98,16 @@ async def create_committee_request(
     return CommitteeFormationRequestOut.model_validate(request)
 
 
+def _can_view_all_requests(current_user: CurrentUser) -> bool:
+    """نطاق department/all يعني رؤية كل الطلبات؛ own يعني طلبات actor نفسه فقط."""
+    return current_user.scope_for("committees.request.view") in ("department", "all")
+
+
 @router.get("", response_model=list[CommitteeFormationRequestOut])
 async def list_committee_requests(
     current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[CommitteeFormationRequestOut]:
-    can_view_all = "committees.request.view" in current_user.role.permission_codes
+    can_view_all = _can_view_all_requests(current_user)
     requests = await committee_service.list_requests(
         db, actor=current_user, can_view_all=can_view_all
     )
@@ -106,7 +118,7 @@ async def list_committee_requests(
 async def get_committee_request(
     request_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> CommitteeFormationRequestOut:
-    can_view_all = "committees.request.view" in current_user.role.permission_codes
+    can_view_all = _can_view_all_requests(current_user)
     try:
         request = await committee_service.get_request(
             db, request_id=request_id, actor=current_user, can_view_all=can_view_all
@@ -119,9 +131,7 @@ async def get_committee_request(
 @router.patch(
     "/{request_id}",
     response_model=CommitteeFormationRequestOut,
-    dependencies=[
-        Depends(require_permission("committees.request.create", "committees.request.update"))
-    ],
+    dependencies=[Depends(require_permission("committees.request.update"))],
 )
 async def update_committee_request(
     request_id: uuid.UUID,
@@ -129,7 +139,6 @@ async def update_committee_request(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> CommitteeFormationRequestOut:
-    can_edit_any_pending = "committees.request.update" in current_user.role.permission_codes
     try:
         request = await committee_service.update_request(
             db,
@@ -141,7 +150,6 @@ async def update_committee_request(
             end_date=payload.end_date,
             proposed_member_ids=payload.proposed_member_ids,
             chair_user_id=payload.chair_user_id,
-            can_edit_any_pending=can_edit_any_pending,
         )
     except (
         CommitteeRequestNotFoundError,
@@ -156,7 +164,7 @@ async def update_committee_request(
 @router.post(
     "/{request_id}/submit",
     response_model=CommitteeFormationRequestOut,
-    dependencies=[Depends(require_permission("committees.request.create"))],
+    dependencies=[Depends(require_permission("committees.request.update"))],
 )
 async def submit_committee_request(
     request_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
@@ -194,7 +202,11 @@ async def return_committee_request_to_admin(
         request = await committee_service.return_to_admin_request(
             db, actor=current_user, request_id=request_id, return_reason=payload.return_reason
         )
-    except (CommitteeRequestNotFoundError, CommitteeRequestInvalidTransitionError) as exc:
+    except (
+        CommitteeRequestNotFoundError,
+        CommitteeRequestForbiddenError,
+        CommitteeRequestInvalidTransitionError,
+    ) as exc:
         raise _handle_errors(exc) from exc
     return CommitteeFormationRequestOut.model_validate(request)
 
@@ -262,22 +274,52 @@ async def approve_committee_request(
 @committees_router.get(
     "",
     response_model=list[CommitteeOut],
-    dependencies=[Depends(require_permission("committees.view_authorized"))],
+    dependencies=[Depends(require_permission("committees.view"))],
 )
-async def list_committees(db: AsyncSession = Depends(get_db)) -> list[CommitteeOut]:
-    committees = await committee_service.list_committees(db)
+async def list_committees(
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[CommitteeOut]:
+    scope = current_user.scope_for("committees.view") or "own"
+    committees = await committee_service.list_committees(db, actor=current_user, scope=scope)
     return [CommitteeOut.model_validate(c) for c in committees]
+
+
+@committees_router.get(
+    "/department-members-elsewhere",
+    response_model=list[DepartmentMemberElsewhereOut],
+    dependencies=[Depends(require_permission("committees.view"))],
+)
+async def list_department_members_elsewhere(
+    current_user: CurrentUser,
+    search: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> list[DepartmentMemberElsewhereOut]:
+    """
+    مسار مستقل عمدًا قبل /{committee_id} بترتيب التسجيل (وإلا FastAPI
+    يحاول يفسّر "department-members-elsewhere" كـcommittee_id ويفشل).
+    موظفو إدارة current_user المشاركون بلجان لا تتبع إدارته — راجعي
+    committee_service.list_department_members_elsewhere للتفصيل الكامل.
+    """
+    rows = await committee_service.list_department_members_elsewhere(
+        db, actor=current_user, search=search
+    )
+    return [DepartmentMemberElsewhereOut.model_validate(r) for r in rows]
 
 
 @committees_router.get(
     "/{committee_id}",
     response_model=CommitteeOut,
-    dependencies=[Depends(require_permission("committees.view_authorized"))],
+    dependencies=[Depends(require_permission("committees.view"))],
 )
-async def get_committee(committee_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> CommitteeOut:
+async def get_committee(
+    committee_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> CommitteeOut:
+    scope = current_user.scope_for("committees.view") or "own"
     try:
-        committee = await committee_service.get_committee(db, committee_id)
-    except CommitteeNotFoundError as exc:
+        committee = await committee_service.get_committee(
+            db, committee_id, actor=current_user, scope=scope
+        )
+    except (CommitteeNotFoundError, CommitteeForbiddenError) as exc:
         raise _handle_errors(exc) from exc
     return CommitteeOut.model_validate(committee)
 

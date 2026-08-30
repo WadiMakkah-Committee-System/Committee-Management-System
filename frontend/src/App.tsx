@@ -96,7 +96,7 @@ function App() {
               <Route path="/committees/requests/:requestId" element={<CommitteeRequestDetailPage />} />
             </Route>
 
-            <Route element={<ProtectedRoute anyPermission={['committees.view_authorized']} />}>
+            <Route element={<ProtectedRoute anyPermission={['committees.view']} />}>
               <Route path="/committees/approved" element={<CommitteesPage />} />
               <Route path="/committees/approved/:committeeId" element={<CommitteeDetailPage />} />
             </Route>

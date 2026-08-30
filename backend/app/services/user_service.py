@@ -65,14 +65,18 @@ async def create_user(
     username: str,
     email: str,
     password: str,
-    role_id: uuid.UUID,
-    dep_id: uuid.UUID | None,
+    role_id: uuid.UUID | None = None,
+    dep_id: uuid.UUID | None = None,
     job_title_id: uuid.UUID | None = None,
     status: UserStatus = UserStatus.active,
 ) -> User | None:
     """
     إنشاء مستخدم جديد. يرفع ValueError إذا كان username أو email مستخدمًا
-    مسبقًا لحساب نشط (غير محذوف)، أو إذا لم يوجد الدور المطلوب.
+    مسبقًا لحساب نشط (غير محذوف)، أو إذا كان الدور المحدد غير موجود.
+
+    role_id اختياري (مراجعة لاما 2026-08-30 — "لا تجعل حقل الدور إجباريًا
+    عند إضافة مستخدم"): مستخدم بلا دور يُنشأ بنجاح، ويدخل النظام بلا أي
+    صلاحيات إضافية (فقط GET /users/me) لحين تعيين دور له لاحقًا.
     """
     existing = await db.execute(
         select(User).where(
@@ -86,9 +90,11 @@ async def create_user(
     if existing.scalar_one_or_none() is not None:
         raise ValueError("اسم المستخدم أو البريد الإلكتروني مستخدم مسبقًا")
 
-    role = await db.get(Role, role_id)
-    if role is None:
-        raise ValueError("الدور المحدد غير موجود")
+    role: Role | None = None
+    if role_id is not None:
+        role = await db.get(Role, role_id)
+        if role is None:
+            raise ValueError("الدور المحدد غير موجود")
 
     if job_title_id is not None:
         job_title = await db.get(JobTitle, job_title_id)
@@ -117,7 +123,7 @@ async def create_user(
         action_type="create",
         target_type="user",
         target_id=user.user_id,
-        metadata={"username": username, "role": role.name},
+        metadata={"username": username, "role": role.name if role else None},
     )
 
     await db.commit()
@@ -200,14 +206,17 @@ async def update_user(
         if new_role is None:
             raise ValueError("الدور المحدد غير موجود")
 
-        if not new_role.is_super_admin and user.role.is_super_admin:
+        if not new_role.is_super_admin and user.is_super_admin:
             remaining = await _count_other_active_super_admins(db, excluding_user_id=user.user_id)
             if remaining == 0:
                 raise ValueError(
                     "لا يمكن تغيير دور هذا المستخدم — إنه آخر super_admin نشط في النظام"
                 )
 
-    before = {"role": user.role.name, "dep_id": str(user.dep_id) if user.dep_id else None}
+    before = {
+        "role": user.role.name if user.role else None,
+        "dep_id": str(user.dep_id) if user.dep_id else None,
+    }
 
     if first_name is not None:
         user.first_name = first_name
@@ -236,7 +245,7 @@ async def update_user(
         action_type="update",
         target_type="user",
         target_id=user.user_id,
-        metadata={"before": before, "after": {"role": user.role.name}},
+        metadata={"before": before, "after": {"role": user.role.name if user.role else None}},
     )
 
     await db.commit()
@@ -257,7 +266,7 @@ async def soft_delete_user(
     if user is None:
         return None
 
-    if user.role.is_super_admin:
+    if user.is_super_admin:
         remaining = await _count_other_active_super_admins(db, excluding_user_id=user.user_id)
         if remaining == 0:
             raise ValueError("لا يمكن حذف هذا المستخدم — إنه آخر super_admin نشط في النظام")
@@ -293,7 +302,7 @@ async def set_user_status(
     if user is None:
         return None
 
-    if status == UserStatus.suspended and user.role.is_super_admin:
+    if status == UserStatus.suspended and user.is_super_admin:
         remaining = await _count_other_active_super_admins(db, excluding_user_id=user.user_id)
         if remaining == 0:
             raise ValueError("لا يمكن إيقاف هذا الحساب — إنه آخر super_admin نشط في النظام")

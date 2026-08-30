@@ -66,7 +66,9 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="مستخدم غير موجود")
 
-    new_access_token = create_access_token(user.user_id, user.role.name, session_id)
+    new_access_token = create_access_token(
+        user.user_id, user.role.name if user.role else None, session_id
+    )
     return TokenResponse(
         access_token=new_access_token,
         refresh_token=payload.refresh_token,

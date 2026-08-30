@@ -572,6 +572,166 @@ async def test_view_committees_requires_view_authorized_permission(
     assert allowed_admin.status_code == 200
 
 
+async def _create_role_and_login(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    *,
+    username: str,
+    permission_codes: list[str],
+    permission_scopes: dict[str, str],
+    dep_id: str | None = None,
+) -> tuple[dict[str, str], str]:
+    role = await client.post(
+        "/api/v1/roles",
+        json={
+            "name": f"role_{username}",
+            "permission_codes": permission_codes,
+            "permission_scopes": permission_scopes,
+        },
+        headers=auth_headers,
+    )
+    assert role.status_code == 201, role.text
+    create = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "أ",
+            "middle_name": "ب",
+            "last_name": "ج",
+            "username": username,
+            "email": f"{username}@example.com",
+            "password": "StrongPass1",
+            "role_id": role.json()["role_id"],
+            "dep_id": dep_id,
+        },
+        headers=auth_headers,
+    )
+    assert create.status_code == 201, create.text
+    user_id = create.json()["user_id"]
+    login = await client.post(
+        "/api/v1/auth/login", json={"username": username, "password": "StrongPass1"}
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}, user_id
+
+
+async def _create_department(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    super_admin_user: User,
+    name: str = "إدارة اختبار اللجان",
+    code: str = "CDPT",
+) -> str:
+    response = await client.post(
+        "/api/v1/departments",
+        json={
+            "name": name,
+            "code": code,
+            "description": None,
+            "manager_user_id": str(super_admin_user.user_id),
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["dep_id"]
+
+
+async def _create_member_with_dep(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    roles_by_name: dict[str, str],
+    *,
+    username: str,
+    dep_id: str,
+) -> str:
+    create = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "أ",
+            "middle_name": "ب",
+            "last_name": "ج",
+            "username": username,
+            "email": f"{username}@example.com",
+            "password": "StrongPass1",
+            "role_id": roles_by_name["admin"],
+            "dep_id": dep_id,
+        },
+        headers=auth_headers,
+    )
+    assert create.status_code == 201, create.text
+    return create.json()["user_id"]
+
+
+async def _approve_full_flow(
+    client: AsyncClient, actors: dict, *, name: str, member_ids: list[str], chair_id: str
+) -> str:
+    """يُنفّذ دورة الحياة الكاملة (draft → submitted → pending_approval → approved) ويرجع committee_id."""
+    payload = {
+        "committee_name": name,
+        "statement": "بيان اللجنة",
+        "start_date": "2026-09-01",
+        "end_date": "2026-12-01",
+        "proposed_member_ids": member_ids,
+        "chair_user_id": chair_id,
+    }
+    create = await client.post(
+        "/api/v1/committee-requests", json=payload, headers=actors["admin_headers"]
+    )
+    assert create.status_code == 201, create.text
+    request_id = create.json()["request_id"]
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+    await client.post(f"/api/v1/committee-requests/{request_id}/escalate", headers=actors["office_headers"])
+    approve = await client.post(
+        f"/api/v1/committee-requests/{request_id}/approve", headers=actors["ceo_headers"]
+    )
+    assert approve.status_code == 200, approve.text
+    return approve.json()["committee_id"]
+
+
+async def test_committees_view_own_scope_limits_to_member_committees(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    مراجعة لاما 2026-08-30: صلاحية عرض اللجان بنطاق own يجب أن تقتصر فعليًا
+    على اللجان التي المستخدم رئيسها أو عضو فيها — وليس كل اللجان المعتمدة
+    (تصحيح الاسم المُضلِّل committees.view_authorized السابق، وتفعيل الفلتر
+    الفعلي بطبقة الخدمة committee_service.list_committees/get_committee).
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    viewer_headers, viewer_id = await _create_role_and_login(
+        client,
+        auth_headers,
+        username="committee_own_viewer",
+        permission_codes=["committees.view"],
+        permission_scopes={"committees.view": "own"},
+    )
+
+    my_committee_id = await _approve_full_flow(
+        client,
+        actors,
+        name="لجنتي",
+        member_ids=[actors["member_id"], viewer_id],
+        chair_id=actors["member_id"],
+    )
+    other_committee_id = await _approve_full_flow(
+        client,
+        actors,
+        name="لجنة غيري",
+        member_ids=[actors["member_id"]],
+        chair_id=actors["member_id"],
+    )
+
+    listed = await client.get("/api/v1/committees", headers=viewer_headers)
+    assert listed.status_code == 200
+    listed_ids = {c["committee_id"] for c in listed.json()}
+    assert listed_ids == {my_committee_id}
+
+    allowed = await client.get(f"/api/v1/committees/{my_committee_id}", headers=viewer_headers)
+    assert allowed.status_code == 200
+
+    forbidden = await client.get(f"/api/v1/committees/{other_committee_id}", headers=viewer_headers)
+    assert forbidden.status_code == 403
+
+
 async def test_chair_must_be_a_proposed_member_on_create(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
@@ -671,3 +831,153 @@ async def test_chair_propagates_to_approved_committee(
     # باستجابة approve نفسها — تأكيد أن lazy="selectin" يعمل بكل مسارات القراءة.
     fetched = await client.get(f"/api/v1/committee-requests/{request_id}", headers=actors["admin_headers"])
     assert fetched.json()["committee_id"] == created["committee_id"]
+
+
+async def test_committees_view_department_scope_limits_to_chair_department(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """
+    مراجعة لاما 2026-08-30 (الجولة الثالثة): نطاق department على
+    committees.view = اللجان التي **رئيسها** من نفس إدارة actor فقط —
+    "لجان إدارتي" تعني اللجان اللي إدارتي تقودها، وليس أي لجنة له فيها
+    عضو من إدارته (ذاك سطح منفصل أخف، راجعي اختبار
+    department-members-elsewhere أدناه).
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    dep_a = await _create_department(client, auth_headers, super_admin_user, "إدارة أ لجان", "DPA3")
+    dep_b = await _create_department(client, auth_headers, super_admin_user, "إدارة ب لجان", "DPB3")
+
+    chair_a = await _create_member_with_dep(
+        client, auth_headers, roles_by_name, username="chair_dep_a", dep_id=dep_a
+    )
+    chair_b = await _create_member_with_dep(
+        client, auth_headers, roles_by_name, username="chair_dep_b", dep_id=dep_b
+    )
+
+    viewer_headers, _ = await _create_role_and_login(
+        client,
+        auth_headers,
+        username="committee_dep_viewer",
+        permission_codes=["committees.view"],
+        permission_scopes={"committees.view": "department"},
+        dep_id=dep_a,
+    )
+
+    committee_a = await _approve_full_flow(
+        client, actors, name="لجنة أ", member_ids=[actors["member_id"], chair_a], chair_id=chair_a
+    )
+    committee_b = await _approve_full_flow(
+        client, actors, name="لجنة ب", member_ids=[actors["member_id"], chair_b], chair_id=chair_b
+    )
+
+    listed = await client.get("/api/v1/committees", headers=viewer_headers)
+    assert listed.status_code == 200
+    assert {c["committee_id"] for c in listed.json()} == {committee_a}
+
+    allowed = await client.get(f"/api/v1/committees/{committee_a}", headers=viewer_headers)
+    assert allowed.status_code == 200
+
+    forbidden = await client.get(f"/api/v1/committees/{committee_b}", headers=viewer_headers)
+    assert forbidden.status_code == 403
+
+
+async def test_committees_view_department_scope_without_department_sees_nothing(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """actor بنطاق department لكن بدون إدارة (dep_id=None) ما فيه إدارة يُقارَن بها — قائمة فارغة، مو خطأ."""
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    viewer_headers, _ = await _create_role_and_login(
+        client,
+        auth_headers,
+        username="committee_dep_viewer_no_dep",
+        permission_codes=["committees.view"],
+        permission_scopes={"committees.view": "department"},
+    )
+    await _approve_full_flow(
+        client,
+        actors,
+        name="لجنة عشوائية",
+        member_ids=[actors["member_id"]],
+        chair_id=actors["member_id"],
+    )
+
+    listed = await client.get("/api/v1/committees", headers=viewer_headers)
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
+async def test_department_members_elsewhere_lists_cross_department_participation(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """
+    مراجعة لاما 2026-08-30 (الجولة الثالثة): موظف إدارة أ عضو بلجنة رئيسها
+    من إدارة ب يظهر بقائمة "موظفو إدارتي بلجان أخرى" لرئيس إدارة أ — سطر
+    تعريفي فقط (اسم الموظف/اللجنة/الإدارة)، مو وصول كامل للجنة. لجنة تقودها
+    إدارة أ نفسها لا تظهر هنا إطلاقًا (تظهر بالقائمة الرئيسية بنطاق department).
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    dep_a = await _create_department(client, auth_headers, super_admin_user, "إدارة أ٢", "DPA4")
+    dep_b = await _create_department(client, auth_headers, super_admin_user, "إدارة ب٢", "DPB4")
+
+    chair_b = await _create_member_with_dep(
+        client, auth_headers, roles_by_name, username="chair_dep_b2", dep_id=dep_b
+    )
+    chair_a = await _create_member_with_dep(
+        client, auth_headers, roles_by_name, username="chair_dep_a2", dep_id=dep_a
+    )
+    employee_a = await _create_member_with_dep(
+        client, auth_headers, roles_by_name, username="employee_dep_a2", dep_id=dep_a
+    )
+
+    viewer_headers, _ = await _create_role_and_login(
+        client,
+        auth_headers,
+        username="committee_dep_viewer2",
+        permission_codes=["committees.view"],
+        permission_scopes={"committees.view": "department"},
+        dep_id=dep_a,
+    )
+
+    elsewhere_committee = await _approve_full_flow(
+        client,
+        actors,
+        name="لجنة مشتركة",
+        member_ids=[chair_b, employee_a],
+        chair_id=chair_b,
+    )
+    same_dep_committee = await _approve_full_flow(
+        client,
+        actors,
+        name="لجنة إدارتي",
+        member_ids=[chair_a, employee_a],
+        chair_id=chair_a,
+    )
+
+    result = await client.get("/api/v1/committees/department-members-elsewhere", headers=viewer_headers)
+    assert result.status_code == 200
+    rows = result.json()
+    ids = {r["committee_id"] for r in rows}
+    assert elsewhere_committee in ids
+    assert same_dep_committee not in ids  # لجنة إدارتها نفسها لا تظهر هنا — تظهر بالقائمة الرئيسية.
+
+    row = next(r for r in rows if r["committee_id"] == elsewhere_committee)
+    assert row["committee_name"] == "لجنة مشتركة"
+    assert row["department_name"] == "إدارة ب٢"
+    assert row["member"]["user_id"] == employee_a
+
+    # التصفية النصية تشتغل على اسم اللجنة/اسم الإدارة.
+    filtered = await client.get(
+        "/api/v1/committees/department-members-elsewhere",
+        params={"search": "مشتركة"},
+        headers=viewer_headers,
+    )
+    assert filtered.status_code == 200
+    assert {r["committee_id"] for r in filtered.json()} == {elsewhere_committee}
+
+    empty = await client.get(
+        "/api/v1/committees/department-members-elsewhere",
+        params={"search": "اسم غير موجود إطلاقًا"},
+        headers=viewer_headers,
+    )
+    assert empty.status_code == 200
+    assert empty.json() == []

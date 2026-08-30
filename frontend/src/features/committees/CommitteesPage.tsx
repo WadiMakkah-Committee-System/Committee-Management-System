@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { CalendarDays, CheckCircle2, Users2 } from 'lucide-react'
-import { useCommittees } from '@/hooks/useCommittees'
+import { Building2, CalendarDays, CheckCircle2, Users2 } from 'lucide-react'
+import { useCommittees, useDepartmentMembersElsewhere } from '@/hooks/useCommittees'
+import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -23,6 +24,19 @@ export function CommitteesPage() {
   const { data: committees, isLoading, isError, refetch } = useCommittees()
 
   const [search, setSearch] = useState('')
+
+  // موظفو إدارتي بلجان أخرى — مراجعة لاما 2026-08-30 (الجولة الثالثة):
+  // سطح خفيف منفصل عن القائمة الرئيسية، يظهر فقط لمستخدم له إدارة فعلية.
+  const currentUser = useAuthStore((s) => s.user)
+  const showElsewhereSection =
+    !!currentUser?.dep_id && !!currentUser?.permissions.includes('committees.view')
+  const [elsewhereSearch, setElsewhereSearch] = useState('')
+  const {
+    data: elsewhereMembers,
+    isLoading: elsewhereLoading,
+    isError: elsewhereError,
+    refetch: refetchElsewhere,
+  } = useDepartmentMembersElsewhere(elsewhereSearch, showElsewhereSection)
 
   const filtered = useMemo(() => {
     if (!committees) return []
@@ -115,6 +129,58 @@ export function CommitteesPage() {
               </Card>
             </motion.div>
           ))}
+        </div>
+      )}
+
+      {showElsewhereSection && (
+        <div className="flex flex-col gap-3 rounded-sm border border-border-default bg-bg-surface p-4">
+          <div className="flex items-center gap-2">
+            <Building2 size={16} className="text-text-muted" />
+            <h2 className="text-sm font-semibold text-text-primary">موظفو إدارتي بلجان أخرى</h2>
+          </div>
+          <p className="text-xs text-text-muted">
+            موظفون من إدارتك أعضاء بلجان تتبع إدارات أخرى — معلومة تعريفية فقط (الموظف/اللجنة/الإدارة)، بدون تفاصيل اللجنة الكاملة
+          </p>
+          <SearchInput
+            value={elsewhereSearch}
+            onChange={setElsewhereSearch}
+            placeholder="ابحث باسم الموظف أو اللجنة أو الإدارة..."
+          />
+          {elsewhereLoading ? (
+            <CardSkeleton />
+          ) : elsewhereError ? (
+            <ErrorState onRetry={() => refetchElsewhere()} />
+          ) : (elsewhereMembers?.length ?? 0) === 0 ? (
+            <p className="py-4 text-center text-sm text-text-muted">
+              {elsewhereSearch ? 'لا توجد نتائج مطابقة' : 'لا يوجد موظفون من إدارتك بلجان أخرى حاليًا'}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-sm">
+                <thead>
+                  <tr className="border-b border-border-default text-xs text-text-muted">
+                    <th className="px-3 py-2 font-medium">الموظف</th>
+                    <th className="px-3 py-2 font-medium">اللجنة</th>
+                    <th className="px-3 py-2 font-medium">الإدارة التابعة لها</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {elsewhereMembers?.map((row) => (
+                    <tr
+                      key={`${row.committee_id}-${row.member.user_id}`}
+                      className="border-b border-border-default last:border-0"
+                    >
+                      <td className="px-3 py-2 text-text-primary">
+                        {row.member.first_name} {row.member.middle_name} {row.member.last_name}
+                      </td>
+                      <td className="px-3 py-2 text-text-secondary">{row.committee_name}</td>
+                      <td className="px-3 py-2 text-text-secondary">{row.department_name ?? 'غير محدد'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

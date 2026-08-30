@@ -96,7 +96,7 @@ def _create_token(
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_access_token(user_id: UUID, role: str, session_id: str) -> str:
+def create_access_token(user_id: UUID, role: str | None, session_id: str) -> str:
     """
     توليد Access Token قصير المدى.
 
@@ -104,6 +104,9 @@ def create_access_token(user_id: UUID, role: str, session_id: str) -> str:
     للتسهيل على الواجهة الأمامية (عرض/توجيه) — لكن هذا لا يُعتمد عليه أبدًا
     لفرض الصلاحيات؛ RBAC الفعلي يتحقق من قاعدة البيانات في كل طلب
     (قاعدة "لا تثق بأي بيانات دور/هوية قادمة من العميل" في CLAUDE.md).
+
+    role اختياري (مراجعة لاما 2026-08-30) — مستخدم بلا دور مُعيَّن بعد
+    يسجّل دخول بنجاح، ويحمل توكنه role=None كتلميح فقط للفرونت.
     """
     return _create_token(
         subject=user_id,

@@ -30,6 +30,14 @@ export interface Permission {
   is_enforced: boolean
 }
 
+/** نطاقات الوصول المدعومة — راجعي db/migrations/0014 وbackend/app/models/role.py. */
+export type PermissionScope = 'own' | 'department' | 'all'
+
+/** صلاحية دور معيّن، مع نطاق الوصول الفعلي الممنوح لها (مراجعة لاما 2026-08-30). */
+export interface RolePermission extends Permission {
+  scope: PermissionScope
+}
+
 export interface Role {
   role_id: string
   name: string
@@ -38,7 +46,7 @@ export interface Role {
   is_super_admin: boolean
   created_at: string
   updated_at: string
-  permissions: Permission[]
+  permissions: RolePermission[]
   permission_count: number
   user_count: number
 }
@@ -47,12 +55,15 @@ export interface RoleCreatePayload {
   name: string
   description: string | null
   permission_codes: string[]
+  /** {كود_الصلاحية: نطاقها} اختياري — أي كود غير مذكور يأخذ 'all' افتراضيًا. */
+  permission_scopes?: Record<string, PermissionScope>
 }
 
 export interface RoleUpdatePayload {
   name?: string
   description?: string | null
   permission_codes?: string[]
+  permission_scopes?: Record<string, PermissionScope>
 }
 
 export interface DepartmentManager {
@@ -95,7 +106,7 @@ export interface User {
   last_name: string
   username: string
   email: string
-  role: RoleSummary
+  role: RoleSummary | null
   dep_id: string | null
   department: Department | null
   job_title_id: string | null
@@ -123,7 +134,8 @@ export interface UserCreatePayload {
   username: string
   email: string
   password: string
-  role_id: string
+  /** اختياري (مراجعة لاما 2026-08-30) — مستخدم بلا دور يُنشأ بنجاح. */
+  role_id: string | null
   dep_id: string | null
   job_title_id: string | null
   status: UserStatus
@@ -346,4 +358,14 @@ export interface DocumentUpdatePayload {
   department_ids?: string[]
   committee_ids?: string[]
   user_ids?: string[]
+ * سطر تعريفي خفيف — موظف من إدارة المستخدم الحالي عضو بلجنة رئيسها من
+ * إدارة ثانية (أو بدون إدارة معروفة). مراجعة لاما 2026-08-30 (الجولة
+ * الثالثة). عمدًا بدون بقية تفاصيل اللجنة — راجعي
+ * backend/app/schemas/committee.py::DepartmentMemberElsewhereOut.
+ */
+export interface DepartmentMemberElsewhere {
+  member: CommitteeMemberUser
+  committee_id: string
+  committee_name: string
+  department_name: string | null
 }
