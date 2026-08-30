@@ -15,6 +15,9 @@ import { CommitteeRequestsPage } from '@/features/committees/CommitteeRequestsPa
 import { CommitteeRequestDetailPage } from '@/features/committees/CommitteeRequestDetailPage'
 import { CommitteesPage } from '@/features/committees/CommitteesPage'
 import { CommitteeDetailPage } from '@/features/committees/CommitteeDetailPage'
+import { DocumentsPage } from '@/features/documents/DocumentsPage'
+import { DocumentDetailPage } from '@/features/documents/DocumentDetailPage'
+import { DocumentCategoriesPage } from '@/features/documents/DocumentCategoriesPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { usersKeys } from '@/hooks/useUsers'
@@ -96,6 +99,15 @@ function App() {
             <Route element={<ProtectedRoute anyPermission={['committees.view_authorized']} />}>
               <Route path="/committees/approved" element={<CommitteesPage />} />
               <Route path="/committees/approved/:committeeId" element={<CommitteeDetailPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute anyPermission={['documents.view', 'documents.search']} />}>
+              <Route path="/documents" element={<DocumentsPage />} />
+              <Route path="/documents/:documentId" element={<DocumentDetailPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute anyPermission={['documents.view', 'documents.upload']} />}>
+              <Route path="/documents/categories" element={<DocumentCategoriesPage />} />
             </Route>
 
             <Route path="/" element={<Navigate to="/users" replace />} />
