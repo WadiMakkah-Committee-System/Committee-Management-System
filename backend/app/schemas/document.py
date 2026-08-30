@@ -32,25 +32,25 @@ DocumentCategoryScope = Literal["global", "department"]
 
 
 class DocumentCategoryCreate(BaseModel):
-      name: str = Field(min_length=2, max_length=150)
-      scope: DocumentCategoryScope
-      department_id: uuid.UUID | None = None
+    name: str = Field(min_length=2, max_length=150)
+    scope: DocumentCategoryScope
+    department_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _validate_scope_department(self) -> "DocumentCategoryCreate":
-              if self.scope == "global" and self.department_id is not None:
-                            raise ValueError("التصنيف العام لا يجوز ربطه بإدارة")
-                        if self.scope == "department" and self.department_id is None:
-                                      raise ValueError("التصنيف الخاص بإدارة يجب تحديد الإدارة له")
-                                  return self
+        if self.scope == "global" and self.department_id is not None:
+            raise ValueError("التصنيف العام لا يجوز ربطه بإدارة")
+        if self.scope == "department" and self.department_id is None:
+            raise ValueError("التصنيف الخاص بإدارة يجب تحديد الإدارة له")
+        return self
 
 
 class DocumentCategoryUpdate(BaseModel):
-      name: str = Field(min_length=2, max_length=150)
+    name: str = Field(min_length=2, max_length=150)
 
 
 class DocumentCategoryOut(BaseModel):
-      model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
     category_id: uuid.UUID
     name: str
@@ -66,7 +66,7 @@ class DocumentCategoryOut(BaseModel):
 
 
 class DocumentUploaderOut(BaseModel):
-      """شكل مختصر لبيانات رافع الوثيقة — يُستخدم مضمَّنًا داخل DocumentOut."""
+    """شكل مختصر لبيانات رافع الوثيقة — يُستخدم مضمَّنًا داخل DocumentOut."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -77,21 +77,21 @@ class DocumentUploaderOut(BaseModel):
 
 
 class DocumentVisibleDepartmentOut(BaseModel):
-      model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
     dep_id: uuid.UUID
     name: str
 
 
 class DocumentVisibleCommitteeOut(BaseModel):
-      model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
     committee_id: uuid.UUID
     name: str
 
 
 class DocumentVisibleUserOut(BaseModel):
-      model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
     user_id: uuid.UUID
     first_name: str
@@ -100,12 +100,12 @@ class DocumentVisibleUserOut(BaseModel):
 
 
 class DocumentUpdate(BaseModel):
-      """
-          تعديل بيانات وثيقة موجودة (Metadata فقط — لا يوجد استبدال للملف نفسه
-              في هذه المرحلة؛ لتغيير الملف تُرفع وثيقة جديدة). كل الحقول اختيارية:
-                  الحقل المتروك None لا يُعدَّل، وقوائم الرؤية (department_ids/...)
-                      عند إرسالها تستبدل القائمة القديمة بالكامل (قائمة فارغة = إزالة الكل).
-                          """
+    """
+    تعديل بيانات وثيقة موجودة (Metadata فقط — لا يوجد استبدال للملف نفسه
+    في هذه المرحلة؛ لتغيير الملف تُرفع وثيقة جديدة). كل الحقول اختيارية:
+    الحقل المتروك None لا يُعدَّل، وقوائم الرؤية (department_ids/...)
+    عند إرسالها تستبدل القائمة القديمة بالكامل (قائمة فارغة = إزالة الكل).
+    """
 
     title: str | None = Field(default=None, min_length=2, max_length=255)
     description: str | None = None
@@ -117,7 +117,7 @@ class DocumentUpdate(BaseModel):
 
 
 class DocumentOut(BaseModel):
-      model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
     document_id: uuid.UUID
     title: str
