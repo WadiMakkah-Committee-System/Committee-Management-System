@@ -23,7 +23,7 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
   }
 
   if (user) {
-    const isSuperAdmin = user.role.is_super_admin
+    const isSuperAdmin = !!user.role?.is_super_admin
     if (superAdminOnly && !isSuperAdmin) {
       return <Navigate to="/profile" replace />
     }

@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/Button'
 import { PermissionsPicker } from './PermissionsPicker'
 import { usePermissionsCatalog } from '@/hooks/useRoles'
 import { TableSkeleton } from '@/components/ui/Skeleton'
-import type { Permission, Role, RoleCreatePayload, RoleUpdatePayload } from '@/types'
+import type { Permission, PermissionScope, Role, RoleCreatePayload, RoleUpdatePayload } from '@/types'
 
 const schema = z.object({
   name: z.string().min(2, 'اسم الدور مطلوب (حرفان على الأقل)').max(100),
@@ -40,6 +40,7 @@ export function RoleFormModal({
   const isEdit = !!role
   const { data: permissions, isLoading: permissionsLoading } = usePermissionsCatalog()
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [scopes, setScopes] = useState<Record<string, PermissionScope>>({})
   const [permissionsError, setPermissionsError] = useState<string | null>(null)
 
   const {
@@ -53,6 +54,9 @@ export function RoleFormModal({
     if (open) {
       reset({ name: role?.name ?? '', description: role?.description ?? '' })
       setSelected(new Set((role?.permissions ?? []).map((p: Permission) => p.code)))
+      setScopes(
+        Object.fromEntries((role?.permissions ?? []).map((p) => [p.code, p.scope])),
+      )
       setPermissionsError(null)
     }
   }, [open, role, reset])
@@ -64,14 +68,24 @@ export function RoleFormModal({
       return
     }
     setPermissionsError(null)
+    // نطاق كل صلاحية محددة فقط — الأكواد غير المحددة لا داعي لإرسال نطاق لها.
+    const permission_scopes = Object.fromEntries(
+      permission_codes.map((code) => [code, scopes[code] ?? 'all']),
+    )
     if (isEdit) {
       onSubmitEdit({
         name: values.name,
         description: values.description || null,
         permission_codes,
+        permission_scopes,
       })
     } else {
-      onSubmitCreate({ name: values.name, description: values.description || null, permission_codes })
+      onSubmitCreate({
+        name: values.name,
+        description: values.description || null,
+        permission_codes,
+        permission_scopes,
+      })
     }
   }
 
@@ -118,6 +132,8 @@ export function RoleFormModal({
                 setSelected(next)
                 if (next.size > 0) setPermissionsError(null)
               }}
+              scopes={scopes}
+              onScopeChange={(code, scope) => setScopes((prev) => ({ ...prev, [code]: scope }))}
             />
           )}
           {permissionsError && <p className="mt-2 text-sm font-medium text-danger">{permissionsError}</p>}

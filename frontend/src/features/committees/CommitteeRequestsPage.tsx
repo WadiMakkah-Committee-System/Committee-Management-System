@@ -36,13 +36,13 @@ export function CommitteeRequestsPage() {
 
   // لا يوجد تجاوز تلقائي لـsuper_admin هنا (قرار موثّق 2026-08-27).
   const canCreate = !!user?.permissions.includes('committees.request.create')
-  // committees.view_authorized شرط منفصل تمامًا عن committees.request.view
+  // committees.view شرط منفصل تمامًا عن committees.request.view
   // (بيانات الإنتاج الفعلية: executive_office_manager/executive_president
   // يملكون request.view لكن ليس view_authorized؛ والعكس صحيح لدور "ادمن")
   // — لهذا التنقّل الذكي أدناه (Task #15) يتحقق من هذه الصلاحية تحديدًا
   // قبل توجيه المستخدم لصفحة اللجنة نفسها (/committees/approved/:id)، بدل
   // افتراض أن كل من يقدر يرى الطلب المعتمد يقدر يرى اللجنة الناتجة عنه.
-  const canViewApprovedCommittee = !!user?.permissions.includes('committees.view_authorized')
+  const canViewApprovedCommittee = !!user?.permissions.includes('committees.view')
 
   /**
    * التنقّل الذكي عند الضغط على طلب بقائمة الطلبات (نقطة #4 بمواصفات

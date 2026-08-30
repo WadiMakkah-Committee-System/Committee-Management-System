@@ -2,12 +2,27 @@ import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronDown, Clock3 } from 'lucide-react'
 import { cn, PERMISSION_CATEGORY_LABELS, PERMISSION_CATEGORY_ORDER } from '@/lib/utils'
-import type { Permission } from '@/types'
+import type { Permission, PermissionScope } from '@/types'
+
+/** تسميات نطاقات الوصول — راجعي db/migrations/0014 لتعريفها الكامل. */
+const SCOPE_LABELS: Record<PermissionScope, string> = {
+  own: 'بياناتي فقط',
+  department: 'إدارتي فقط',
+  all: 'كل البيانات',
+}
+const SCOPE_OPTIONS: PermissionScope[] = ['own', 'department', 'all']
 
 interface PermissionsPickerProps {
   permissions: Permission[]
   selected: Set<string>
   onChange: (next: Set<string>) => void
+  /**
+   * نطاق الوصول لكل صلاحية محددة — مراجعة لاما 2026-08-30 (فصل الصلاحية
+   * عن نطاق الوصول). اختياري: عند غيابه لا يظهر منتقي النطاق إطلاقًا
+   * (توافقًا مع أي استخدام مستقبلي لا يحتاج نطاقًا).
+   */
+  scopes?: Record<string, PermissionScope>
+  onScopeChange?: (code: string, scope: PermissionScope) => void
 }
 
 /**
@@ -15,7 +30,13 @@ interface PermissionsPickerProps {
  * يمكن فتح أكثر من قسم في نفس الوقت واختيار صلاحيات من أكثر من قسم — لا
  * يوجد قيد "قسم واحد فقط مفتوح" إطلاقًا (متطلب صريح).
  */
-export function PermissionsPicker({ permissions, selected, onChange }: PermissionsPickerProps) {
+export function PermissionsPicker({
+  permissions,
+  selected,
+  onChange,
+  scopes,
+  onScopeChange,
+}: PermissionsPickerProps) {
   const grouped = useMemo(() => {
     const byCategory = new Map<string, Permission[]>()
     for (const p of permissions) {
@@ -138,7 +159,21 @@ export function PermissionsPicker({ permissions, selected, onChange }: Permissio
                           onChange={() => togglePermission(p.code)}
                           className="h-4 w-4 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
                         />
-                        {p.label_ar}
+                        <span className="flex-1">{p.label_ar}</span>
+                        {scopes && onScopeChange && selected.has(p.code) && (
+                          <select
+                            value={scopes[p.code] ?? 'all'}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => onScopeChange(p.code, e.target.value as PermissionScope)}
+                            className="shrink-0 rounded-xs border border-border-default bg-bg-surface px-1.5 py-0.5 text-xs text-text-secondary"
+                          >
+                            {SCOPE_OPTIONS.map((s) => (
+                              <option key={s} value={s}>
+                                {SCOPE_LABELS[s]}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </label>
                     ))}
                   </div>

@@ -18,7 +18,9 @@ const baseFields = {
   middle_name: z.string().min(1, 'الاسم الأوسط مطلوب').max(100),
   last_name: z.string().min(1, 'اسم العائلة مطلوب').max(100),
   email: z.string().email('بريد إلكتروني غير صحيح'),
-  role_id: z.string().min(1, 'الدور مطلوب'),
+  // اختياري (مراجعة لاما 2026-08-30 — "لا تجعل حقل الدور إجباريًا عند إضافة مستخدم"):
+  // '' تعني "غير محدد"، تُحوَّل لـnull عند الإرسال (نفس نمط dep_id/job_title_id).
+  role_id: z.string(),
   dep_id: z.string(),
   job_title_id: z.string(),
 }
@@ -72,7 +74,10 @@ export function UserFormModal({
   const { data: roles } = useRoles()
   const { data: jobTitles } = useJobTitles()
   const createJobTitleMutation = useCreateJobTitle()
-  const roleOptions = (roles ?? []).map((r) => ({ value: r.role_id, label: roleLabel(r) }))
+  const roleOptions = [
+    { value: '', label: 'غير محدد' },
+    ...(roles ?? []).map((r) => ({ value: r.role_id, label: roleLabel(r) })),
+  ]
   const jobTitleOptions = (jobTitles ?? []).map((jt) => ({ value: jt.job_title_id, label: jt.name }))
   const depOptions = [
     { value: '', label: 'بدون إدارة' },
@@ -100,7 +105,7 @@ export function UserFormModal({
         middle_name: user?.middle_name ?? '',
         last_name: user?.last_name ?? '',
         email: user?.email ?? '',
-        role_id: user?.role.role_id ?? '',
+        role_id: user?.role?.role_id ?? '',
         dep_id: user?.dep_id ?? defaultDepId ?? '',
         job_title_id: user?.job_title_id ?? '',
         ...(isEdit ? {} : { username: '', password: '', status: 'active' }),
@@ -116,7 +121,7 @@ export function UserFormModal({
         middle_name: v.middle_name,
         last_name: v.last_name,
         email: v.email,
-        role_id: v.role_id,
+        role_id: v.role_id || undefined,
         dep_id: v.dep_id || null,
         job_title_id: v.job_title_id || null,
       })
@@ -129,7 +134,7 @@ export function UserFormModal({
         username: v.username,
         email: v.email,
         password: v.password,
-        role_id: v.role_id,
+        role_id: v.role_id || null,
         dep_id: v.dep_id || null,
         job_title_id: v.job_title_id || null,
         status: v.status,
@@ -191,7 +196,6 @@ export function UserFormModal({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Select
             label="الدور"
-            required
             placeholder="اختر الدور"
             options={roleOptions}
             error={errors.role_id?.message}

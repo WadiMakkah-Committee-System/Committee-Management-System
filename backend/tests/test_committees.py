@@ -572,6 +572,118 @@ async def test_view_committees_requires_view_authorized_permission(
     assert allowed_admin.status_code == 200
 
 
+async def _create_role_and_login(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    *,
+    username: str,
+    permission_codes: list[str],
+    permission_scopes: dict[str, str],
+) -> tuple[dict[str, str], str]:
+    role = await client.post(
+        "/api/v1/roles",
+        json={
+            "name": f"role_{username}",
+            "permission_codes": permission_codes,
+            "permission_scopes": permission_scopes,
+        },
+        headers=auth_headers,
+    )
+    assert role.status_code == 201, role.text
+    create = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "أ",
+            "middle_name": "ب",
+            "last_name": "ج",
+            "username": username,
+            "email": f"{username}@example.com",
+            "password": "StrongPass1",
+            "role_id": role.json()["role_id"],
+            "dep_id": None,
+        },
+        headers=auth_headers,
+    )
+    assert create.status_code == 201, create.text
+    user_id = create.json()["user_id"]
+    login = await client.post(
+        "/api/v1/auth/login", json={"username": username, "password": "StrongPass1"}
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}, user_id
+
+
+async def _approve_full_flow(
+    client: AsyncClient, actors: dict, *, name: str, member_ids: list[str], chair_id: str
+) -> str:
+    """يُنفّذ دورة الحياة الكاملة (draft → submitted → pending_approval → approved) ويرجع committee_id."""
+    payload = {
+        "committee_name": name,
+        "statement": "بيان اللجنة",
+        "start_date": "2026-09-01",
+        "end_date": "2026-12-01",
+        "proposed_member_ids": member_ids,
+        "chair_user_id": chair_id,
+    }
+    create = await client.post(
+        "/api/v1/committee-requests", json=payload, headers=actors["admin_headers"]
+    )
+    assert create.status_code == 201, create.text
+    request_id = create.json()["request_id"]
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+    await client.post(f"/api/v1/committee-requests/{request_id}/escalate", headers=actors["office_headers"])
+    approve = await client.post(
+        f"/api/v1/committee-requests/{request_id}/approve", headers=actors["ceo_headers"]
+    )
+    assert approve.status_code == 200, approve.text
+    return approve.json()["committee_id"]
+
+
+async def test_committees_view_own_scope_limits_to_member_committees(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    مراجعة لاما 2026-08-30: صلاحية عرض اللجان بنطاق own يجب أن تقتصر فعليًا
+    على اللجان التي المستخدم رئيسها أو عضو فيها — وليس كل اللجان المعتمدة
+    (تصحيح الاسم المُضلِّل committees.view_authorized السابق، وتفعيل الفلتر
+    الفعلي بطبقة الخدمة committee_service.list_committees/get_committee).
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    viewer_headers, viewer_id = await _create_role_and_login(
+        client,
+        auth_headers,
+        username="committee_own_viewer",
+        permission_codes=["committees.view"],
+        permission_scopes={"committees.view": "own"},
+    )
+
+    my_committee_id = await _approve_full_flow(
+        client,
+        actors,
+        name="لجنتي",
+        member_ids=[actors["member_id"], viewer_id],
+        chair_id=actors["member_id"],
+    )
+    other_committee_id = await _approve_full_flow(
+        client,
+        actors,
+        name="لجنة غيري",
+        member_ids=[actors["member_id"]],
+        chair_id=actors["member_id"],
+    )
+
+    listed = await client.get("/api/v1/committees", headers=viewer_headers)
+    assert listed.status_code == 200
+    listed_ids = {c["committee_id"] for c in listed.json()}
+    assert listed_ids == {my_committee_id}
+
+    allowed = await client.get(f"/api/v1/committees/{my_committee_id}", headers=viewer_headers)
+    assert allowed.status_code == 200
+
+    forbidden = await client.get(f"/api/v1/committees/{other_committee_id}", headers=viewer_headers)
+    assert forbidden.status_code == 403
+
+
 async def test_chair_must_be_a_proposed_member_on_create(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:

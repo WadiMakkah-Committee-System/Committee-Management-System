@@ -65,7 +65,7 @@ const NAV_ITEMS: NavItem[] = [
         label: 'اللجان المعتمدة',
         icon: CheckCircle2,
         path: '/committees/approved',
-        requiredPermission: ['committees.view_authorized'],
+        requiredPermission: ['committees.view'],
       },
     ],
   },
@@ -107,7 +107,7 @@ function filterNavItem(item: NavItem, isSuperAdmin: boolean, permissions: string
 
 export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; onCloseMobile: () => void }) {
   const user = useAuthStore((s) => s.user)
-  const isSuperAdmin = !!user?.role.is_super_admin
+  const isSuperAdmin = !!user?.role?.is_super_admin
   const permissions = user?.permissions ?? []
   const location = useLocation()
 

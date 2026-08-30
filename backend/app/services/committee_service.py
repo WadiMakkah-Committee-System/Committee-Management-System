@@ -53,7 +53,7 @@ committees/committee_members بعد approved.
 import uuid
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -73,6 +73,14 @@ class CommitteeRequestForbiddenError(Exception):
     عامة ذات صلة (مثال: تعديل ادمن لطلب ادمن آخر وهو لسا draft) — تُترجَم
     إلى 403 في طبقة الـ API. مختلفة عمدًا عن ValueError (أخطاء تحقق/عمل
     عامة، تُترجَم إلى 400).
+    """
+
+
+class CommitteeForbiddenError(Exception):
+    """
+    محاولة عرض لجنة معتمدة خارج نطاق وصول المستخدم (نطاق own و ليس رئيسًا
+    أو عضوًا فيها) — تُترجَم إلى 403. راجعي مراجعة لاما 2026-08-30 حول
+    committees.view وتصحيح نطاقها لدور "ادمن".
     """
 
 
@@ -233,24 +241,38 @@ async def update_request(
     end_date: date | None,
     proposed_member_ids: list[uuid.UUID] | None,
     chair_user_id: uuid.UUID | None,
-    can_edit_any_pending: bool,
 ) -> CommitteeFormationRequest:
     """
-    تعديل طلب قائم. القاعدة (موثّقة صراحة من المستخدمة، مصحَّحة 2026-08-24):
-    - draft/returned: مقدّم الطلب نفسه فقط (وليس أي حامل لصلاحية request.create).
-      returned تحديدًا تعني أن المكتب التنفيذي أرجع الطلب له مع سبب — يعدّل
-      ويعيد إرساله (submit_request) من جديد.
-    - submitted/under_review: من يملك committees.request.update فقط
-      (can_edit_any_pending) — بلا قيد ملكية.
+    تعديل طلب قائم. توحيد صلاحية التعديل (مراجعة لاما 2026-08-30 — "لا
+    تنشئ صلاحية منفصلة لكل حالة/دور"): كل التعديل الآن تحت صلاحية واحدة
+    committees.request.update (كانت مقسَّمة سابقًا بين .create للمسودة
+    و.update للمُرسَل، وهو الخلط اللي رفضته المراجعة صراحة). النطاق
+    (own/department/all) المسجَّل لدور actor على هذه الصلاحية + حالة
+    الطلب الحالية هما ما يحددان "من يقدر يعدّل ومتى"، وليس صلاحية منفصلة:
+
+    - draft/returned: **مقدّم الطلب فعليًا فقط** (ملكية حقيقية، بغض النظر
+      عن اتساع نطاق actor على الصلاحية) — حتى صاحب نطاق 'all' (مثال:
+      المكتب التنفيذي) لا يعدّل طلب غيره وهو draft/returned؛ هذه المرحلة
+      حصرًا لصاحب الطلب (قرار عمل موثّق مسبقًا، لم يتغيّر بالتوحيد). returned
+      تحديدًا تعني أن المكتب التنفيذي أرجع الطلب لصاحبه مع سبب — يعدّله
+      صاحبه ويعيد إرساله (submit_request).
+    - submitted/under_review: نطاق department/all فقط (المكتب التنفيذي
+      وما فوقه) — نطاق own وحده لا يكفي هنا، حتى لو كان actor هو نفسه
+      مقدّم الطلب (لا يقدر يعدّله بعد إرساله، هذا القرار موثّق مسبقًا).
     - pending_approval: **مقفول على الجميع** — لا حتى المكتب التنفيذي.
       الرئيس التنفيذي يقدر يرجعه (return_to_office_request) لو احتاج تعديل،
       لا يعدّله مباشرة.
     - approved/rejected: نهائية، لا تعديل إطلاقًا.
+
+    super_admin مستثنى دائمًا من فحص النطاق (نمط isOwner || isSuperAdmin
+    الموثّق بالمشروع) — لا يُقفَل بسبب نطاق ضيق مسجَّل لدوره بالخطأ.
     """
     request = await _get_request_or_raise(db, request_id)
+    scope = actor.scope_for("committees.request.update")
 
     if request.status in (CommitteeRequestStatus.draft, CommitteeRequestStatus.returned):
-        if request.requested_by != actor.user_id and not actor.role.is_super_admin:
+        is_owner = request.requested_by == actor.user_id
+        if not actor.is_super_admin and not is_owner:
             raise CommitteeRequestForbiddenError(
                 "لا يقدر إلا مقدّم الطلب على تعديله بهذه الحالة"
             )
@@ -258,7 +280,7 @@ async def update_request(
         CommitteeRequestStatus.submitted,
         CommitteeRequestStatus.under_review,
     ):
-        if not can_edit_any_pending and not actor.role.is_super_admin:
+        if scope not in ("department", "all") and not actor.is_super_admin:
             raise CommitteeRequestForbiddenError(
                 "تعديل الطلب بعد إرساله متاح فقط للمكتب التنفيذي"
             )
@@ -320,9 +342,13 @@ async def submit_request(
     db: AsyncSession, *, actor: User, request_id: uuid.UUID
 ) -> CommitteeFormationRequest:
     """
-    draft/returned → submitted (RF-COM-300). مقدّم الطلب نفسه فقط. returned
-    مسموحة أيضًا (وليس فقط draft) — بعد إرجاع المكتب التنفيذي الطلب مع
-    سبب، يعدّله مقدّم الطلب ثم يعيد إرساله بنفس هذا الإجراء.
+    draft/returned → submitted (RF-COM-300). الصلاحية المطلوبة على مستوى
+    الراوت أصبحت committees.request.update (بعد توحيد صلاحية التعديل —
+    مراجعة لاما 2026-08-30)، لكن الإرسال نفسه يبقى فعلًا خاصًا بمالك
+    الطلب حصرًا بغض النظر عن اتساع نطاقه — حتى صاحب نطاق 'all' يرسل طلبه
+    هو فقط، وليس طلب غيره (الإرسال تسليم الطلب من صاحبه، وليس "مراجعة").
+    returned مسموحة أيضًا (وليس فقط draft) — بعد إرجاع المكتب التنفيذي
+    الطلب مع سبب، يعدّله مقدّم الطلب ثم يعيد إرساله بنفس هذا الإجراء.
     """
     request = await _get_request_or_raise(db, request_id)
 
@@ -330,7 +356,7 @@ async def submit_request(
         raise CommitteeRequestInvalidTransitionError(
             "لا يمكن إرسال طلب ليس بحالة مسودة أو مُعاد"
         )
-    if request.requested_by != actor.user_id and not actor.role.is_super_admin:
+    if request.requested_by != actor.user_id and not actor.is_super_admin:
         raise CommitteeRequestForbiddenError("لا يقدر إلا مقدّم الطلب على إرساله")
 
     from_status = request.status
@@ -358,8 +384,18 @@ async def return_to_admin_request(
     (الادمن) مع سبب إلزامي، بدل تعديله مباشرة — خيار ثانٍ متاح له إلى جانب
     التعديل المباشر (update_request) والرفع للاعتماد (escalate_request).
     مقدّم الطلب يعدّله ويعيد إرساله عبر submit_request.
+
+    الراوت مقيَّد فقط بامتلاك committees.request.update (أي صلاحية، أي
+    نطاق) — لكن بعد أن صار مقدّم الطلب نفسه (الادمن) يملك هذه الصلاحية
+    أيضًا بنطاق own (منذ migration 0015، ليقدر يعدّل مسودته)، يجب فحص
+    النطاق هنا صراحة: الإرجاع فعل مراجع (reviewer) حصرًا، وليس فعل مالك —
+    نطاق own وحده لا يكفي (حتى لو كان actor هو مقدّم الطلب نفسه).
     """
     request = await _get_request_or_raise(db, request_id)
+
+    scope = actor.scope_for("committees.request.update")
+    if scope not in ("department", "all") and not actor.is_super_admin:
+        raise CommitteeRequestForbiddenError("إرجاع الطلب للادمن متاح فقط للمكتب التنفيذي")
 
     if request.status not in (
         CommitteeRequestStatus.submitted,
@@ -496,20 +532,35 @@ class CommitteeNotFoundError(Exception):
     """اللجنة المعتمدة غير موجودة — تُترجَم إلى 404 في طبقة الـ API."""
 
 
-async def list_committees(db: AsyncSession) -> list[Committee]:
+async def list_committees(db: AsyncSession, *, actor: User, can_view_all: bool) -> list[Committee]:
     """
-    عرض اللجان المعتمدة (committees.view_authorized). سطح قراءة بسيط فقط
+    عرض اللجان المعتمدة (صلاحية committees.view، بعد إعادة تسمية
+    committees.view_authorized — migration 0014). سطح قراءة بسيط فقط
     ليثبت أن الاعتماد أنشأ اللجنة فعليًا — إدارة اللجان الكاملة (مناصب،
     صلاحيات الأعضاء...) خارج نطاق Phase 2 (نطاق مختلف موثّق في BRS بند 6:
     "إدارة أعضاء اللجان والمناصب والصلاحيات").
+
+    can_view_all=False (نطاق own) يقصر النتيجة على اللجان التي actor
+    رئيسها أو عضو فيها فعليًا — تصحيح لمراجعة لاما 2026-08-30: الاسم
+    القديم "عرض اللجان المصرح بها" كان يوهم بهذا الفلتر دون تطبيقه فعليًا.
     """
-    result = await db.execute(
-        select(Committee).options(selectinload(Committee.members)).order_by(Committee.created_at.desc())
+    stmt = select(Committee).options(selectinload(Committee.members)).order_by(
+        Committee.created_at.desc()
     )
+    if not can_view_all:
+        stmt = stmt.where(
+            or_(
+                Committee.chair_user_id == actor.user_id,
+                Committee.members.any(User.user_id == actor.user_id),
+            )
+        )
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
-async def get_committee(db: AsyncSession, committee_id: uuid.UUID) -> Committee:
+async def get_committee(
+    db: AsyncSession, committee_id: uuid.UUID, *, actor: User, can_view_all: bool
+) -> Committee:
     result = await db.execute(
         select(Committee)
         .options(selectinload(Committee.members))
@@ -518,6 +569,12 @@ async def get_committee(db: AsyncSession, committee_id: uuid.UUID) -> Committee:
     committee = result.scalar_one_or_none()
     if committee is None:
         raise CommitteeNotFoundError("اللجنة غير موجودة")
+    if not can_view_all:
+        is_member = committee.chair_user_id == actor.user_id or any(
+            m.user_id == actor.user_id for m in committee.members
+        )
+        if not is_member:
+            raise CommitteeForbiddenError("ليست لديك صلاحية لعرض هذه اللجنة")
     return committee
 
 

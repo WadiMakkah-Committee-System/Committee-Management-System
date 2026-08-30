@@ -55,7 +55,10 @@ async def test_system_roles_seeded(client: AsyncClient, auth_headers) -> None:
     }
     super_admin = next(r for r in response.json() if r["name"] == "super_admin")
     assert super_admin["is_super_admin"] is True
-    assert super_admin["permission_count"] == 79
+    # 79 أصلًا، ناقص users.login/users.logout (migration 0014 — مراجعة
+    # لاما 2026-08-30: صلاحيتان بالكتالوج غير مُستخدَمتين فعليًا بأي
+    # تحقق بالكود، تسجيل الدخول/الخروج جزء من نظام المصادقة نفسه).
+    assert super_admin["permission_count"] == 77
 
 
 async def test_create_custom_role_with_selected_permissions(
@@ -75,6 +78,52 @@ async def test_create_custom_role_with_selected_permissions(
     assert body["permission_count"] == 2
     assert body["is_system"] is False
     assert {p["code"] for p in body["permissions"]} == {"departments.view", "departments.create"}
+
+
+async def test_create_and_update_role_with_permission_scopes(
+    client: AsyncClient, auth_headers
+) -> None:
+    """
+    مراجعة لاما 2026-08-30: كل (دور، صلاحية) يحمل نطاق وصول مستقل
+    (own/department/all) — يُنشأ ويُعدَّل عبر permission_scopes، ويُرجَع في
+    RoleDetailOut.permissions[].scope. أي كود غير مذكور بـpermission_scopes
+    يأخذ 'all' افتراضيًا (نفس فلسفة migration 0014).
+    """
+    create = await client.post(
+        "/api/v1/roles",
+        json={
+            "name": "مراجع نطاقات",
+            "permission_codes": ["departments.view", "users.view"],
+            "permission_scopes": {"users.view": "own"},
+        },
+        headers=auth_headers,
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()
+    scopes = {p["code"]: p["scope"] for p in body["permissions"]}
+    assert scopes == {"departments.view": "all", "users.view": "own"}
+
+    role_id = body["role_id"]
+    update = await client.patch(
+        f"/api/v1/roles/{role_id}",
+        json={
+            "permission_codes": ["departments.view", "users.view"],
+            "permission_scopes": {"users.view": "department"},
+        },
+        headers=auth_headers,
+    )
+    assert update.status_code == 200, update.text
+    updated_scopes = {p["code"]: p["scope"] for p in update.json()["permissions"]}
+    assert updated_scopes == {"departments.view": "all", "users.view": "department"}
+
+    # إزالة صلاحية من التحديث تحذف ربطها بالكامل (وليس فقط تصفيرها).
+    shrink = await client.patch(
+        f"/api/v1/roles/{role_id}",
+        json={"permission_codes": ["users.view"]},
+        headers=auth_headers,
+    )
+    assert shrink.status_code == 200, shrink.text
+    assert {p["code"] for p in shrink.json()["permissions"]} == {"users.view"}
 
 
 async def test_create_role_with_unknown_permission_rejected(
