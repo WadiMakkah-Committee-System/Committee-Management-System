@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ClipboardList,
   CheckCircle2,
+  Layers,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -72,7 +73,24 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'الاجتماعات', icon: CalendarDays, comingSoon: true },
   { label: 'المهام', icon: ListChecks, comingSoon: true },
   { label: 'القرارات', icon: Gavel, comingSoon: true },
-  { label: 'الوثائق', icon: FileText, comingSoon: true },
+  {
+    label: 'الوثائق',
+    icon: FileText,
+    children: [
+      {
+        label: 'كل الوثائق',
+        icon: FileText,
+        path: '/documents',
+        requiredPermission: ['documents.view', 'documents.search'],
+      },
+      {
+        label: 'تصنيفات الوثائق',
+        icon: Layers,
+        path: '/documents/categories',
+        requiredPermission: ['documents.view', 'documents.upload'],
+      },
+    ],
+  },
   { label: 'البحث الذكي', icon: Sparkles, comingSoon: true },
   { label: 'الإشعارات', icon: Bell, comingSoon: true },
   { label: 'التقارير', icon: BarChart3, comingSoon: true },
@@ -89,7 +107,7 @@ function isChildPathActive(pathname: string, childPath: string): boolean {
 }
 
 /** يفلتر عنصرًا (وأبناءه إن وُجدوا) حسب صلاحيات المستخدم — يُسقط أي عنصر فرعي غير مسموح به،
- *  ويُسقط العنصر الأب بالكامل إذا لم يتبقَّ له أي عنصر فرعي ظاهر. */
+ *  ويُҳقط العنصر الأب بالكامل إذا لم يتبقَّ له أي عنصر فرعي ظاهر. */
 function filterNavItem(item: NavItem, isSuperAdmin: boolean, permissions: string[]): NavItem | null {
   if (item.children) {
     const children = item.children
