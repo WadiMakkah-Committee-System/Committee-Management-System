@@ -98,7 +98,9 @@ async def authenticate(
     await db.refresh(user)
 
     session_id = await create_session(user.user_id)
-    access_token = create_access_token(user.user_id, user.role.name, session_id)
+    access_token = create_access_token(
+        user.user_id, user.role.name if user.role else None, session_id
+    )
     refresh_token = create_refresh_token(user.user_id, session_id)
 
     return user, access_token, refresh_token

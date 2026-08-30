@@ -320,3 +320,188 @@ async def test_cannot_change_role_of_last_super_admin(
     )
     assert response.status_code == 400
     assert "آخر" in response.json()["detail"]
+
+
+# ==========================================================================
+# مراجعة لاما 2026-08-30: الدور اختياري + فصل الصلاحية عن نطاق الوصول
+# ==========================================================================
+
+
+async def test_create_user_without_role_succeeds_and_can_login(
+    client: AsyncClient, auth_headers
+) -> None:
+    """
+    "لا تجعل حقل الدور إجباريًا عند إضافة مستخدم" — role_id غير مُرسَل
+    إطلاقًا (وليس فقط null) يُنشئ المستخدم بنجاح، ويقدر يسجّل دخول، ويصل
+    لـ /users/me فقط (بلا أي صلاحيات إضافية، role=None، permissions=[]).
+    """
+    create = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "بلا",
+            "middle_name": "دور",
+            "last_name": "بعد",
+            "username": "no_role_user",
+            "email": "no_role@example.com",
+            "password": "StrongPass1",
+            # role_id غير مُرسَل عمدًا — يجب أن يكون اختياريًا بالكامل
+        },
+        headers=auth_headers,
+    )
+    assert create.status_code == 201, create.text
+    assert create.json()["role"] is None
+
+    login = await client.post(
+        "/api/v1/auth/login", json={"username": "no_role_user", "password": "StrongPass1"}
+    )
+    assert login.status_code == 200, login.text
+    no_role_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    me = await client.get("/api/v1/users/me", headers=no_role_headers)
+    assert me.status_code == 200
+    assert me.json()["role"] is None
+    assert me.json()["permissions"] == []
+
+    # بلا أي صلاحية users.* — يُرفض فورًا (403)، وليس انهيارًا (500).
+    forbidden = await client.get("/api/v1/users", headers=no_role_headers)
+    assert forbidden.status_code == 403
+
+
+async def _create_custom_role(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    *,
+    name: str,
+    permission_codes: list[str],
+    permission_scopes: dict[str, str],
+) -> str:
+    response = await client.post(
+        "/api/v1/roles",
+        json={
+            "name": name,
+            "permission_codes": permission_codes,
+            "permission_scopes": permission_scopes,
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["role_id"]
+
+
+async def _create_user_and_login(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    *,
+    username: str,
+    role_id: str,
+    dep_id: str | None = None,
+) -> dict[str, str]:
+    create = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "أ",
+            "middle_name": "ب",
+            "last_name": "ج",
+            "username": username,
+            "email": f"{username}@example.com",
+            "password": "StrongPass1",
+            "role_id": role_id,
+            "dep_id": dep_id,
+        },
+        headers=auth_headers,
+    )
+    assert create.status_code == 201, create.text
+    login = await client.post(
+        "/api/v1/auth/login", json={"username": username, "password": "StrongPass1"}
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+async def test_users_view_own_scope_sees_only_self(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    مراجعة لاما 2026-08-30: "لا تجعل نفس صلاحية العرض تعني تلقائيًا الوصول
+    إلى جميع مستخدمي النظام" — نطاق own على users.view يقصر GET /users
+    على المستخدم نفسه فقط، ويمنع GET /users/{id} لأي مستخدم آخر (403).
+    """
+    role_id = await _create_custom_role(
+        client,
+        auth_headers,
+        name="viewer_own",
+        permission_codes=["users.view"],
+        permission_scopes={"users.view": "own"},
+    )
+    viewer_headers = await _create_user_and_login(
+        client, auth_headers, username="own_scope_viewer", role_id=role_id
+    )
+    other_id = await _create_second_super_admin(
+        client, auth_headers, roles_by_name, username="own_scope_other"
+    )
+
+    listed = await client.get("/api/v1/users", headers=viewer_headers)
+    assert listed.status_code == 200
+    body = listed.json()
+    assert len(body) == 1
+    assert body[0]["username"] == "own_scope_viewer"
+
+    forbidden = await client.get(f"/api/v1/users/{other_id}", headers=viewer_headers)
+    assert forbidden.status_code == 403
+
+    me = await client.get("/api/v1/users/me", headers=viewer_headers)
+    allowed = await client.get(f"/api/v1/users/{me.json()['user_id']}", headers=viewer_headers)
+    assert allowed.status_code == 200
+
+
+async def test_users_view_department_scope_limits_to_same_department(
+    client: AsyncClient, auth_headers, super_admin_user: User
+) -> None:
+    """نطاق department على users.view يقصر النتيجة على مستخدمي إدارة actor نفسها فقط."""
+    dep_a = await _create_department(client, auth_headers, super_admin_user, "إدارة أ", "DPA")
+    dep_b = await _create_department(client, auth_headers, super_admin_user, "إدارة ب", "DPB")
+
+    role_id = await _create_custom_role(
+        client,
+        auth_headers,
+        name="viewer_department",
+        permission_codes=["users.view"],
+        permission_scopes={"users.view": "department"},
+    )
+    viewer_headers = await _create_user_and_login(
+        client, auth_headers, username="dep_scope_viewer", role_id=role_id, dep_id=dep_a
+    )
+
+    await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "ز",
+            "middle_name": "ح",
+            "last_name": "ط",
+            "username": "dep_a_colleague",
+            "email": "dep_a_colleague@example.com",
+            "password": "StrongPass1",
+            "role_id": role_id,
+            "dep_id": dep_a,
+        },
+        headers=auth_headers,
+    )
+    await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "ي",
+            "middle_name": "ك",
+            "last_name": "ل",
+            "username": "dep_b_stranger",
+            "email": "dep_b_stranger@example.com",
+            "password": "StrongPass1",
+            "role_id": role_id,
+            "dep_id": dep_b,
+        },
+        headers=auth_headers,
+    )
+
+    listed = await client.get("/api/v1/users", headers=viewer_headers)
+    assert listed.status_code == 200
+    usernames = {u["username"] for u in listed.json()}
+    assert usernames == {"dep_scope_viewer", "dep_a_colleague"}

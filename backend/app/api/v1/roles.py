@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser, require_super_admin
 from app.db.session import get_db
-from app.schemas.role import PermissionOut, RoleCreate, RoleDetailOut, RoleUpdate
+from app.schemas.role import PermissionOut, RoleCreate, RoleDetailOut, RolePermissionOut, RoleUpdate
 from app.services import role_service
 
 router = APIRouter(
@@ -49,6 +49,13 @@ async def list_permissions(
 
 def _to_detail_out(entry: dict) -> RoleDetailOut:
     role = entry["role"]
+    permissions = [
+        RolePermissionOut(
+            **PermissionOut.model_validate(link.permission).model_dump(),
+            scope=link.scope,
+        )
+        for link in role.role_permission_links
+    ]
     return RoleDetailOut(
         role_id=role.role_id,
         name=role.name,
@@ -57,7 +64,7 @@ def _to_detail_out(entry: dict) -> RoleDetailOut:
         is_super_admin=role.is_super_admin,
         created_at=role.created_at,
         updated_at=role.updated_at,
-        permissions=[PermissionOut.model_validate(p) for p in role.permissions],
+        permissions=permissions,
         permission_count=entry["permission_count"],
         user_count=entry["user_count"],
     )
@@ -80,6 +87,7 @@ async def create_role(
             name=payload.name,
             description=payload.description,
             permission_codes=payload.permission_codes,
+            permission_scopes=payload.permission_scopes,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -110,6 +118,7 @@ async def update_role(
             name=payload.name,
             description=payload.description,
             permission_codes=payload.permission_codes,
+            permission_scopes=payload.permission_scopes,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

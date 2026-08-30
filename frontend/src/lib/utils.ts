@@ -19,7 +19,9 @@ const SYSTEM_ROLE_LABELS: Record<SystemRoleName, string> = {
 }
 
 /** التسمية المعروضة لأي دور — نظامي أو مخصَّص — تُستخدم في الجداول والشارات. */
-export function roleLabel(role: Pick<RoleSummary, 'name'>): string {
+export function roleLabel(role: Pick<RoleSummary, 'name'> | null): string {
+  // مراجعة لاما 2026-08-30: مستخدم بلا دور مُعيَّن (role=null) حالة صالحة الآن.
+  if (!role) return 'غير محدد'
   return SYSTEM_ROLE_LABELS[role.name as SystemRoleName] ?? role.name
 }
 

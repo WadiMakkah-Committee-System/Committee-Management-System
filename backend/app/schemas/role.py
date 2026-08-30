@@ -43,16 +43,30 @@ class PermissionOut(BaseModel):
         return self.category in ENFORCED_CATEGORIES
 
 
+class RolePermissionOut(PermissionOut):
+    """
+    PermissionOut + نطاق الوصول (scope) الفعلي الممنوح لهذا الدور على هذه
+    الصلاحية (own/department/all) — مراجعة لاما 2026-08-30: الصلاحية
+    وحدها لا تحدد "على أي بيانات"؛ راجعي models/role.py (RolePermission).
+    """
+
+    scope: str
+
+
 class RoleCreate(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     description: str | None = None
     permission_codes: list[str] = Field(default_factory=list)
+    #: {كود_الصلاحية: نطاقها} اختياري — أي كود غير مذكور هنا يأخذ 'all'
+    #: افتراضيًا (راجعي role_service._sync_role_permissions).
+    permission_scopes: dict[str, str] | None = None
 
 
 class RoleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=100)
     description: str | None = None
     permission_codes: list[str] | None = None
+    permission_scopes: dict[str, str] | None = None
 
 
 class RoleOut(BaseModel):
@@ -81,6 +95,6 @@ class RoleSummaryOut(BaseModel):
 class RoleDetailOut(RoleOut):
     """تفاصيل الدور الكاملة — تُستخدم في صفحة "الأدوار والصلاحيات"."""
 
-    permissions: list[PermissionOut]
+    permissions: list[RolePermissionOut]
     permission_count: int
     user_count: int

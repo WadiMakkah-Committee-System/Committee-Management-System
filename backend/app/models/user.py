@@ -47,8 +47,13 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    role_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("roles.role_id"), nullable=False
+    # اختياري (migration 0014 — مراجعة لاما 2026-08-30): "عدم وجود دور لا
+    # يعني أن المستخدم لا يستطيع تسجيل الدخول" — مستخدم بدون دور يصل
+    # لبياناته الأساسية فقط (GET /users/me)، وصفر صلاحيات إضافية، لحين
+    # تعيين دور له. راجعي permission_codes/permission_scopes/scope_for
+    # أدناه — كلها آمنة مع role=None (تُرجع فارغ بدل انهيار).
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("roles.role_id"), nullable=True
     )
     dep_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("departments.dep_id"), nullable=True
@@ -84,7 +89,7 @@ class User(Base):
     department: Mapped["Department | None"] = relationship(  # noqa: F821
         back_populates="users", foreign_keys=[dep_id]
     )
-    role: Mapped["Role"] = relationship(back_populates="users", lazy="selectin")  # noqa: F821
+    role: Mapped["Role | None"] = relationship(back_populates="users", lazy="selectin")  # noqa: F821
     job_title: Mapped["JobTitle | None"] = relationship(  # noqa: F821
         foreign_keys=[job_title_id], lazy="selectin"
     )
@@ -96,6 +101,19 @@ class User(Base):
     @property
     def is_super_admin(self) -> bool:
         return self.role is not None and self.role.is_super_admin
+
+    @property
+    def permission_codes(self) -> set[str]:
+        """صلاحيات المستخدم الفعلية — مجموعة فارغة إن لم يُعيَّن له دور بعد."""
+        return self.role.permission_codes if self.role is not None else set()
+
+    @property
+    def permission_scopes(self) -> dict[str, str]:
+        return self.role.permission_scopes if self.role is not None else {}
+
+    def scope_for(self, *codes: str) -> str | None:
+        """راجعي Role.scope_for — نفس المنطق، آمن مع مستخدم بدون دور (تُرجع None)."""
+        return self.role.scope_for(*codes) if self.role is not None else None
 
     @property
     def full_name(self) -> str:

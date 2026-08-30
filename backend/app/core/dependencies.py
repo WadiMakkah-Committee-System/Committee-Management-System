@@ -100,10 +100,17 @@ def require_permission(*required_codes: str):
     فُقدت بالخطأ هو شاشة "الأدوار والصلاحيات" نفسها، المحمية بـ
     require_super_admin (يفحص is_super_admin مباشرة، بلا علاقة بقائمة
     الصلاحيات) — فلا يوجد خطر قفل كامل من النظام.
+
+    ملاحظة (مراجعة لاما 2026-08-30): هذا الفحص يتحقق من "الصلاحية" فقط
+    (هل يملك الكود أم لا) — وليس "نطاق الوصول" (على أي بيانات). بعد نجاح
+    هذا الفحص، على الراوت نفسه استدعاء current_user.scope_for(*codes)
+    لمعرفة النطاق الفعلي (own/department/all) وتطبيقه بطبقة الخدمة —
+    راجعي users.py وcommittees.py للأمثلة الفعلية. current_user.permission_codes
+    آمن مع مستخدم بدون دور (role_id=NULL) — يُرجع مجموعة فارغة بدل انهيار.
     """
 
     async def _checker(current_user: CurrentUser) -> User:
-        user_codes = current_user.role.permission_codes
+        user_codes = current_user.permission_codes
         if not any(code in user_codes for code in required_codes):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -122,7 +129,7 @@ async def require_super_admin(current_user: CurrentUser) -> User:
     Escalation). لاحقًا يمكن تحويلها لصلاحية قابلة للتفويض مثل بقية
     الشاشات، لكن حاليًا تبقى محصورة بالدور الجذري فقط.
     """
-    if not current_user.role.is_super_admin:
+    if not current_user.is_super_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="ليست لديك صلاحية للقيام بهذا الإجراء",
