@@ -55,10 +55,11 @@ from datetime import date
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
-from app.models.committee import Committee
+from app.models.committee import Committee, committee_members
 from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
+from app.models.department import Department
 from app.models.user import User
 from app.services import audit_service
 
@@ -532,7 +533,7 @@ class CommitteeNotFoundError(Exception):
     """اللجنة المعتمدة غير موجودة — تُترجَم إلى 404 في طبقة الـ API."""
 
 
-async def list_committees(db: AsyncSession, *, actor: User, can_view_all: bool) -> list[Committee]:
+async def list_committees(db: AsyncSession, *, actor: User, scope: str) -> list[Committee]:
     """
     عرض اللجان المعتمدة (صلاحية committees.view، بعد إعادة تسمية
     committees.view_authorized — migration 0014). سطح قراءة بسيط فقط
@@ -540,27 +541,45 @@ async def list_committees(db: AsyncSession, *, actor: User, can_view_all: bool) 
     صلاحيات الأعضاء...) خارج نطاق Phase 2 (نطاق مختلف موثّق في BRS بند 6:
     "إدارة أعضاء اللجان والمناصب والصلاحيات").
 
-    can_view_all=False (نطاق own) يقصر النتيجة على اللجان التي actor
-    رئيسها أو عضو فيها فعليًا — تصحيح لمراجعة لاما 2026-08-30: الاسم
-    القديم "عرض اللجان المصرح بها" كان يوهم بهذا الفلتر دون تطبيقه فعليًا.
+    النطاق ثلاثي فعليًا الآن (مراجعة لاما 2026-08-30 — الجولة الثالثة،
+    "مسؤول إدارة يشوف لجان إدارته بس، مو كل لجان النظام، ومو أي لجنة له
+    فيها موظف بس"):
+    - own: اللجان التي actor رئيسها أو عضو فيها فعليًا فقط (تصحيح سابق —
+      الاسم القديم "عرض اللجان المصرح بها" كان يوهم بهذا الفلتر دون
+      تطبيقه فعليًا).
+    - department: اللجان التي **رئيسها** من نفس إدارة actor فقط — "لجان
+      إدارتي" تعني اللجان اللي إدارتي تقودها، وليس أي لجنة فيها أحد
+      موظفيها (ذاك سطح منفصل أخف، راجعي list_department_members_elsewhere
+      أدناه). actor بدون إدارة (dep_id=None) يرجع له قائمة فارغة — ما
+      فيه إدارة يُقارَن بها أصلًا.
+    - all: كل اللجان بدون تصفية.
     """
     stmt = select(Committee).options(selectinload(Committee.members)).order_by(
         Committee.created_at.desc()
     )
-    if not can_view_all:
+    if scope == "own":
         stmt = stmt.where(
             or_(
                 Committee.chair_user_id == actor.user_id,
                 Committee.members.any(User.user_id == actor.user_id),
             )
         )
+    elif scope == "department":
+        if actor.dep_id is None:
+            return []
+        chair = aliased(User)
+        stmt = stmt.join(chair, Committee.chair_user_id == chair.user_id).where(
+            chair.dep_id == actor.dep_id
+        )
+    # scope == "all": بدون أي تصفية.
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
 async def get_committee(
-    db: AsyncSession, committee_id: uuid.UUID, *, actor: User, can_view_all: bool
+    db: AsyncSession, committee_id: uuid.UUID, *, actor: User, scope: str
 ) -> Committee:
+    """راجعي list_committees أعلاه لتفصيل النطاقات الثلاثة — نفس القاعدة هنا لعنصر واحد."""
     result = await db.execute(
         select(Committee)
         .options(selectinload(Committee.members))
@@ -569,13 +588,76 @@ async def get_committee(
     committee = result.scalar_one_or_none()
     if committee is None:
         raise CommitteeNotFoundError("اللجنة غير موجودة")
-    if not can_view_all:
+    if scope == "own":
         is_member = committee.chair_user_id == actor.user_id or any(
             m.user_id == actor.user_id for m in committee.members
         )
         if not is_member:
             raise CommitteeForbiddenError("ليست لديك صلاحية لعرض هذه اللجنة")
+    elif scope == "department":
+        # committee.chair مُحمَّل تلقائيًا (lazy="selectin" على مستوى الـ mapper).
+        committee_dep_id = committee.chair.dep_id if committee.chair else None
+        if actor.dep_id is None or committee_dep_id != actor.dep_id:
+            raise CommitteeForbiddenError("ليست لديك صلاحية لعرض هذه اللجنة")
     return committee
+
+
+async def list_department_members_elsewhere(
+    db: AsyncSession, *, actor: User, search: str | None = None
+) -> list[dict]:
+    """
+    موظفو إدارة actor المشاركون كأعضاء بلجان **لا تتبع إدارته** (رئيسها من
+    إدارة ثانية، أو من غير إدارة معروفة) — مراجعة لاما 2026-08-30 (الجولة
+    الثالثة): معلومة تعريفية خفيفة بس (اسم الموظف + اسم اللجنة + الإدارة
+    التابعة لها)، وليست وصولًا كامل التفاصيل للجنة نفسها (ذاك محجوز لنطاق
+    department الكامل في list_committees حين تكون إدارة actor هي القائدة).
+    actor بدون إدارة يرجع له قائمة فارغة.
+    """
+    if actor.dep_id is None:
+        return []
+
+    member = aliased(User)
+    chair = aliased(User)
+    chair_dept = aliased(Department)
+
+    stmt = (
+        select(member, Committee.committee_id, Committee.name, chair_dept.name)
+        .select_from(committee_members)
+        .join(member, committee_members.c.user_id == member.user_id)
+        .join(Committee, committee_members.c.committee_id == Committee.committee_id)
+        .outerjoin(chair, Committee.chair_user_id == chair.user_id)
+        .outerjoin(chair_dept, chair.dep_id == chair_dept.dep_id)
+        .where(member.dep_id == actor.dep_id)
+        .where(
+            or_(
+                Committee.chair_user_id.is_(None),
+                chair.dep_id.is_(None),
+                chair.dep_id != actor.dep_id,
+            )
+        )
+        .order_by(Committee.created_at.desc())
+    )
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(
+            or_(
+                member.first_name.ilike(pattern),
+                member.last_name.ilike(pattern),
+                Committee.name.ilike(pattern),
+                chair_dept.name.ilike(pattern),
+            )
+        )
+
+    result = await db.execute(stmt)
+    return [
+        {
+            "member": row_member,
+            "committee_id": committee_id,
+            "committee_name": committee_name,
+            "department_name": department_name,
+        }
+        for row_member, committee_id, committee_name, department_name in result.all()
+    ]
 
 
 async def reject_request(

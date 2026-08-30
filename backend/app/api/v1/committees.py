@@ -38,6 +38,7 @@ from app.schemas.committee import (
     CommitteeOut,
     CommitteeRejectRequest,
     CommitteeReturnRequest,
+    DepartmentMemberElsewhereOut,
 )
 from app.services import committee_service
 from app.services.committee_service import (
@@ -278,11 +279,31 @@ async def approve_committee_request(
 async def list_committees(
     current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[CommitteeOut]:
-    can_view_all = current_user.scope_for("committees.view") in ("department", "all")
-    committees = await committee_service.list_committees(
-        db, actor=current_user, can_view_all=can_view_all
-    )
+    scope = current_user.scope_for("committees.view") or "own"
+    committees = await committee_service.list_committees(db, actor=current_user, scope=scope)
     return [CommitteeOut.model_validate(c) for c in committees]
+
+
+@committees_router.get(
+    "/department-members-elsewhere",
+    response_model=list[DepartmentMemberElsewhereOut],
+    dependencies=[Depends(require_permission("committees.view"))],
+)
+async def list_department_members_elsewhere(
+    current_user: CurrentUser,
+    search: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> list[DepartmentMemberElsewhereOut]:
+    """
+    مسار مستقل عمدًا قبل /{committee_id} بترتيب التسجيل (وإلا FastAPI
+    يحاول يفسّر "department-members-elsewhere" كـcommittee_id ويفشل).
+    موظفو إدارة current_user المشاركون بلجان لا تتبع إدارته — راجعي
+    committee_service.list_department_members_elsewhere للتفصيل الكامل.
+    """
+    rows = await committee_service.list_department_members_elsewhere(
+        db, actor=current_user, search=search
+    )
+    return [DepartmentMemberElsewhereOut.model_validate(r) for r in rows]
 
 
 @committees_router.get(
@@ -293,10 +314,10 @@ async def list_committees(
 async def get_committee(
     committee_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> CommitteeOut:
-    can_view_all = current_user.scope_for("committees.view") in ("department", "all")
+    scope = current_user.scope_for("committees.view") or "own"
     try:
         committee = await committee_service.get_committee(
-            db, committee_id, actor=current_user, can_view_all=can_view_all
+            db, committee_id, actor=current_user, scope=scope
         )
     except (CommitteeNotFoundError, CommitteeForbiddenError) as exc:
         raise _handle_errors(exc) from exc
