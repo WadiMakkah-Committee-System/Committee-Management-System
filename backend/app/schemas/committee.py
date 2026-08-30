@@ -151,3 +151,20 @@ class CommitteeOut(BaseModel):
     chair_user_id: uuid.UUID | None
     chair: CommitteeMemberUserOut | None
     created_at: datetime
+
+
+class DepartmentMemberElsewhereOut(BaseModel):
+    """
+    مراجعة لاما 2026-08-30 (الجولة الثالثة): سطر تعريفي خفيف — موظف من
+    إدارة actor عضو بلجنة تابعة لإدارة ثانية (أو بدون إدارة معروفة).
+    عمدًا بدون بقية تفاصيل اللجنة (لا أعضاء آخرين، لا تواريخ...) — هذا
+    سطح "معرفة بس"، وليس وصول عرض كامل (ذاك محجوز لنطاق department على
+    committees.view حين تكون إدارة actor هي القائدة الفعلية للجنة).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    member: CommitteeMemberUserOut
+    committee_id: uuid.UUID
+    committee_name: str
+    department_name: str | None

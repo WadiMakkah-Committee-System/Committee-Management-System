@@ -275,3 +275,16 @@ export interface Committee {
   chair: CommitteeMemberUser | null
   created_at: string
 }
+
+/**
+ * سطر تعريفي خفيف — موظف من إدارة المستخدم الحالي عضو بلجنة رئيسها من
+ * إدارة ثانية (أو بدون إدارة معروفة). مراجعة لاما 2026-08-30 (الجولة
+ * الثالثة). عمدًا بدون بقية تفاصيل اللجنة — راجعي
+ * backend/app/schemas/committee.py::DepartmentMemberElsewhereOut.
+ */
+export interface DepartmentMemberElsewhere {
+  member: CommitteeMemberUser
+  committee_id: string
+  committee_name: string
+  department_name: string | null
+}

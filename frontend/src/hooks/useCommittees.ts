@@ -17,3 +17,15 @@ export function useCommitteeDetail(committeeId: string | undefined) {
     enabled: !!committeeId,
   })
 }
+
+/**
+ * قسم "موظفو إدارتي بلجان أخرى" — يُفعَّل فقط لمستخدم له إدارة (dep_id)،
+ * الباك-إند نفسه يرجع قائمة فارغة بدونها، لكن ما داعي لطلب شبكة أصلًا.
+ */
+export function useDepartmentMembersElsewhere(search: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['committees', 'department-members-elsewhere', search] as const,
+    queryFn: () => committeesApi.fetchDepartmentMembersElsewhere(search || undefined),
+    enabled,
+  })
+}

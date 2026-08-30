@@ -25,8 +25,12 @@ const SCOPE_GROUPS: ScopeGroup[] = [
   {
     key: 'committees_view',
     codes: ['committees.view'],
-    options: ['own', 'all'],
-    labels: { own: 'اللجان التي أنا عضو فيها فقط', all: 'كل لجان النظام' },
+    options: ['own', 'department', 'all'],
+    labels: {
+      own: 'اللجان التي أنا عضو فيها فقط',
+      department: 'لجان إدارتي فقط',
+      all: 'كل لجان النظام',
+    },
   },
   {
     key: 'committee_requests',
