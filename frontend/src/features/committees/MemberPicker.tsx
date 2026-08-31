@@ -186,7 +186,7 @@ export function MemberPicker({
                       <p className="truncate font-medium text-text-primary">
                         {u.first_name} {u.last_name}
                       </p>
-                      <p className="truncate text-xs text-text-muted">{u.job_title?.name || u.email}</p>
+                      <p className="truncate text-xs text-text-muted">{u.job_title?.name || 'غير محدد'}</p>
                     </div>
                   </label>
                 )

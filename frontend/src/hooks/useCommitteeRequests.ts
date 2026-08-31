@@ -7,6 +7,13 @@ export const committeeRequestsKeys = {
   detail: (requestId: string) => ['committee-requests', requestId] as const,
 }
 
+export function useCommitteeEligibleMembers() {
+  return useQuery({
+    queryKey: ['committee-requests', 'eligible-members'] as const,
+    queryFn: () => committeeRequestsApi.fetchCommitteeEligibleMembers(),
+  })
+}
+
 export function useCommitteeRequests() {
   return useQuery({
     queryKey: committeeRequestsKeys.all,
