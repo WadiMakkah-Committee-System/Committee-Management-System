@@ -13,9 +13,12 @@ import {
   Undo2,
   Clock3,
   XCircle,
+  CalendarClock,
+  Video,
+  Archive,
 } from 'lucide-react'
 import { cn, roleLabel } from '@/lib/utils'
-import type { CommitteeRequestStatus, RoleSummary, SystemRoleName, UserStatus } from '@/types'
+import type { CommitteeRequestStatus, MeetingStatus, RoleSummary, SystemRoleName, UserStatus } from '@/types'
 
 type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
@@ -104,6 +107,23 @@ const COMMITTEE_REQUEST_STATUS_META: Record<
 
 export function CommitteeRequestStatusBadge({ status }: { status: CommitteeRequestStatus }) {
   const meta = COMMITTEE_REQUEST_STATUS_META[status]
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  )
+}
+
+/** تسميات وألوان حالات الاجتماع — تطابق MeetingStatus (راجعي types/index.ts). */
+const MEETING_STATUS_META: Record<MeetingStatus, { label: string; tone: BadgeTone; icon: ReactNode }> = {
+  upcoming: { label: 'قادم', tone: 'info', icon: <CalendarClock size={13} /> },
+  ongoing: { label: 'جارٍ', tone: 'success', icon: <Video size={13} /> },
+  finished: { label: 'منتهٍ', tone: 'neutral', icon: <CheckCircle2 size={13} /> },
+  recorded: { label: 'مسجَّل', tone: 'warning', icon: <Archive size={13} /> },
+}
+
+export function MeetingStatusBadge({ status }: { status: MeetingStatus }) {
+  const meta = MEETING_STATUS_META[status]
   return (
     <Badge tone={meta.tone} icon={meta.icon}>
       {meta.label}
