@@ -358,6 +358,9 @@ export interface DocumentUpdatePayload {
   department_ids?: string[]
   committee_ids?: string[]
   user_ids?: string[]
+}
+
+/**
  * سطر تعريفي خفيف — موظف من إدارة المستخدم الحالي عضو بلجنة رئيسها من
  * إدارة ثانية (أو بدون إدارة معروفة). مراجعة لاما 2026-08-30 (الجولة
  * الثالثة). عمدًا بدون بقية تفاصيل اللجنة — راجعي
