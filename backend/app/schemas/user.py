@@ -96,6 +96,15 @@ class UserDetailOut(UserOut):
     """
 
     permissions: list[str] = Field(default_factory=list)
+    # مراجعة لاما 2026-08-31 (بلاغ خطأ): {كود_الصلاحية: نطاقها} — الواجهة
+    # الأمامية كانت تقرر عرض/إخفاء إجراءات مثل "إرجاع لمقدّم الطلب" بالاعتماد
+    # فقط على وجود كود الصلاحية بقائمة permissions (وجود/عدم)، بلا أي فحص
+    # نطاق — فكان الادمن يرى إجراءات المكتب التنفيذي (نطاق department/all)
+    # على طلبه هو نفسه، رغم أن الباك-إند يملك أصلًا فحص نطاق صريح يرفضها لو
+    # حاول فعليًا (committee_service.return_to_admin_request/update_request).
+    # بإضافة هذا الحقل، تقدر الواجهة تطابق نفس فحص الباك-إند بالضبط بدل
+    # التخمين من isOwner أو من وجود الصلاحية فقط.
+    permission_scopes: dict[str, str] = Field(default_factory=dict)
 
 
 # app.schemas.department.DepartmentDetailOut يشير إلى "UserOut" كـ Forward

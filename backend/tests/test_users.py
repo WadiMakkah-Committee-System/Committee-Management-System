@@ -569,3 +569,39 @@ async def test_users_view_department_scope_excludes_ceo_and_super_admin(
     assert "bank_user_x" not in usernames
     assert "ceo_user_x" not in usernames
     assert super_admin_user.username not in usernames
+
+
+async def test_me_returns_permission_scopes_matching_role(
+    client: AsyncClient, auth_headers
+) -> None:
+    """
+    مراجعة لاما 2026-08-31 (بلاغ خطأ): /users/me كان يرجع permissions
+    كقائمة أكواد فقط، بلا أي نطاق — فكانت الواجهة الأمامية تُظهر إجراءات
+    مقيَّدة بنطاق (مثال: "إرجاع لمقدّم الطلب" بطلبات تشكيل اللجان) لمن
+    يملك الصلاحية بنطاق own فقط (كمقدّم الطلب نفسه)، لأنها لا تقدر تفرّق
+    بين النطاقات. الآن يجب أن يرجع permission_scopes مطابقًا تمامًا لما
+    هو مسجَّل بدور المستخدم.
+    """
+    role_id = await _create_custom_role(
+        client,
+        auth_headers,
+        name="دور_نطاقات_اختبار",
+        permission_codes=["committees.request.create", "committees.request.update"],
+        permission_scopes={
+            "committees.request.create": "own",
+            "committees.request.update": "own",
+        },
+    )
+    member_headers = await _create_user_and_login(
+        client, auth_headers, username="scopes_probe_x", role_id=role_id
+    )
+
+    me = await client.get("/api/v1/users/me", headers=member_headers)
+    assert me.status_code == 200
+    body = me.json()
+    assert body["permission_scopes"]["committees.request.create"] == "own"
+    assert body["permission_scopes"]["committees.request.update"] == "own"
+    assert set(body["permissions"]) == {
+        "committees.request.create",
+        "committees.request.update",
+    }

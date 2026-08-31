@@ -65,6 +65,11 @@ async def get_my_profile(current_user: CurrentUser) -> UserDetailOut:
     صلاحيات المستخدم هنا مطلوبة للواجهة الأمامية لتقرير أي شاشات/تبويبات
     تظهر له (مثال: تبويب "الأدوار والصلاحيات" يظهر فقط لمن يملك
     is_super_admin)، دون الاعتماد على أي قائمة أدوار ثابتة في كود الفرونت.
+    permission_scopes (مراجعة لاما 2026-08-31) ضرورية أيضًا لإخفاء إجراءات
+    مقيَّدة بنطاق (مثال: "إرجاع لمقدّم الطلب" بطلبات تشكيل اللجان — نطاق
+    department/all فقط) عن مالك الصلاحية بنطاق own وحده، بدل الاكتفاء
+    بفحص "هل يملك كود الصلاحية" فقط (كان يُظهر الزر خطأً لمن يملك الصلاحية
+    بنطاق own فقط — كالادمن مقدّم الطلب نفسه).
 
     ملاحظة تقنية: current_user يصل هنا محمَّلًا مسبقًا بعلاقة department
     (selectinload) من داخل core.dependencies.get_current_user →
@@ -72,6 +77,7 @@ async def get_my_profile(current_user: CurrentUser) -> UserDetailOut:
     """
     data = UserOut.model_validate(current_user).model_dump()
     data["permissions"] = sorted(current_user.permission_codes)
+    data["permission_scopes"] = current_user.permission_scopes
     return UserDetailOut.model_validate(data)
 
 
@@ -151,6 +157,7 @@ async def get_user(
     _check_user_scope_access(current_user, user, "users.view")
     data = UserOut.model_validate(user).model_dump()
     data["permissions"] = sorted(user.permission_codes)
+    data["permission_scopes"] = user.permission_scopes
     return UserDetailOut.model_validate(data)
 
 
