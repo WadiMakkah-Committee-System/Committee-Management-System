@@ -120,6 +120,14 @@ export interface User {
 
 export interface UserDetail extends User {
   permissions: string[]
+  /**
+   * {كود_الصلاحية: نطاقها (own/department/all)} — مراجعة لاما 2026-08-31
+   * (بلاغ خطأ): permissions وحدها (وجود/عدم) لا تكفي لإظهار/إخفاء
+   * إجراءات مقيَّدة بنطاق بشكل صحيح (مثال: زر "إرجاع لمقدّم الطلب" بطلبات
+   * تشكيل اللجان — نطاق department/all فقط). استخدمي scopeFor() من
+   * @/lib/utils بدل قراءة هذا الحقل مباشرة.
+   */
+  permission_scopes: Record<string, PermissionScope>
 }
 
 export interface DepartmentDetail extends Department {

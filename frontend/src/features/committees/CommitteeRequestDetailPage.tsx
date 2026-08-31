@@ -37,7 +37,7 @@ import { ReasonConfirmDialog } from '@/components/ui/ReasonConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from './CommitteeRequestFormModal'
 import { RequestPipeline } from './RequestPipeline'
-import { cn, extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
+import { cn, extractErrorMessage, formatDate, formatDateTime, scopeFor } from '@/lib/utils'
 
 type BannerTone = 'warning' | 'danger' | 'success'
 
@@ -171,12 +171,24 @@ export function CommitteeRequestDetailPage() {
   // كما يفرضه الباك-إند فعليًا (وليس الفرونت مصدر الحقيقة أبدًا).
   const canEditAsOwner =
     isDraftLike && (isOwner || isSuperAdmin) && permissions.includes('committees.request.update')
-  const canEditAsOffice = isPendingOfficeStage && permissions.includes('committees.request.update')
+
+  // مراجعة لاما 2026-08-31 (بلاغ خطأ): "تعديل الطلب بعد إرساله" و"إرجاعه
+  // لمقدّمه" فعلًا مراجع (Executive Office) حصرًا — يطابقان تمامًا فحص
+  // النطاق الفعلي في committee_service.py (update_request فرع
+  // submitted/under_review، وreturn_to_admin_request): نطاق department أو
+  // all على committees.request.update، أو super_admin. الاكتفاء بفحص
+  // "هل يملك الصلاحية" (permissions.includes) كان يُظهر الزرّين خطأً
+  // للادمن نفسه (يملك نفس الصلاحية بنطاق own فقط ليقدر يعدّل مسودته) على
+  // طلبه هو — يعني "يرجع الطلب لنفسه"، وهذا ما رفضته لاما صراحة.
+  const requestUpdateScope = scopeFor(user, 'committees.request.update')
+  const hasOfficeReviewScope =
+    isSuperAdmin || requestUpdateScope === 'department' || requestUpdateScope === 'all'
+  const canEditAsOffice = isPendingOfficeStage && hasOfficeReviewScope
   const canEdit = canEditAsOwner || canEditAsOffice
   const canSubmit = canEditAsOwner
 
   // Phase 4 — إجراءات المكتب التنفيذي (submitted/under_review فقط):
-  const canReturnToAdmin = isPendingOfficeStage && permissions.includes('committees.request.update')
+  const canReturnToAdmin = isPendingOfficeStage && hasOfficeReviewScope
   const canEscalate = isPendingOfficeStage && permissions.includes('committees.request.escalate')
 
   // Phase 4 — إجراءات الرئيس التنفيذي (pending_approval فقط، القرار الثلاثي):
