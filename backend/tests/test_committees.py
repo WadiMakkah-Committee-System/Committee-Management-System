@@ -87,6 +87,48 @@ def _valid_payload(member_id: str, *, name: str = "لجنة الجودة") -> di
     }
 
 
+async def test_eligible_members_endpoint_ignores_users_view_scope_and_shows_all_departments(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """
+    مراجعة لاما 2026-08-31 (بلاغ خطأ): مقدّم/معدّل طلب تشكيل اللجنة لازم
+    يشوف مرشحين لعضوية اللجنة من كل الإدارات عبر
+    /committee-requests/eligible-members — مستقل تمامًا عن نطاق users.view
+    (own/department/all)، وليس نفس مسار /users المقيَّد به. الادمن هنا
+    أصلًا قد لا يملك users.view إطلاقًا (لا علاقة بينهما).
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    dep_a = await _create_department(client, auth_headers, super_admin_user, "إدارة أ مؤهلين", "DPA5")
+    dep_b = await _create_department(client, auth_headers, super_admin_user, "إدارة ب مؤهلين", "DPB5")
+    await _create_member_with_dep(client, auth_headers, roles_by_name, username="elig_a", dep_id=dep_a)
+    await _create_member_with_dep(client, auth_headers, roles_by_name, username="elig_b", dep_id=dep_b)
+
+    result = await client.get(
+        "/api/v1/committee-requests/eligible-members", headers=actors["admin_headers"]
+    )
+    assert result.status_code == 200
+    usernames = {u["username"] for u in result.json()}
+    assert "elig_a" in usernames
+    assert "elig_b" in usernames
+
+
+async def test_eligible_members_endpoint_requires_request_permission(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """من لا يملك committees.request.create ولا committees.request.update يُرفض 403."""
+    viewer_headers, _ = await _create_role_and_login(
+        client,
+        auth_headers,
+        username="no_request_perm_elig",
+        permission_codes=["committees.view"],
+        permission_scopes={"committees.view": "all"},
+    )
+    result = await client.get(
+        "/api/v1/committee-requests/eligible-members", headers=viewer_headers
+    )
+    assert result.status_code == 403
+
+
 async def test_full_approval_flow_creates_committee(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:

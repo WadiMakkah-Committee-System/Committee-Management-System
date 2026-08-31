@@ -40,7 +40,8 @@ from app.schemas.committee import (
     CommitteeReturnRequest,
     DepartmentMemberElsewhereOut,
 )
-from app.services import committee_service
+from app.schemas.user import UserOut
+from app.services import committee_service, user_service
 from app.services.committee_service import (
     CommitteeForbiddenError,
     CommitteeNotFoundError,
@@ -112,6 +113,28 @@ async def list_committee_requests(
         db, actor=current_user, can_view_all=can_view_all
     )
     return [CommitteeFormationRequestOut.model_validate(r) for r in requests]
+
+
+@router.get(
+    "/eligible-members",
+    response_model=list[UserOut],
+    dependencies=[
+        Depends(require_permission("committees.request.create", "committees.request.update"))
+    ],
+)
+async def list_committee_eligible_members(db: AsyncSession = Depends(get_db)) -> list[UserOut]:
+    """
+    مراجعة لاما 2026-08-31: قائمة المستخدمين المؤهلين ليكونوا أعضاء/رئيسًا
+    مقترحًا بطلب تشكيل لجنة — عمدًا **بدون** أي تصفية بنطاق users.view
+    (own/department/all)، لأن هذا الـendpoint مستقل تمامًا عن صلاحية عرض
+    المستخدمين: من يقدر ينشئ/يعدّل طلب تشكيل لجنة (committees.request.create
+    أو .update) يحتاج يشوف مرشحين من كل الإدارات (اللجنة نفسها غالبًا
+    متعددة الإدارات)، بغض النظر عن نطاقه الشخصي على users.view — وقد لا
+    يملك هذه الصلاحية إطلاقًا (مثال: الادمن). قبل /{request_id} بترتيب
+    التسجيل عمدًا (تفادي تضارب المسارات).
+    """
+    users = await user_service.list_users(db)
+    return [UserOut.model_validate(u) for u in users]
 
 
 @router.get("/{request_id}", response_model=CommitteeFormationRequestOut)
