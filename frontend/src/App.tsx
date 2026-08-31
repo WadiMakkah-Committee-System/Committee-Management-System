@@ -15,6 +15,8 @@ import { CommitteeRequestsPage } from '@/features/committees/CommitteeRequestsPa
 import { CommitteeRequestDetailPage } from '@/features/committees/CommitteeRequestDetailPage'
 import { CommitteesPage } from '@/features/committees/CommitteesPage'
 import { CommitteeDetailPage } from '@/features/committees/CommitteeDetailPage'
+import { MeetingsPage } from '@/features/meetings/MeetingsPage'
+import { MeetingDetailPage } from '@/features/meetings/MeetingDetailPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { usersKeys } from '@/hooks/useUsers'
@@ -97,6 +99,13 @@ function App() {
               <Route path="/committees/approved" element={<CommitteesPage />} />
               <Route path="/committees/approved/:committeeId" element={<CommitteeDetailPage />} />
             </Route>
+
+            {/* بدون anyPermission عمدًا — راجعي رأس MeetingsPage.tsx: التفويض
+                هيكلي (رئيس/عضو اللجنة)، وليس صلاحية عامة بالكتالوج، فحجب
+                المسار خلف صلاحية كالمعتاد يمنع أي رئيس/عضو لجنة بلا دور
+                ادمن من الوصول لاجتماعاته الخاصة. */}
+            <Route path="/meetings" element={<MeetingsPage />} />
+            <Route path="/meetings/:meetingId" element={<MeetingDetailPage />} />
 
             <Route path="/" element={<Navigate to="/users" replace />} />
           </Route>
