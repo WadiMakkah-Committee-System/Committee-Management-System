@@ -2,14 +2,17 @@
 الهدف:
 راوتات REST لوحدة "إدارة الاجتماعات" (Phase 2). بدون أي تكامل مع
 Microsoft Teams/Graph API وبدون خدمات الذكاء الاصطناعي — راجعي رأس
-db/migrations/0016_meetings_schema.sql وapp/services/meeting_service.py
+db/migrations/0018_meetings_schema.sql وapp/services/meeting_service.py
 لتفصيل القرار الموثّق.
 
-ملاحظة مهمة (لماذا لا تستخدم راوتات الإنشاء/التعديل/الحذف require_permission):
-التفويض هنا هيكلي بالكامل (رئيس اللجنة تحديدًا لهذا الاجتماع، أو صلاحية
-عامة من الكتالوج) — يُفرض داخل meeting_service نفسه (راجعي docstring
-الملف)، وليس عبر Dependency على مستوى الراوت كما في committees.py، لأن
-"رئيس اللجنة" ليس دورًا عامًا يُفحص بمعزل عن اللجنة المحدَّدة بالطلب.
+ملاحظة مهمة (لماذا لا تستخدم راوتات الإنشاء/التعديل/الحذف require_permission
+على مستوى الراوت، بخلاف committees.py): التفويض هنا يعتمد على اللجنة
+المحدَّدة بالطلب تحديدًا (Committee Role الخاص بعضوية actor في *تلك*
+اللجنة بالذات) وليس فقط على دوره العام — فلا يمكن فحصه بمعزل عن تحميل
+السجل نفسه أولًا. يُفرض بالكامل داخل meeting_service (دالة _require_access
+هناك)، بنفس منطق الوصول المزدوج (System Role scope أو Committee Role
+permission) المطبَّق في committee_service.get_committee — راجعي docstring
+meeting_service.py للتفصيل الكامل بعد تحديث 2026-09-01 ("أدوار اللجان").
 """
 
 import uuid
