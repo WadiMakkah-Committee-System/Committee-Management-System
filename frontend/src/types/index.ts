@@ -148,6 +148,14 @@ export interface UserDetail extends User {
    * بالوصول لمساره — وليس permissions.includes('committees.view') وحدها.
    */
   has_committee_membership_access: boolean
+  /**
+   * قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+   * (2026-09-01): true لو المستخدم عضو أو رئيس بأي لجنة معتمدة إطلاقًا —
+   * بدون فحص أي كود صلاحية داخل دور عضويته (أبسط من الحقل أعلاه عمدًا).
+   * استخدميه فقط لإظهار رابط/مسار "الاجتماعات" — القائمة الفعلية قد ترجع
+   * فارغة رغم true هنا، إن لم تُمنح meetings.view بعد لدور اللجنة.
+   */
+  has_any_committee_membership: boolean
 }
 
 export interface DepartmentDetail extends Department {
