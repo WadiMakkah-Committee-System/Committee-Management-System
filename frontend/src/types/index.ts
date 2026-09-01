@@ -349,6 +349,16 @@ export interface Document {
   updated_at: string
 }
 
+/**
+ * الإدارات واللجان اللي يحق للمستخدم الحالي إتاحة وثيقة لها عند الرفع
+ * (مبدأ أقل صلاحية ممكنة) — راجعي GET /documents/publish-targets
+ * وbackend/app/services/document_service.py::get_publish_targets.
+ */
+export interface DocumentPublishTargets {
+  departments: DocumentVisibleDepartment[]
+  committees: DocumentVisibleCommittee[]
+}
+
 /** كل الحقول اختيارية: الحقل المتروك undefined لا يُرسَل ولا يُعدَّل. */
 export interface DocumentUpdatePayload {
   title?: string
