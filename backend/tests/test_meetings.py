@@ -6,11 +6,53 @@
 ورفض حذف الاجتماع من مستخدم خارج اللجنة تمامًا.
 
 بدون Teams/AI — راجعي رأس meeting_service.py للقرار الموثّق.
+
+تحديث 2026-09-01 (بعد "أدوار اللجان" — راجعي db/migrations/0016_committee_roles.sql
+و0017_remove_committee_roles_category.sql): دورا "رئيس اللجنة"/"عضو اللجنة"
+لا يملكان أي كود meetings.* افتراضيًا بعد الاعتماد — يُمنحان هنا صراحة عبر
+_grant_committee_role_permissions قبل اختبار أي إجراء، تمامًا كما ستفعله
+لاما فعليًا من شاشة "الأدوار والصلاحيات" قبل استخدام الوحدة في الإنتاج.
 """
 
 from httpx import AsyncClient
+from sqlalchemy import select
 
+from app.db.session import AsyncSessionLocal
+from app.models.role import Permission, Role, RolePermission
 from app.models.user import User
+
+
+async def _grant_committee_role_permissions(codes: list[str], *, slug: str) -> None:
+    """
+    يمنح دور اللجنة (chair/member) أكواد صلاحيات حقيقية مباشرة في القاعدة —
+    بديل اختباري لما تفعله لاما فعليًا عبر PATCH /roles/{role_id}.
+
+    Idempotent عمدًا (تتحقق من المنح الموجود قبل الإضافة): conftest.py
+    يستثني roles/permissions/role_permissions من التفريغ (TRUNCATE) بين
+    الاختبارات لأنها بيانات كتالوج ثابتة — فمنح "رئيس اللجنة"/"عضو اللجنة"
+    هنا يتراكم عبر كل اختبارات هذا الملف ضمن نفس التشغيلة، وإعادة المحاولة
+    بدون هذا التحقق تفشل بخطأ مفتاح مكرَّر (role_id, permission_id) UNIQUE
+    من ثاني اختبار يستدعي _create_approved_committee فصاعدًا.
+    """
+    async with AsyncSessionLocal() as db:
+        role = (
+            await db.execute(select(Role).where(Role.committee_role_slug == slug))
+        ).scalar_one()
+        perms = (await db.execute(select(Permission).where(Permission.code.in_(codes)))).scalars().all()
+        assert len(perms) == len(codes), f"بعض الأكواد غير موجودة بالكتالوج: {codes}"
+
+        existing = (
+            await db.execute(
+                select(RolePermission.permission_id).where(RolePermission.role_id == role.role_id)
+            )
+        ).scalars().all()
+        existing_ids = set(existing)
+
+        for p in perms:
+            if p.permission_id in existing_ids:
+                continue
+            db.add(RolePermission(role_id=role.role_id, permission_id=p.permission_id, scope="all"))
+        await db.commit()
 
 
 async def _create_user_with_role(
@@ -104,6 +146,25 @@ async def _create_approved_committee(
     )
     assert approve.status_code == 200, approve.text
     committee_id = approve.json()["committee_id"]
+
+    # منح صلاحيات الاجتماعات لدوري اللجنة — بدونها لا يملك حتى رئيس اللجنة
+    # أي قدرة فعلية على إدارة الاجتماعات (راجعي docstring أعلى الملف).
+    await _grant_committee_role_permissions(
+        [
+            "meetings.schedule",
+            "meetings.update",
+            "meetings.delete",
+            "meetings.view",
+            "meetings.view_details",
+            "meetings.agenda.item.add",
+            "meetings.agenda.item.update",
+            "meetings.agenda.item.delete",
+        ],
+        slug="chair",
+    )
+    await _grant_committee_role_permissions(
+        ["meetings.view", "meetings.view_details"], slug="member"
+    )
 
     return {
         "committee_id": committee_id,
