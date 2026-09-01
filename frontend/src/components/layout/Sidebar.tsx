@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -108,7 +108,20 @@ function filterNavItem(item: NavItem, isSuperAdmin: boolean, permissions: string
 export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; onCloseMobile: () => void }) {
   const user = useAuthStore((s) => s.user)
   const isSuperAdmin = !!user?.role?.is_super_admin
-  const permissions = user?.permissions ?? []
+  // بلاغ لاما 2026-09-01: عضو لجنة (رئيس/عضو) قد يملك وصولًا فعليًا لقسم
+  // "اللجان" عبر عضوية اللجنة نفسها فقط، بدون أي صلاحية committees.view
+  // على مستوى System Role — نسخة محلية فقط لفلترة القائمة الجانبية (لا
+  // تُكتب على user.permissions الفعلية، حتى لا تؤثر على أجزاء أخرى من
+  // الواجهة تعتمد عليها كصلاحية نظامية حقيقية، مثل قسم "موظفو إدارتي بلجان
+  // أخرى" بصفحة اللجان). راجعي has_committee_membership_access بالنوع
+  // UserDetail وProtectedRoute.tsx لنفس المنطق على مستوى المسار.
+  const permissions = useMemo(() => {
+    const base = user?.permissions ?? []
+    if (user?.has_committee_membership_access && !base.includes('committees.view')) {
+      return [...base, 'committees.view']
+    }
+    return base
+  }, [user])
   const location = useLocation()
 
   const items = NAV_ITEMS.map((item) => filterNavItem(item, isSuperAdmin, permissions)).filter(

@@ -21,6 +21,9 @@ export interface RoleSummary {
   is_super_admin: boolean
 }
 
+/** 'system' لصلاحيات System Roles العادية، أو 'committee' لصلاحيات "أدوار اللجان" (راجعي db/migrations/0016). */
+export type PermissionKind = 'system' | 'committee'
+
 export interface Permission {
   permission_id: string
   code: string
@@ -28,6 +31,7 @@ export interface Permission {
   label_ar: string
   sort_order: number
   is_enforced: boolean
+  kind: PermissionKind
 }
 
 /** نطاقات الوصول المدعومة — راجعي db/migrations/0014 وbackend/app/models/role.py. */
@@ -38,12 +42,20 @@ export interface RolePermission extends Permission {
   scope: PermissionScope
 }
 
+/** 'user' لدور نظامي عادي (يظهر عند إنشاء مستخدم)، أو 'committee' لـ"رئيس اللجنة"/"عضو اللجنة" (لا يظهر هناك إطلاقًا). */
+export type RoleKind = 'user' | 'committee'
+
+/** 'chair'/'member' لدوري اللجان الثابتين فقط، وnull لكل الأدوار النظامية. */
+export type CommitteeRoleSlug = 'chair' | 'member' | null
+
 export interface Role {
   role_id: string
   name: string
   description: string | null
   is_system: boolean
   is_super_admin: boolean
+  kind: RoleKind
+  committee_role_slug: CommitteeRoleSlug
   created_at: string
   updated_at: string
   permissions: RolePermission[]
@@ -128,6 +140,14 @@ export interface UserDetail extends User {
    * @/lib/utils بدل قراءة هذا الحقل مباشرة.
    */
   permission_scopes: Record<string, PermissionScope>
+  /**
+   * مراجعة لاما 2026-09-01 (بلاغ خطأ): true لو يملك المستخدم صلاحية
+   * committees.view ضمن دور أي لجنة هو عضو/رئيس فيها فعليًا (بغض النظر
+   * عن permissions أعلاه، المشتقة من System Role فقط ولا تعكس عضوية
+   * اللجنة). استخدميه لإظهار قسم "اللجان" بالقائمة الجانبية والسماح
+   * بالوصول لمساره — وليس permissions.includes('committees.view') وحدها.
+   */
+  has_committee_membership_access: boolean
 }
 
 export interface DepartmentDetail extends Department {
@@ -270,6 +290,19 @@ export interface CommitteeFormationRequestUpdatePayload {
   chair_user_id?: string
 }
 
+/** دور اللجنة (رئيس/عضو) — نسخة مختصرة تُستخدم داخل CommitteeMemberRole فقط. */
+export interface CommitteeRoleSummary {
+  role_id: string
+  name: string
+  committee_role_slug: CommitteeRoleSlug
+}
+
+/** عضو اللجنة مع دوره داخلها تحديدًا — مراجعة لاما 2026-08-31 ("أدوار اللجان"). */
+export interface CommitteeMemberRole {
+  user: CommitteeMemberUser
+  committee_role: CommitteeRoleSummary
+}
+
 /** اللجنة المعتمدة رسميًا — سطح قراءة بسيط فقط (Phase 5 لاحقًا لإدارتها الكاملة). */
 export interface Committee {
   committee_id: string
@@ -279,6 +312,8 @@ export interface Committee {
   end_date: string
   source_request_id: string
   members: CommitteeMemberUser[]
+  /** نفس الأعضاء أعلاه، لكن مع دور كل واحد منهم داخل هذه اللجنة تحديدًا. */
+  member_roles: CommitteeMemberRole[]
   chair_user_id: string | null
   chair: CommitteeMemberUser | null
   created_at: string

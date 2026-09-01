@@ -30,6 +30,30 @@ class CommitteeMemberUserOut(BaseModel):
     email: str
 
 
+class CommitteeRoleSummaryOut(BaseModel):
+    """اسم/معرّف دور اللجنة (رئيس/عضو) فقط — بدون كامل RoleDetailOut."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    role_id: uuid.UUID
+    name: str
+    committee_role_slug: str | None
+
+
+class CommitteeMemberRoleOut(BaseModel):
+    """
+    عضو اللجنة مع دوره داخلها تحديدًا (رئيس اللجنة/عضو اللجنة) — مراجعة
+    لاما 2026-08-31 ("أدوار اللجان"). راجعي app/models/committee.py::
+    CommitteeMember؛ من from_attributes تُقرأ user وcommittee_role من نفس
+    الصف مباشرة.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    user: CommitteeMemberUserOut
+    committee_role: CommitteeRoleSummaryOut
+
+
 class CommitteeFormationRequestCreate(BaseModel):
     """
     بيانات إنشاء طلب تشكيل لجنة جديد (RF-COM-100/200) — يُنشأ دائمًا بحالة
@@ -148,6 +172,9 @@ class CommitteeOut(BaseModel):
     end_date: date
     source_request_id: uuid.UUID
     members: list[CommitteeMemberUserOut]
+    # مراجعة لاما 2026-08-31: نفس الأعضاء أعلاه، لكن مع دور كل واحد منهم
+    # داخل هذه اللجنة تحديدًا (رئيس/عضو) — إضافي، لا يستبدل members.
+    member_roles: list[CommitteeMemberRoleOut]
     chair_user_id: uuid.UUID | None
     chair: CommitteeMemberUserOut | None
     created_at: datetime

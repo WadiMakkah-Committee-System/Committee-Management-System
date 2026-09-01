@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Pencil, Plus, ShieldQuestion, Trash2, Users2, KeySquare } from 'lucide-react'
+import { Pencil, Plus, ShieldQuestion, Trash2, Users2, KeySquare, UsersRound } from 'lucide-react'
 import { useCreateRole, useDeleteRole, useRoles, useUpdateRole } from '@/hooks/useRoles'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -17,11 +17,18 @@ import type { Role, RoleCreatePayload, RoleUpdatePayload } from '@/types'
 
 export function RolesPermissionsPage() {
   const navigate = useNavigate()
-  const { data: roles, isLoading, isError, refetch } = useRoles()
+  const { data: allRoles, isLoading, isError, refetch } = useRoles()
   const createMutation = useCreateRole()
   const updateMutation = useUpdateRole()
   const deleteMutation = useDeleteRole()
   const { showToast } = useToast()
+
+  // مراجعة لاما 2026-08-31 ("أدوار اللجان"): "رئيس اللجنة"/"عضو اللجنة"
+  // ليسا من System Roles إطلاقًا — قسم مستقل تمامًا (بلا إنشاء/حذف، فقط
+  // تعديل صلاحياتهما عبر نفس RoleFormModal)، وليسا ضمن شبكة الأدوار
+  // النظامية أعلاه. راجعي backend/app/models/role.py::Role.kind.
+  const roles = allRoles?.filter((r) => r.kind === 'user')
+  const committeeRoles = allRoles?.filter((r) => r.kind === 'committee')
 
   const [formOpen, setFormOpen] = useState(false)
   const [editingRole, setEditingRole] = useState<Role | null>(null)
@@ -180,6 +187,52 @@ export function RolesPermissionsPage() {
           ))}
         </div>
       )}
+
+      <div className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-base font-bold text-text-primary">أدوار اللجان</h2>
+          <p className="mt-1 text-sm text-text-muted">
+            صلاحيات "رئيس اللجنة" و"عضو اللجنة" — مستقلة تمامًا عن الأدوار النظامية أعلاه، ولا تظهر عند
+            إنشاء مستخدم. تُمنح تلقائيًا حسب عضوية اللجنة، وتنطبق فقط داخل اللجنة التي ينتمي إليها المستخدم.
+          </p>
+        </div>
+
+        {committeeRoles && committeeRoles.length > 0 && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {committeeRoles.map((role, i) => (
+              <motion.div
+                key={role.role_id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
+              >
+                <Card className={cn('flex h-full flex-col gap-3', cardToneClass(i + 3))}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-brand-teal/10 text-brand-teal">
+                      <UsersRound size={18} />
+                    </div>
+                    <ActionMenu
+                      items={[
+                        { label: 'تعديل الصلاحيات', icon: <Pencil size={14} />, onClick: () => openEditForm(role) },
+                      ]}
+                    />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-primary">{role.name}</h3>
+                    <p className="mt-1 line-clamp-2 text-sm text-text-muted">{role.description || 'لا يوجد وصف'}</p>
+                  </div>
+                  <div className="mt-auto flex items-center gap-4 border-t border-border-default pt-3 text-xs text-text-muted">
+                    <span className="flex items-center gap-1">
+                      <KeySquare size={13} />
+                      {role.permission_count} صلاحية
+                    </span>
+                  </div>
+                </Card>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <RoleFormModal
         open={formOpen}

@@ -27,7 +27,19 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     if (superAdminOnly && !isSuperAdmin) {
       return <Navigate to="/profile" replace />
     }
-    if (anyPermission && !anyPermission.some((code) => user.permissions.includes(code))) {
+    // بلاغ لاما 2026-09-01: عضو لجنة (رئيس/عضو) قد يملك وصولًا فعليًا
+    // لصفحة "اللجان المعتمدة" عبر عضوية اللجنة نفسها فقط، بدون أي صلاحية
+    // committees.view على مستوى System Role (permissions العامة أدناه لا
+    // تعكس هذا إطلاقًا) — راجعي has_committee_membership_access بـ
+    // types/index.ts وcommittee_service.user_has_committee_role_view_access
+    // بالباك-إند لتفاصيل الحساب الكامل.
+    const hasCommitteeMembershipBypass =
+      !!anyPermission?.includes('committees.view') && user.has_committee_membership_access
+    if (
+      anyPermission &&
+      !anyPermission.some((code) => user.permissions.includes(code)) &&
+      !hasCommitteeMembershipBypass
+    ) {
       return <Navigate to="/profile" replace />
     }
   }

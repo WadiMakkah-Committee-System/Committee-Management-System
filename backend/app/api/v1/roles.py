@@ -62,6 +62,8 @@ def _to_detail_out(entry: dict) -> RoleDetailOut:
         description=role.description,
         is_system=role.is_system,
         is_super_admin=role.is_super_admin,
+        kind=role.kind,
+        committee_role_slug=role.committee_role_slug,
         created_at=role.created_at,
         updated_at=role.updated_at,
         permissions=permissions,

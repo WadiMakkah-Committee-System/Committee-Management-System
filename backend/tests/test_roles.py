@@ -23,6 +23,11 @@ async def test_permissions_catalog_has_all_categories(client: AsyncClient, auth_
         "minutes",
         "job_titles",
     }
+    # مراجعة لاما 2026-09-01: فئة "committee_roles" المصطنعة أُزيلت
+    # (db/migrations/0017_remove_committee_roles_category.sql) — أدوار
+    # اللجان (رئيس/عضو) تختار الآن من نفس هذه الأقسام الحقيقية تمامًا،
+    # فكل صلاحيات الكتالوج الحالي kind='system'.
+    assert all(p["kind"] == "system" for p in body)
 
 
 async def test_permissions_catalog_marks_enforced_categories(
@@ -33,6 +38,12 @@ async def test_permissions_catalog_marks_enforced_categories(
     فعليًا حاليًا (job_titles أُضيفت بعد Phase 7 — المسميات الوظيفية) —
     الحقل is_enforced يسمح للواجهة بعرض بقية الأقسام كـ "قريبًا" بدون
     تكرار هذه القائمة يدويًا في الفرونت.
+
+    مراجعة لاما 2026-09-01: فئة "committee_roles" المصطنعة أُزيلت — لا حاجة
+    بعد الآن لاستثناءات على مستوى الكود الفردي (schemas/role.py كان فيه
+    ENFORCED_PERMISSION_CODES، أُزيل أيضًا)، لأن الإنفاذ الفعلي لعضوية
+    اللجنة أصبح يعتمد على الكود الحقيقي "committees.view" الذي يغطيه أصلًا
+    is_enforced على مستوى قسم "committees" كاملًا.
     """
     response = await client.get("/api/v1/permissions", headers=auth_headers)
     body = response.json()
@@ -43,22 +54,33 @@ async def test_permissions_catalog_marks_enforced_categories(
 
 
 async def test_system_roles_seeded(client: AsyncClient, auth_headers) -> None:
+    """
+    الأدوار النظامية الخمسة (kind='user') — لا علاقة لها بـ"أدوار اللجان"
+    (مراجعة لاما 2026-08-31): "رئيس اللجنة"/"عضو اللجنة" (kind='committee')
+    موجودان أيضًا في نفس استجابة GET /roles (الفرونت يفلتر حسب kind لعرضهما
+    بقسم منفصل — راجعي RolesPermissionsPage.tsx)، لكن هذا الاختبار يفحص
+    الأدوار النظامية فقط، فيستبعدهما صراحة.
+
+    ملاحظة: أسماء الأدوار النظامية الخمسة قابلة لإعادة التسمية من الواجهة
+    (قرار موثّق 2026-08-27 — is_system لم يعد يحمي من ذلك)، فقد لا تطابق
+    الأسماء الإنجليزية الأصلية إن أُعيدت تسميتها فعليًا على بيئة التشغيل —
+    هذا الاختبار يتحقق من العدد والانفصال عن أدوار اللجان فقط، وليس الأسماء
+    النصية الحرفية.
+    """
     response = await client.get("/api/v1/roles", headers=auth_headers)
     assert response.status_code == 200
-    names = {r["name"] for r in response.json()}
-    assert names == {
-        "super_admin",
-        "admin",
-        "executive_president",
-        "executive_office_manager",
-        "executive_office_secretary",
-    }
-    super_admin = next(r for r in response.json() if r["name"] == "super_admin")
+    body = response.json()
+
+    committee_roles = [r for r in body if r["kind"] == "committee"]
+    assert {r["committee_role_slug"] for r in committee_roles} == {"chair", "member"}
+    assert {r["name"] for r in committee_roles} == {"رئيس اللجنة", "عضو اللجنة"}
+
+    user_roles = [r for r in body if r["kind"] == "user"]
+    assert len(user_roles) == 5
+    assert all(r["committee_role_slug"] is None for r in user_roles)
+
+    super_admin = next(r for r in user_roles if r["is_super_admin"])
     assert super_admin["is_super_admin"] is True
-    # 79 أصلًا، ناقص users.login/users.logout (migration 0014 — مراجعة
-    # لاما 2026-08-30: صلاحيتان بالكتالوج غير مُستخدَمتين فعليًا بأي
-    # تحقق بالكود، تسجيل الدخول/الخروج جزء من نظام المصادقة نفسه).
-    assert super_admin["permission_count"] == 77
 
 
 async def test_create_custom_role_with_selected_permissions(

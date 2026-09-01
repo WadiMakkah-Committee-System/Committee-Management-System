@@ -105,6 +105,16 @@ class UserDetailOut(UserOut):
     # بإضافة هذا الحقل، تقدر الواجهة تطابق نفس فحص الباك-إند بالضبط بدل
     # التخمين من isOwner أو من وجود الصلاحية فقط.
     permission_scopes: dict[str, str] = Field(default_factory=dict)
+    # بلاغ لاما 2026-09-01: عضو لجنة (عبر عضوية اللجنة نفسها، لا عبر
+    # System Role) قد يملك وصولًا فعليًا لقسم "اللجان" رغم أن permissions
+    # أعلاه (المشتقة من System Role فقط) لا تحوي committees.view إطلاقًا —
+    # صلاحيات دور اللجنة سياقية (لجنة بعينها) ولا يمكن تسطيحها ضمن
+    # permissions العامة بلا تضليل. هذا الحقل تحديدًا يجيب فقط "هل يملك
+    # committees.view ضمن دور أي لجنة هو عضو/رئيس فيها؟" (راجعي
+    # committee_service.user_has_committee_role_view_access) — تستخدمه
+    # الواجهة الأمامية حصرًا لإظهار قسم "اللجان" بالقائمة الجانبية والسماح
+    # بالوصول لمساره، بدل الاعتماد فقط على permissions العامة.
+    has_committee_membership_access: bool = False
 
 
 # app.schemas.department.DepartmentDetailOut يشير إلى "UserOut" كـ Forward

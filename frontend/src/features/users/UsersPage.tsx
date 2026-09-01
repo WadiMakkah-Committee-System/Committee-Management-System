@@ -71,7 +71,12 @@ export function UsersPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [detailUserId, setDetailUserId] = useState<string | null>(null)
 
-  const roleOptions = (roles ?? []).map((r) => ({ value: r.role_id, label: roleLabel(r) }))
+  // مراجعة لاما 2026-08-31: "رئيس اللجنة"/"عضو اللجنة" ليسا من System Roles
+  // — لا يظهران كخيار فلترة هنا (لن يطابقا أي مستخدم أصلًا، لأن الباك-إند
+  // يرفض إسنادهما كـuser.role_id — راجعي user_service.create_user/update_user).
+  const roleOptions = (roles ?? [])
+    .filter((r) => r.kind === 'user')
+    .map((r) => ({ value: r.role_id, label: roleLabel(r) }))
 
   const filtered = useMemo(() => {
     if (!users) return []
@@ -82,7 +87,7 @@ export function UsersPage() {
         `${u.first_name} ${u.middle_name} ${u.last_name}`.toLowerCase().includes(q) ||
         u.username.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q)
-      const matchesRole = !roleFilter || u.role.role_id === roleFilter
+      const matchesRole = !roleFilter || u.role?.role_id === roleFilter
       const matchesStatus = !statusFilter || u.status === statusFilter
       return matchesQuery && matchesRole && matchesStatus
     })
@@ -97,7 +102,7 @@ export function UsersPage() {
       total: users.length,
       active: users.filter((u) => u.status === 'active').length,
       suspended: users.filter((u) => u.status === 'suspended').length,
-      roles: new Set(users.map((u) => u.role.role_id)).size,
+      roles: new Set(users.map((u) => u.role?.role_id).filter((id): id is string => !!id)).size,
     }
   }, [users])
 

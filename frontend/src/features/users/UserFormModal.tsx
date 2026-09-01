@@ -74,9 +74,12 @@ export function UserFormModal({
   const { data: roles } = useRoles()
   const { data: jobTitles } = useJobTitles()
   const createJobTitleMutation = useCreateJobTitle()
+  // مراجعة لاما 2026-08-31 ("أدوار اللجان"): "رئيس اللجنة"/"عضو اللجنة" لا
+  // يظهران هنا إطلاقًا — ليسا من System Roles، ولا يُسندان كـuser.role_id
+  // أبدًا (الباك-إند يرفضها فعليًا أيضًا — راجعي user_service.create_user).
   const roleOptions = [
     { value: '', label: 'غير محدد' },
-    ...(roles ?? []).map((r) => ({ value: r.role_id, label: roleLabel(r) })),
+    ...(roles ?? []).filter((r) => r.kind === 'user').map((r) => ({ value: r.role_id, label: roleLabel(r) })),
   ]
   const jobTitleOptions = (jobTitles ?? []).map((jt) => ({ value: jt.job_title_id, label: jt.name }))
   const depOptions = [

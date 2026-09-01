@@ -95,6 +95,12 @@ async def create_user(
         role = await db.get(Role, role_id)
         if role is None:
             raise ValueError("الدور المحدد غير موجود")
+        if role.kind == "committee":
+            # حارس باك-إند صريح (مراجعة لاما 2026-08-31): "رئيس اللجنة"/
+            # "عضو اللجنة" ليسا من System Roles إطلاقًا — لا يجوز إسنادهما
+            # كـuser.role_id أبدًا، حتى لو أرسل العميل معرّفهما مباشرة عبر
+            # الـ API (لا يكفي إخفاؤهما من قائمة الاختيار بالفرونت فقط).
+            raise ValueError("لا يمكن إسناد دور لجنة كدور نظامي للمستخدم")
 
     if job_title_id is not None:
         job_title = await db.get(JobTitle, job_title_id)
@@ -205,6 +211,9 @@ async def update_user(
         new_role = await db.get(Role, role_id)
         if new_role is None:
             raise ValueError("الدور المحدد غير موجود")
+        if new_role.kind == "committee":
+            # نفس حارس create_user أعلاه — راجعي تعليقه هناك.
+            raise ValueError("لا يمكن إسناد دور لجنة كدور نظامي للمستخدم")
 
         if not new_role.is_super_admin and user.is_super_admin:
             remaining = await _count_other_active_super_admins(db, excluding_user_id=user.user_id)

@@ -15,7 +15,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { cn, roleLabel } from '@/lib/utils'
-import type { CommitteeRequestStatus, RoleSummary, SystemRoleName, UserStatus } from '@/types'
+import type { CommitteeRequestStatus, CommitteeRoleSlug, RoleSummary, SystemRoleName, UserStatus } from '@/types'
 
 type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
@@ -104,6 +104,27 @@ const COMMITTEE_REQUEST_STATUS_META: Record<
 
 export function CommitteeRequestStatusBadge({ status }: { status: CommitteeRequestStatus }) {
   const meta = COMMITTEE_REQUEST_STATUS_META[status]
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  )
+}
+
+/**
+ * دور اللجنة (رئيس/عضو) — مراجعة لاما 2026-09-01: "لما الشخص يدخل لجنته
+ * يعرف اذا هو رئيس لجنة او عضو لجنة". تُستخدم بصفحة تفاصيل اللجنة لكل
+ * من: شارة بارزة بأعلى الصفحة توضّح دور المستخدم الحالي نفسه، وشارة بجانب
+ * كل عضو بقائمة الأعضاء.
+ */
+const COMMITTEE_ROLE_META: Record<'chair' | 'member', { label: string; tone: BadgeTone; icon: ReactNode }> = {
+  chair: { label: 'رئيس اللجنة', tone: 'warning', icon: <Crown size={13} /> },
+  member: { label: 'عضو اللجنة', tone: 'info', icon: <User2 size={13} /> },
+}
+
+export function CommitteeRoleBadge({ slug }: { slug: CommitteeRoleSlug }) {
+  if (!slug) return null
+  const meta = COMMITTEE_ROLE_META[slug]
   return (
     <Badge tone={meta.tone} icon={meta.icon}>
       {meta.label}
