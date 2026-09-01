@@ -115,6 +115,16 @@ class UserDetailOut(UserOut):
     # الواجهة الأمامية حصرًا لإظهار قسم "اللجان" بالقائمة الجانبية والسماح
     # بالوصول لمساره، بدل الاعتماد فقط على permissions العامة.
     has_committee_membership_access: bool = False
+    # قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+    # (2026-09-01): حقل مستقل ومتعمَّد التبسيط عن الحقل أعلاه — يجيب فقط
+    # "هل هو عضو أو رئيس بأي لجنة معتمدة إطلاقًا؟" (وجود صف بـ
+    # committee_members)، بدون فحص أي كود صلاحية داخل دور عضويته (راجعي
+    # committee_service.user_has_any_committee_membership). السبب: على
+    # عكس committees.py، meeting_service.list_meetings/get_meeting
+    # يتحققان فعليًا من meetings.view الحقيقي داخل دور اللجنة عند طلب أي
+    # بيانات فعلية — فهذا الحقل هنا لإظهار رابط/مسار "الاجتماعات" بالواجهة
+    # فقط، وليس ضمانًا بأن القائمة لن تكون فارغة.
+    has_any_committee_membership: bool = False
 
 
 # app.schemas.department.DepartmentDetailOut يشير إلى "UserOut" كـ Forward
