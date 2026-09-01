@@ -3,24 +3,28 @@
 منطق العمل (Business Logic) لوحدة "إدارة الاجتماعات" — FR-MEET-001 →
 FR-MEET-005 (SRS §3.1.1/3.1.2) + إدارة جدول الأعمال (§3.1.3). بدون أي
 تكامل مع Microsoft Teams/Graph API وبدون خدمات الذكاء الاصطناعي (§3.1.5)
-— قرار موثّق 2026-08-31، راجعي رأس db/migrations/0016_meetings_schema.sql.
+— قرار موثّق 2026-08-31، راجعي رأس db/migrations/0018_meetings_schema.sql.
 
-من يقدر يفعل ماذا (حسب BRS بند 3 وpermissions.xlsx، قسم "إدارة الاجتماعات"):
-- إنشاء/تعديل (قبل الانعقاد)/حذف اجتماع، وكل عمليات جدول الأعمال والمرفقات
-  → حصريًا رئيس اللجنة المرتبط بالاجتماع (committee.chair_user_id).
-- عرض الاجتماع وتفاصيله وجدول أعماله → رئيس اللجنة، أعضاؤها، أو أي دور
-  يملك صلاحية meetings.view/meetings.view_details بنطاق كافٍ (department/
-  all — مثال: ادمن يشوف اجتماعات لجان إدارته، migration 0017).
+تحديث معماري 2026-09-01 (بعد "أدوار اللجان" — راجعي db/migrations/0016
+و0017_remove_committee_roles_category.sql، وcommittee_service.py::
+get_committee_role_permission_codes): التفويض هنا كان في نسخة سابقة يفحص
+مباشرة committee.chair_user_id == actor.user_id (فحص هيكلي صرف، بلا أي
+علاقة بجدول الصلاحيات). أُعيد بناؤه بالكامل هنا ليطابق النمط الموحّد الذي
+بنته لاما لوحدة اللجان (committees.py::get_committee/list_committees):
 
-ملاحظة تصميم مهمة (لماذا لا تُستخدَم require_permission وحدها هنا):
-"رئيس لجنة" و"عضو لجنة" ليسا دورين بجدول roles (حُذفا نهائيًا من كتالوج
-الأدوار العامة — 0013_committee_chair.sql)، فلا صلاحية meetings.* بالكتالوج
-تُمنح لهما عبر role_permissions إطلاقًا (راجعي رأس 0017). التحقق هنا إذن
-"هجين" بنفس فلسفة committee_service.get_committee تمامًا: (أ) فحص هيكلي
-مباشر (هل actor هو فعلًا رئيس/عضو اللجنة المالكة لهذا الاجتماع تحديدًا)،
-أو (ب) صلاحية عامة من الكتالوج بنطاق يغطي الحالة (يمنح super_admin
-[منح شامل تلقائي من 0006] وادمن [منح قراءة فقط من 0017] وصولًا دون أن
-يكونا رئيسًا/عضوًا فعليًا). يكفي تحقق أحدهما لتمرير الفحص.
+    الوصول = صلاحية على مستوى System Role (own/department/all، من دور
+             المستخدم العام) **أو** صلاحية على مستوى Committee Role
+             (رئيس اللجنة/عضو اللجنة — من دور عضويته بهذه اللجنة تحديدًا،
+             تُقرأ حيًا من role_permissions عبر
+             committee_service.get_committee_role_permission_codes).
+
+هذا يعني عمليًا: قدرة "رئيس اللجنة" على جدولة/تعديل/حذف اجتماع، أو إدارة
+جدول أعماله، لم تعد مكتوبة بثبات بالكود — بل تُضبط من شاشة "الأدوار
+والصلاحيات" (منح/سحب أكواد meetings.* لدور "رئيس اللجنة"/"عضو اللجنة"،
+تمامًا كأي دور آخر). حتى صدور هذا التحديث، هذان الدوران لا يملكان أي كود
+meetings.* افتراضيًا (0017_remove_committee_roles_category.sql أبقى فقط
+committees.view) — فلا أحد غير سوبر أدمن يقدر يدير الاجتماعات فعليًا حتى
+تُمنح هذه الصلاحيات صراحة لدور "رئيس اللجنة" من تلك الشاشة.
 """
 
 import uuid
@@ -30,10 +34,11 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.models.committee import Committee
+from app.models.committee import Committee, committee_members
 from app.models.meeting import Meeting, MeetingAgendaItem, MeetingStatus
+from app.models.role import Permission, RolePermission
 from app.models.user import User
-from app.services import audit_service
+from app.services import audit_service, committee_service
 
 
 class MeetingNotFoundError(Exception):
@@ -55,44 +60,57 @@ class MeetingInvalidStateError(Exception):
 # ============================== تحقق الصلاحية (Authorization) ==============================
 
 
-def _is_chair(actor: User, committee: Committee) -> bool:
-    return committee.chair_user_id is not None and committee.chair_user_id == actor.user_id
-
-
-def _is_member(actor: User, committee: Committee) -> bool:
-    return _is_chair(actor, committee) or any(
-        m.user_id == actor.user_id for m in committee.members
-    )
-
-
-def _has_catalog_access(actor: User, committee: Committee, *, code: str) -> bool:
-    """راجعي docstring الملف — البديل الثاني (المنح العام من الكتالوج) عن الفحص الهيكلي."""
-    if code not in actor.permission_codes:
-        return False
+def _system_scope_allows(actor: User, committee: Committee, code: str) -> bool:
+    """
+    راجعي docstring الملف — المسار الأول (System Role) من مسارَي الـOR.
+    نطاق 'own' غير مستخدَم هنا عمدًا: لا يوجد أي دور نظامي حاليًا يُمنح
+    نطاق own على أكواد meetings.* (المكافئ العملي لـ"own" لاجتماعات لجنة
+    محدَّدة هو بالضبط مسار Committee Role الثاني في _has_access أدناه).
+    """
     scope = actor.scope_for(code)
     if scope == "all":
         return True
     if scope == "department":
         committee_dep_id = committee.chair.dep_id if committee.chair else None
         return actor.dep_id is not None and actor.dep_id == committee_dep_id
-    return False  # own بدون عضوية فعلية لا معنى له هنا — الفحص الهيكلي أعلاه يغطيه أصلًا
+    return False
 
 
-def _authorize_view(actor: User, committee: Committee) -> None:
-    if _is_member(actor, committee) or _has_catalog_access(
-        actor, committee, code="meetings.view"
-    ):
-        return
-    raise MeetingForbiddenError("ليست لديك صلاحية لعرض هذا الاجتماع")
+async def _has_access(db: AsyncSession, actor: User, committee: Committee, code: str) -> bool:
+    if _system_scope_allows(actor, committee, code):
+        return True
+    committee_role_codes = await committee_service.get_committee_role_permission_codes(
+        db, user_id=actor.user_id, committee_id=committee.committee_id
+    )
+    return code in committee_role_codes
 
 
-def _authorize_manage(actor: User, committee: Committee) -> None:
-    """إنشاء/تعديل/حذف الاجتماع وجدول أعماله — حصريًا رئيس اللجنة (أو من يملك meetings.schedule بالكتالوج)."""
-    if _is_chair(actor, committee) or _has_catalog_access(
-        actor, committee, code="meetings.schedule"
-    ):
-        return
-    raise MeetingForbiddenError("هذا الإجراء متاح لرئيس اللجنة فقط")
+async def _require_access(
+    db: AsyncSession, actor: User, committee: Committee, code: str, message: str
+) -> None:
+    if not await _has_access(db, actor, committee, code):
+        raise MeetingForbiddenError(message)
+
+
+async def _committee_ids_with_committee_role_code(
+    db: AsyncSession, actor: User, code: str
+) -> set[uuid.UUID]:
+    """
+    اللجان التي يملك actor بها (عبر دور عضويته — رئيس أو عضو) الكود
+    المحدَّد تحديدًا — تُستخدم فقط في list_meetings كبديل عن نطاق النظام
+    own/department/all حين لا يملك actor أيًا منها (راجعي
+    committee_service.user_has_committee_role_view_access لنفس الفكرة
+    بصيغة "نعم/لا" بدل قائمة لجان).
+    """
+    stmt = (
+        select(committee_members.c.committee_id)
+        .select_from(committee_members)
+        .join(RolePermission, RolePermission.role_id == committee_members.c.committee_role_id)
+        .join(Permission, Permission.permission_id == RolePermission.permission_id)
+        .where(committee_members.c.user_id == actor.user_id, Permission.code == code)
+    )
+    result = await db.execute(stmt)
+    return set(result.scalars().all())
 
 
 async def _load_committee(db: AsyncSession, committee_id: uuid.UUID) -> Committee:
@@ -145,9 +163,11 @@ async def create_meeting(
     participant_ids: list[uuid.UUID],
     agenda_items: list[dict],
 ) -> Meeting:
-    """FR-MEET-001: إنشاء اجتماع جديد — حصريًا رئيس اللجنة."""
+    """FR-MEET-001: إنشاء اجتماع جديد — يتطلب meetings.schedule (System Role أو Committee Role)."""
     committee = await _load_committee(db, committee_id)
-    _authorize_manage(actor, committee)
+    await _require_access(
+        db, actor, committee, "meetings.schedule", "ليست لديك صلاحية جدولة اجتماع لهذه اللجنة"
+    )
 
     participants = _resolve_participants(committee, participant_ids)
 
@@ -184,17 +204,23 @@ async def create_meeting(
 async def get_meeting(db: AsyncSession, meeting_id: uuid.UUID, *, actor: User) -> Meeting:
     meeting = await _load_meeting(db, meeting_id)
     committee = await _load_committee(db, meeting.committee_id)
-    _authorize_view(actor, committee)
+    await _require_access(
+        db, actor, committee, "meetings.view", "ليست لديك صلاحية لعرض هذا الاجتماع"
+    )
     return meeting
 
 
 async def list_meetings(db: AsyncSession, *, actor: User) -> list[Meeting]:
     """
-    عرض الاجتماعات (FR-MEET §3.1.2) — بنفس فلسفة committee_service.list_committees:
-    - نطاق meetings.view = all → كل الاجتماعات.
-    - نطاق meetings.view = department → اجتماعات اللجان التي رئيسها من نفس إدارة actor.
-    - غير ذلك (own الافتراضي، أو بلا صلاحية بالكتالوج إطلاقًا) → اجتماعات
-      اللجان التي actor رئيسها أو عضو فيها فعليًا فقط.
+    عرض الاجتماعات (FR-MEET §3.1.2) — بنفس منطق الوصول المزدوج المطبَّق
+    بـcommittees.py (System Role scope أو Committee Role permission):
+    - نطاق meetings.view (System Role) = all → كل الاجتماعات.
+    - نطاق meetings.view (System Role) = department → اجتماعات اللجان
+      التي رئيسها من نفس إدارة actor.
+    - لا يملك أي نطاق نظامي → اجتماعات اللجان التي يملك بها actor فعليًا
+      (عبر دور عضويته: رئيس أو عضو) صلاحية meetings.view تحديدًا — قد
+      تكون فارغة تمامًا إن لم تُمنح هذه الصلاحية بعد لدور "رئيس اللجنة"/
+      "عضو اللجنة" من شاشة الأدوار والصلاحيات (راجعي docstring الملف).
     """
     scope = actor.scope_for("meetings.view")
     stmt = select(Meeting).where(Meeting.deleted_at.is_(None)).order_by(
@@ -213,12 +239,12 @@ async def list_meetings(db: AsyncSession, *, actor: User) -> list[Meeting]:
             .where(chair.dep_id == actor.dep_id)
         )
     else:
-        stmt = stmt.join(Committee, Meeting.committee_id == Committee.committee_id).where(
-            or_(
-                Committee.chair_user_id == actor.user_id,
-                Committee.members.any(User.user_id == actor.user_id),
-            )
+        committee_ids = await _committee_ids_with_committee_role_code(
+            db, actor, "meetings.view"
         )
+        if not committee_ids:
+            return []
+        stmt = stmt.where(Meeting.committee_id.in_(committee_ids))
 
     result = await db.execute(stmt)
     return list(result.scalars().unique().all())
@@ -235,10 +261,12 @@ async def update_meeting(
     scheduled_at: datetime | None,
     participant_ids: list[uuid.UUID] | None,
 ) -> Meeting:
-    """FR-MEET-003: تعديل بيانات الاجتماع — رئيس اللجنة فقط، وقبل انعقاده حصرًا."""
+    """FR-MEET-003: تعديل بيانات الاجتماع — يتطلب meetings.update، وقبل انعقاده حصرًا."""
     meeting = await _load_meeting(db, meeting_id)
     committee = await _load_committee(db, meeting.committee_id)
-    _authorize_manage(actor, committee)
+    await _require_access(
+        db, actor, committee, "meetings.update", "ليست لديك صلاحية تعديل هذا الاجتماع"
+    )
 
     if meeting.status != MeetingStatus.upcoming:
         raise MeetingInvalidStateError("لا يمكن تعديل اجتماع بعد بدء انعقاده")
@@ -265,10 +293,12 @@ async def update_meeting(
 
 
 async def delete_meeting(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> None:
-    """FR-MEET-004: حذف الاجتماع — رئيس اللجنة فقط (Soft Delete)."""
+    """FR-MEET-004: حذف الاجتماع — يتطلب meetings.delete (Soft Delete)."""
     meeting = await _load_meeting(db, meeting_id)
     committee = await _load_committee(db, meeting.committee_id)
-    _authorize_manage(actor, committee)
+    await _require_access(
+        db, actor, committee, "meetings.delete", "ليست لديك صلاحية حذف هذا الاجتماع"
+    )
 
     meeting.deleted_at = datetime.now(UTC)
 
@@ -293,10 +323,16 @@ async def add_agenda_item(
     description: str | None,
     sort_order: int,
 ) -> MeetingAgendaItem:
-    """FR-MEET §3.1.3: إضافة بند لجدول الأعمال — رئيس اللجنة فقط."""
+    """FR-MEET §3.1.3: إضافة بند لجدول الأعمال — يتطلب meetings.agenda.item.add."""
     meeting = await _load_meeting(db, meeting_id)
     committee = await _load_committee(db, meeting.committee_id)
-    _authorize_manage(actor, committee)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.agenda.item.add",
+        "ليست لديك صلاحية إضافة بند لجدول أعمال هذا الاجتماع",
+    )
 
     item = MeetingAgendaItem(
         meeting_id=meeting_id, title=title, description=description, sort_order=sort_order
@@ -328,7 +364,13 @@ async def update_agenda_item(
     item = await _load_agenda_item(db, agenda_item_id)
     meeting = await _load_meeting(db, item.meeting_id)
     committee = await _load_committee(db, meeting.committee_id)
-    _authorize_manage(actor, committee)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.agenda.item.update",
+        "ليست لديك صلاحية تعديل هذا البند",
+    )
 
     if title is not None:
         item.title = title
@@ -343,6 +385,12 @@ async def delete_agenda_item(db: AsyncSession, *, actor: User, agenda_item_id: u
     item = await _load_agenda_item(db, agenda_item_id)
     meeting = await _load_meeting(db, item.meeting_id)
     committee = await _load_committee(db, meeting.committee_id)
-    _authorize_manage(actor, committee)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.agenda.item.delete",
+        "ليست لديك صلاحية حذف هذا البند",
+    )
 
     await db.delete(item)
