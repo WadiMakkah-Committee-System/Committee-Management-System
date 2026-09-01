@@ -331,3 +331,67 @@ export interface DepartmentMemberElsewhere {
   committee_name: string
   department_name: string | null
 }
+
+/**
+ * أنواع وحدة "إدارة الاجتماعات" — مطابقة تمامًا لـ
+ * backend/app/schemas/meeting.py وbackend/app/models/meeting.py.
+ * بدون Teams/AI في هذا الـPhase — راجعي رأس db/migrations/0016 للقرار
+ * الموثّق. المرفقات غير مضمَّنة هنا عمدًا (تُبنى لاحقًا عبر وحدة الوثائق
+ * document_links، وليست جزءًا من هذه الأنواع).
+ */
+export type MeetingStatus = 'upcoming' | 'ongoing' | 'finished' | 'recorded'
+
+export interface MeetingAgendaItem {
+  agenda_item_id: string
+  meeting_id: string
+  title: string
+  description: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface MeetingAgendaItemCreatePayload {
+  title: string
+  description?: string | null
+  sort_order?: number
+}
+
+export interface MeetingAgendaItemUpdatePayload {
+  title?: string
+  description?: string | null
+  sort_order?: number
+}
+
+export interface Meeting {
+  meeting_id: string
+  committee_id: string
+  title: string
+  description: string | null
+  meeting_type: string | null
+  scheduled_at: string
+  status: MeetingStatus
+  creator: CommitteeMemberUser
+  participants: CommitteeMemberUser[]
+  agenda_items: MeetingAgendaItem[]
+  created_at: string
+  updated_at: string
+}
+
+export interface MeetingCreatePayload {
+  committee_id: string
+  title: string
+  description?: string | null
+  meeting_type?: string | null
+  scheduled_at: string
+  participant_ids: string[]
+  agenda_items?: MeetingAgendaItemCreatePayload[]
+}
+
+export interface MeetingUpdatePayload {
+  title?: string
+  description?: string | null
+  meeting_type?: string | null
+  scheduled_at?: string
+  participant_ids?: string[]
+}

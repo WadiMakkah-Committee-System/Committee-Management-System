@@ -69,7 +69,7 @@ const NAV_ITEMS: NavItem[] = [
       },
     ],
   },
-  { label: 'الاجتماعات', icon: CalendarDays, comingSoon: true },
+  { label: 'الاجتماعات', icon: CalendarDays, path: '/meetings' },
   { label: 'المهام', icon: ListChecks, comingSoon: true },
   { label: 'القرارات', icon: Gavel, comingSoon: true },
   { label: 'الوثائق', icon: FileText, comingSoon: true },
