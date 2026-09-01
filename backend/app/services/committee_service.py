@@ -687,6 +687,32 @@ async def user_has_committee_role_view_access(db: AsyncSession, *, user_id: uuid
     return (result.scalar() or 0) > 0
 
 
+async def user_has_any_committee_membership(db: AsyncSession, *, user_id: uuid.UUID) -> bool:
+    """
+    قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات" (2026-09-01):
+    هل user_id عضو أو رئيس بأي لجنة معتمدة إطلاقًا — وجود صف واحد على
+    الأقل بـcommittee_members، بغض النظر عن أي كود صلاحية داخل دور عضويته.
+
+    أبسط عمدًا من user_has_committee_role_view_access أعلاه (تلك تتحقق من
+    امتلاك كود committees.view تحديدًا ضمن دور اللجنة): meeting_service.
+    list_meetings/get_meeting يتحققان فعليًا من كود meetings.view الحقيقي
+    داخل دور اللجنة قبل إرجاع أي بيانات — فلا حاجة لتكرار نفس الفحص هنا.
+    هذه الدالة تُستخدم حصرًا لتحديد ظهور رابط/مسار "الاجتماعات" بالواجهة
+    (راجعي Sidebar.tsx وProtectedRoute.tsx)، وليس أي تفويض فعلي على اجتماع
+    بعينه — القائمة نفسها قد ترجع فارغة رغم ظهور الرابط، إن لم تُمنح
+    meetings.view بعد لدور "رئيس اللجنة"/"عضو اللجنة"، وهذا سلوك مقصود
+    (نفس فجوة own/scope الموجودة أصلًا بقسم اللجان قبل هذا القرار، مقبولة
+    هنا لأنها أضيق بكثير من "يظهر الرابط للجميع بلا أي فحص" السابق).
+    """
+    stmt = (
+        select(func.count())
+        .select_from(committee_members)
+        .where(committee_members.c.user_id == user_id)
+    )
+    result = await db.execute(stmt)
+    return (result.scalar() or 0) > 0
+
+
 async def list_department_members_elsewhere(
     db: AsyncSession, *, actor: User, search: str | None = None
 ) -> list[dict]:
