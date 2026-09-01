@@ -6,6 +6,7 @@ export const documentsKeys = {
   all: ['documents'] as const,
   list: (params: documentsApi.ListDocumentsParams) => ['documents', 'list', params] as const,
   detail: (documentId: string) => ['documents', documentId] as const,
+  publishTargets: ['documents', 'publish-targets'] as const,
 }
 
 function invalidateDocumentsList(queryClient: ReturnType<typeof useQueryClient>) {
@@ -24,6 +25,14 @@ export function useDocumentDetail(documentId: string | undefined) {
     queryKey: documentsKeys.detail(documentId ?? ''),
     queryFn: () => documentsApi.fetchDocument(documentId as string),
     enabled: !!documentId,
+  })
+}
+
+/** راجعي fetchDocumentPublishTargets — الإدارات واللجان المتاحة للمستخدم الحالي عند رفع/تعديل وثيقة فقط (مبدأ أقل صلاحية ممكنة). */
+export function useDocumentPublishTargets() {
+  return useQuery({
+    queryKey: documentsKeys.publishTargets,
+    queryFn: () => documentsApi.fetchDocumentPublishTargets(),
   })
 }
 
