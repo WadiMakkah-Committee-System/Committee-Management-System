@@ -1,30 +1,32 @@
 """
 الهدف:
 منطق العمل (Business Logic) لوحدة "إدارة الاجتماعات" — FR-MEET-001 →
-FR-MEET-005 (SRS §3.1.1/3.1.2) + إدارة جدول الأعمال (§3.1.3). بدون أي
-تكامل مع Microsoft Teams/Graph API وبدون خدمات الذكاء الاصطناعي (§3.1.5)
-— قرار موثّق 2026-08-31، راجعي رأس db/migrations/0018_meetings_schema.sql.
+FR-MEET-005 (SRS §3.1.1/3.1.2) + إدارة جدول الأعمال (§3.1.3) + مرفقات
+الاجتماع (عرض تقديمي + مرفقات عامة، عبر document_links الموجود أصلًا).
+بدون أي تكامل فعلي مع Microsoft Teams/Graph API — mode='remote' يمهّد
+لتلك المرحلة فقط (راجعي app/models/meeting.py).
 
-تحديث معماري 2026-09-01 (بعد "أدوار اللجان" — راجعي db/migrations/0016
-و0017_remove_committee_roles_category.sql، وcommittee_service.py::
-get_committee_role_permission_codes): التفويض هنا كان في نسخة سابقة يفحص
-مباشرة committee.chair_user_id == actor.user_id (فحص هيكلي صرف، بلا أي
-علاقة بجدول الصلاحيات). أُعيد بناؤه بالكامل هنا ليطابق النمط الموحّد الذي
-بنته لاما لوحدة اللجان (committees.py::get_committee/list_committees):
+التفويض (بعد "أدوار اللجان" — راجعي committee_service.py::
+get_committee_role_permission_codes): الوصول = صلاحية على مستوى System
+Role (own/department/all، من دور المستخدم العام) **أو** صلاحية على
+مستوى Committee Role (رئيس اللجنة/عضو اللجنة — من دور عضويته بهذه اللجنة
+تحديدًا، تُقرأ حيًا من role_permissions). لا شيء مكتوب بثبات بالكود —
+يُضبط من شاشة "الأدوار والصلاحيات".
 
-    الوصول = صلاحية على مستوى System Role (own/department/all، من دور
-             المستخدم العام) **أو** صلاحية على مستوى Committee Role
-             (رئيس اللجنة/عضو اللجنة — من دور عضويته بهذه اللجنة تحديدًا،
-             تُقرأ حيًا من role_permissions عبر
-             committee_service.get_committee_role_permission_codes).
-
-هذا يعني عمليًا: قدرة "رئيس اللجنة" على جدولة/تعديل/حذف اجتماع، أو إدارة
-جدول أعماله، لم تعد مكتوبة بثبات بالكود — بل تُضبط من شاشة "الأدوار
-والصلاحيات" (منح/سحب أكواد meetings.* لدور "رئيس اللجنة"/"عضو اللجنة"،
-تمامًا كأي دور آخر). حتى صدور هذا التحديث، هذان الدوران لا يملكان أي كود
-meetings.* افتراضيًا (0017_remove_committee_roles_category.sql أبقى فقط
-committees.view) — فلا أحد غير سوبر أدمن يقدر يدير الاجتماعات فعليًا حتى
-تُمنح هذه الصلاحيات صراحة لدور "رئيس اللجنة" من تلك الشاشة.
+تحديثات 2026-09-01 (قرارات صاحبة المشروع):
+- meeting_type (نص حر) → mode (عن بعد/حضوري) + location (إلزامي حضوري).
+- المشاركون: لا يوجد اختيار يدوي بعد الآن — كل أعضاء اللجنة (بمن فيهم
+  رئيسها) يُضافون تلقائيًا عند الإنشاء (create_meeting)، وتُحدَّث القائمة
+  تلقائيًا أيضًا لو تغيّرت عضوية اللجنة لاحقًا لا تنعكس هنا (عضوية اللجنة
+  مقفلة أصلًا بعد الاعتماد — راجعي committee_service.approve_request).
+- حذف الاجتماع (delete_meeting) ممنوع بعد وقت انعقاده الفعلي (لا معنى
+  لحذف اجتماع انتهى وقته) — قيد جديد لم يكن موجودًا سابقًا.
+- مرفقات الاجتماع: قسمان مستقلان (kind: 'presentation' | 'attachment')،
+  يُخزَّنان عبر document_service.create_document (نفس بنية تخزين وحدة
+  الوثائق) ثم يُربطان بالاجتماع عبر document_links (linked_entity_type=
+  'meeting_presentation'/'meeting_attachment'، linked_entity_id=meeting_id)
+  — الجدول كان "جاهزًا بالقاعدة، غير مستخدَم بعد" (راجعي 0012)، وهذا أول
+  استخدام فعلي له.
 """
 
 import uuid
@@ -35,10 +37,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.models.committee import Committee, committee_members
-from app.models.meeting import Meeting, MeetingAgendaItem, MeetingStatus
+from app.models.document import Document, DocumentLink
+from app.models.meeting import Meeting, MeetingAgendaItem, MeetingMode, MeetingStatus
 from app.models.role import Permission, RolePermission
 from app.models.user import User
-from app.services import audit_service, committee_service
+from app.services import audit_service, committee_service, document_service
+
+# يقابل بالضبط MeetingAttachmentKind بـschemas/meeting.py.
+_ATTACHMENT_LINK_TYPE = {
+    "presentation": "meeting_presentation",
+    "attachment": "meeting_attachment",
+}
 
 
 class MeetingNotFoundError(Exception):
@@ -49,6 +58,10 @@ class AgendaItemNotFoundError(Exception):
     """بند جدول الأعمال غير موجود — تُترجَم إلى 404."""
 
 
+class AttachmentNotFoundError(Exception):
+    """المرفق غير موجود أو غير مرتبط بهذا الاجتماع — تُترجَم إلى 404."""
+
+
 class MeetingForbiddenError(Exception):
     """محاولة إجراء غير مسموح بها لهذا المستخدم تحديدًا — تُترجَم إلى 403."""
 
@@ -57,16 +70,14 @@ class MeetingInvalidStateError(Exception):
     """محاولة تعديل/حذف اجتماع في حالة لا تسمح بذلك (مثال: بعد انعقاده) — تُترجَم إلى 409."""
 
 
+class MeetingValidationError(Exception):
+    """خطأ تحقق من بيانات العمل (مثال: مكان الاجتماع مفقود لحضوري) — تُترجَم إلى 400."""
+
+
 # ============================== تحقق الصلاحية (Authorization) ==============================
 
 
 def _system_scope_allows(actor: User, committee: Committee, code: str) -> bool:
-    """
-    راجعي docstring الملف — المسار الأول (System Role) من مسارَي الـOR.
-    نطاق 'own' غير مستخدَم هنا عمدًا: لا يوجد أي دور نظامي حاليًا يُمنح
-    نطاق own على أكواد meetings.* (المكافئ العملي لـ"own" لاجتماعات لجنة
-    محدَّدة هو بالضبط مسار Committee Role الثاني في _has_access أدناه).
-    """
     scope = actor.scope_for(code)
     if scope == "all":
         return True
@@ -95,13 +106,6 @@ async def _require_access(
 async def _committee_ids_with_committee_role_code(
     db: AsyncSession, actor: User, code: str
 ) -> set[uuid.UUID]:
-    """
-    اللجان التي يملك actor بها (عبر دور عضويته — رئيس أو عضو) الكود
-    المحدَّد تحديدًا — تُستخدم فقط في list_meetings كبديل عن نطاق النظام
-    own/department/all حين لا يملك actor أيًا منها (راجعي
-    committee_service.user_has_committee_role_view_access لنفس الفكرة
-    بصيغة "نعم/لا" بدل قائمة لجان).
-    """
     stmt = (
         select(committee_members.c.committee_id)
         .select_from(committee_members)
@@ -131,21 +135,21 @@ async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
     return meeting
 
 
-def _resolve_participants(committee: Committee, participant_ids: list[uuid.UUID]) -> list[User]:
+def _all_committee_members(committee: Committee) -> list[User]:
     """
-    يتحقق من أن كل مشارك مقترَح هو فعلًا عضو أو رئيس اللجنة — بنفس منطق
-    committee_service._resolve_members (لا يُختار مشاركون من خارج اللجنة).
+    كل أعضاء اللجنة (بمن فيهم رئيسها) — مصدر المشاركين التلقائي الوحيد
+    الآن (راجعي docstring أعلى الملف). لا تكرار: الرئيس قد يكون أيضًا
+    ضمن committee.members حسب لحظة الاستعلام، فنستبعد تكراره صراحة.
     """
-    valid_ids = {m.user_id for m in committee.members}
-    if committee.chair_user_id is not None:
-        valid_ids.add(committee.chair_user_id)
-    unknown = set(participant_ids) - valid_ids
-    if unknown:
-        raise ValueError("لا يمكن دعوة مستخدم ليس عضوًا في اللجنة المرتبطة بالاجتماع")
-    all_members = {m.user_id: m for m in committee.members}
+    members: dict[uuid.UUID, User] = {m.user_id: m for m in committee.members}
     if committee.chair is not None:
-        all_members[committee.chair_user_id] = committee.chair
-    return [all_members[pid] for pid in participant_ids]
+        members[committee.chair_user_id] = committee.chair
+    return list(members.values())
+
+
+def _validate_mode_location(mode: MeetingMode, location: str | None) -> None:
+    if mode == MeetingMode.in_person and not (location or "").strip():
+        raise MeetingValidationError("مكان الاجتماع إلزامي عند اختيار اجتماع حضوري")
 
 
 # ============================== إنشاء/تعديل/حذف الاجتماع ==============================
@@ -158,27 +162,30 @@ async def create_meeting(
     committee_id: uuid.UUID,
     title: str,
     description: str | None,
-    meeting_type: str | None,
+    mode: MeetingMode,
+    location: str | None,
     scheduled_at: datetime,
-    participant_ids: list[uuid.UUID],
     agenda_items: list[dict],
 ) -> Meeting:
-    """FR-MEET-001: إنشاء اجتماع جديد — يتطلب meetings.schedule (System Role أو Committee Role)."""
+    """
+    FR-MEET-001: إنشاء اجتماع جديد — يتطلب meetings.schedule (System Role
+    أو Committee Role). المشاركون كل أعضاء اللجنة تلقائيًا (بلا اختيار).
+    """
     committee = await _load_committee(db, committee_id)
     await _require_access(
         db, actor, committee, "meetings.schedule", "ليست لديك صلاحية جدولة اجتماع لهذه اللجنة"
     )
-
-    participants = _resolve_participants(committee, participant_ids)
+    _validate_mode_location(mode, location)
 
     meeting = Meeting(
         committee_id=committee_id,
         title=title,
         description=description,
-        meeting_type=meeting_type,
+        mode=mode,
+        location=location if mode == MeetingMode.in_person else None,
         scheduled_at=scheduled_at,
         created_by=actor.user_id,
-        participants=participants,
+        participants=_all_committee_members(committee),
         agenda_items=[
             MeetingAgendaItem(
                 title=item["title"],
@@ -198,7 +205,8 @@ async def create_meeting(
         target_type="meeting",
         target_id=meeting.meeting_id,
     )
-    return meeting
+    await db.commit()
+    return await _load_meeting(db, meeting.meeting_id)
 
 
 async def get_meeting(db: AsyncSession, meeting_id: uuid.UUID, *, actor: User) -> Meeting:
@@ -213,14 +221,7 @@ async def get_meeting(db: AsyncSession, meeting_id: uuid.UUID, *, actor: User) -
 async def list_meetings(db: AsyncSession, *, actor: User) -> list[Meeting]:
     """
     عرض الاجتماعات (FR-MEET §3.1.2) — بنفس منطق الوصول المزدوج المطبَّق
-    بـcommittees.py (System Role scope أو Committee Role permission):
-    - نطاق meetings.view (System Role) = all → كل الاجتماعات.
-    - نطاق meetings.view (System Role) = department → اجتماعات اللجان
-      التي رئيسها من نفس إدارة actor.
-    - لا يملك أي نطاق نظامي → اجتماعات اللجان التي يملك بها actor فعليًا
-      (عبر دور عضويته: رئيس أو عضو) صلاحية meetings.view تحديدًا — قد
-      تكون فارغة تمامًا إن لم تُمنح هذه الصلاحية بعد لدور "رئيس اللجنة"/
-      "عضو اللجنة" من شاشة الأدوار والصلاحيات (راجعي docstring الملف).
+    بـcommittees.py (System Role scope أو Committee Role permission).
     """
     scope = actor.scope_for("meetings.view")
     stmt = select(Meeting).where(Meeting.deleted_at.is_(None)).order_by(
@@ -257,9 +258,9 @@ async def update_meeting(
     meeting_id: uuid.UUID,
     title: str | None,
     description: str | None,
-    meeting_type: str | None,
+    mode: MeetingMode | None,
+    location: str | None,
     scheduled_at: datetime | None,
-    participant_ids: list[uuid.UUID] | None,
 ) -> Meeting:
     """FR-MEET-003: تعديل بيانات الاجتماع — يتطلب meetings.update، وقبل انعقاده حصرًا."""
     meeting = await _load_meeting(db, meeting_id)
@@ -271,16 +272,21 @@ async def update_meeting(
     if meeting.status != MeetingStatus.upcoming:
         raise MeetingInvalidStateError("لا يمكن تعديل اجتماع بعد بدء انعقاده")
 
+    effective_mode = mode if mode is not None else meeting.mode
+    effective_location = location if location is not None else meeting.location
+    if effective_mode == MeetingMode.remote:
+        effective_location = None
+    _validate_mode_location(effective_mode, effective_location)
+
     if title is not None:
         meeting.title = title
     if description is not None:
         meeting.description = description
-    if meeting_type is not None:
-        meeting.meeting_type = meeting_type
+    if mode is not None:
+        meeting.mode = mode
+    meeting.location = effective_location
     if scheduled_at is not None:
         meeting.scheduled_at = scheduled_at
-    if participant_ids is not None:
-        meeting.participants = _resolve_participants(committee, participant_ids)
 
     await audit_service.log_action(
         db,
@@ -289,16 +295,24 @@ async def update_meeting(
         target_type="meeting",
         target_id=meeting.meeting_id,
     )
-    return meeting
+    await db.commit()
+    return await _load_meeting(db, meeting.meeting_id)
 
 
 async def delete_meeting(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> None:
-    """FR-MEET-004: حذف الاجتماع — يتطلب meetings.delete (Soft Delete)."""
+    """
+    FR-MEET-004: حذف الاجتماع — يتطلب meetings.delete (Soft Delete)، وقبل
+    وقت انعقاده الفعلي حصرًا (قرار صريح 2026-09-01: لا معنى لحذف اجتماع
+    فات وقته أصلًا).
+    """
     meeting = await _load_meeting(db, meeting_id)
     committee = await _load_committee(db, meeting.committee_id)
     await _require_access(
         db, actor, committee, "meetings.delete", "ليست لديك صلاحية حذف هذا الاجتماع"
     )
+
+    if datetime.now(UTC) >= meeting.scheduled_at:
+        raise MeetingInvalidStateError("لا يمكن حذف اجتماع بعد حلول موعده")
 
     meeting.deleted_at = datetime.now(UTC)
 
@@ -309,6 +323,7 @@ async def delete_meeting(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
         target_type="meeting",
         target_id=meeting.meeting_id,
     )
+    await db.commit()
 
 
 # ============================== جدول الأعمال ==============================
@@ -338,7 +353,8 @@ async def add_agenda_item(
         meeting_id=meeting_id, title=title, description=description, sort_order=sort_order
     )
     db.add(item)
-    await db.flush()
+    await db.commit()
+    await db.refresh(item)
     return item
 
 
@@ -378,6 +394,8 @@ async def update_agenda_item(
         item.description = description
     if sort_order is not None:
         item.sort_order = sort_order
+    await db.commit()
+    await db.refresh(item)
     return item
 
 
@@ -394,3 +412,127 @@ async def delete_agenda_item(db: AsyncSession, *, actor: User, agenda_item_id: u
     )
 
     await db.delete(item)
+    await db.commit()
+
+
+# ============================== مرفقات الاجتماع ==============================
+# قسمان مستقلان (kind): 'presentation' (العرض التقديمي — عادةً ملف واحد،
+# لا قيد بالكود يفرض ذلك) و'attachment' (مرفقات عامة، متعددة). كلاهما
+# يُخزَّن كوثيقة حقيقية بوحدة "إدارة الوثائق" (نفس Supabase Storage)، ثم
+# يُربَط بالاجتماع عبر document_links — أول استخدام فعلي لهذا الجدول
+# (كان جاهزًا بالقاعدة منذ 0012، غير مستخدَم من أي API قبل الآن).
+
+
+async def add_attachment(
+    db: AsyncSession,
+    *,
+    actor: User,
+    meeting_id: uuid.UUID,
+    kind: str,
+    title: str,
+    file_name: str,
+    mime_type: str,
+    content: bytes,
+) -> tuple[Document, datetime]:
+    """يتطلب meetings.attachments.add — يخزّن الملف كوثيقة ثم يربطها بالاجتماع."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.attachments.add",
+        "ليست لديك صلاحية إضافة مرفقات لهذا الاجتماع",
+    )
+
+    # الوثيقة تُرى افتراضيًا من أعضاء اللجنة نفسها (visible_committees) —
+    # نفس منطق رؤية وثائق اللجنة في وحدة الوثائق، وليست عامة (is_public=False).
+    document = await document_service.create_document(
+        db,
+        actor=actor,
+        title=title,
+        description=None,
+        category_id=None,
+        is_public=False,
+        department_ids=[],
+        committee_ids=[committee.committee_id],
+        user_ids=[],
+        file_name=file_name,
+        mime_type=mime_type,
+        content=content,
+    )
+
+    link = DocumentLink(
+        document_id=document.document_id,
+        linked_entity_type=_ATTACHMENT_LINK_TYPE[kind],
+        linked_entity_id=meeting_id,
+        linked_by=actor.user_id,
+    )
+    db.add(link)
+    await db.commit()
+    await db.refresh(link)
+    return document, link.linked_at
+
+
+async def list_attachments(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, kind: str | None
+) -> list[tuple[Document, str, datetime]]:
+    """يتطلب meetings.attachments.view. يرجع (الوثيقة، kind، تاريخ الربط) لكل مرفق."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.attachments.view",
+        "ليست لديك صلاحية عرض مرفقات هذا الاجتماع",
+    )
+
+    link_types = (
+        [_ATTACHMENT_LINK_TYPE[kind]] if kind else list(_ATTACHMENT_LINK_TYPE.values())
+    )
+    stmt = (
+        select(DocumentLink, Document)
+        .join(Document, Document.document_id == DocumentLink.document_id)
+        .where(
+            DocumentLink.linked_entity_id == meeting_id,
+            DocumentLink.linked_entity_type.in_(link_types),
+            Document.deleted_at.is_(None),
+        )
+        .order_by(DocumentLink.linked_at.asc())
+    )
+    result = await db.execute(stmt)
+    reverse_kind = {v: k for k, v in _ATTACHMENT_LINK_TYPE.items()}
+    return [
+        (document, reverse_kind[link.linked_entity_type], link.linked_at)
+        for link, document in result.all()
+    ]
+
+
+async def delete_attachment(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, document_id: uuid.UUID
+) -> None:
+    """يتطلب meetings.attachments.delete — يحذف الوثيقة نفسها (Soft Delete)، وليس الربط فقط."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.attachments.delete",
+        "ليست لديك صلاحية حذف مرفقات هذا الاجتماع",
+    )
+
+    link_result = await db.execute(
+        select(DocumentLink).where(
+            DocumentLink.linked_entity_id == meeting_id,
+            DocumentLink.document_id == document_id,
+            DocumentLink.linked_entity_type.in_(_ATTACHMENT_LINK_TYPE.values()),
+        )
+    )
+    if link_result.scalar_one_or_none() is None:
+        raise AttachmentNotFoundError("المرفق غير موجود ضمن هذا الاجتماع")
+
+    deleted = await document_service.delete_document(db, actor=actor, document_id=document_id)
+    if deleted is None:
+        raise AttachmentNotFoundError("المرفق غير موجود")
