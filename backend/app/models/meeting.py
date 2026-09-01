@@ -1,7 +1,7 @@
 """
 الهدف:
 نموذج SQLAlchemy ORM لوحدة "إدارة الاجتماعات" — يطابق بنية
-db/migrations/0016_meetings_schema.sql. Phase 1 (Database Schema +
+db/migrations/0018_meetings_schema.sql. Phase 1 (Database Schema +
 Models فقط)، بدون أي منطق عمل أو API — راجعي app/services/meeting_service.py
 لذلك (Phase 2).
 
