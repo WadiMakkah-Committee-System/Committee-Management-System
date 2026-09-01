@@ -100,12 +100,15 @@ function App() {
               <Route path="/committees/approved/:committeeId" element={<CommitteeDetailPage />} />
             </Route>
 
-            {/* بدون anyPermission عمدًا — راجعي رأس MeetingsPage.tsx: التفويض
-                هيكلي (رئيس/عضو اللجنة)، وليس صلاحية عامة بالكتالوج، فحجب
-                المسار خلف صلاحية كالمعتاد يمنع أي رئيس/عضو لجنة بلا دور
-                ادمن من الوصول لاجتماعاته الخاصة. */}
-            <Route path="/meetings" element={<MeetingsPage />} />
-            <Route path="/meetings/:meetingId" element={<MeetingDetailPage />} />
+            {/* قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+                (2026-09-01): نفس نمط committees.view تمامًا — anyPermission
+                هنا يمر لمن يملك meetings.view نظاميًا (ادمن/سوبر أدمن)،
+                وProtectedRoute.tsx يحتوي بديلًا (hasMeetingsMembershipBypass)
+                لأي عضو/رئيس لجنة عبر has_any_committee_membership. */}
+            <Route element={<ProtectedRoute anyPermission={['meetings.view']} />}>
+              <Route path="/meetings" element={<MeetingsPage />} />
+              <Route path="/meetings/:meetingId" element={<MeetingDetailPage />} />
+            </Route>
 
             <Route path="/" element={<Navigate to="/users" replace />} />
           </Route>
