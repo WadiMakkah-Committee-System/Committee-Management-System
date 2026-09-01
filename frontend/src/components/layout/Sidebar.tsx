@@ -69,7 +69,7 @@ const NAV_ITEMS: NavItem[] = [
       },
     ],
   },
-  { label: 'الاجتماعات', icon: CalendarDays, path: '/meetings' },
+  { label: 'الاجتماعات', icon: CalendarDays, path: '/meetings', requiredPermission: ['meetings.view'] },
   { label: 'المهام', icon: ListChecks, comingSoon: true },
   { label: 'القرارات', icon: Gavel, comingSoon: true },
   { label: 'الوثائق', icon: FileText, comingSoon: true },
@@ -116,9 +116,16 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
   // أخرى" بصفحة اللجان). راجعي has_committee_membership_access بالنوع
   // UserDetail وProtectedRoute.tsx لنفس المنطق على مستوى المسار.
   const permissions = useMemo(() => {
-    const base = user?.permissions ?? []
+    let base = user?.permissions ?? []
     if (user?.has_committee_membership_access && !base.includes('committees.view')) {
-      return [...base, 'committees.view']
+      base = [...base, 'committees.view']
+    }
+    // قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+    // (2026-09-01): نفس فكرة committees.view أعلاه بالضبط، لكن بحقل أبسط
+    // (مجرّد عضوية بأي لجنة، بدون فحص كود صلاحية داخل دور اللجنة — راجعي
+    // has_any_committee_membership بـtypes/index.ts للفرق الدقيق).
+    if (user?.has_any_committee_membership && !base.includes('meetings.view')) {
+      base = [...base, 'meetings.view']
     }
     return base
   }, [user])
