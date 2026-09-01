@@ -35,10 +35,16 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     // بالباك-إند لتفاصيل الحساب الكامل.
     const hasCommitteeMembershipBypass =
       !!anyPermission?.includes('committees.view') && user.has_committee_membership_access
+    // قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+    // (2026-09-01): نفس فكرة الالتفافة أعلاه بالضبط لمسار /meetings —
+    // راجعي has_any_committee_membership بـtypes/index.ts وSidebar.tsx.
+    const hasMeetingsMembershipBypass =
+      !!anyPermission?.includes('meetings.view') && user.has_any_committee_membership
     if (
       anyPermission &&
       !anyPermission.some((code) => user.permissions.includes(code)) &&
-      !hasCommitteeMembershipBypass
+      !hasCommitteeMembershipBypass &&
+      !hasMeetingsMembershipBypass
     ) {
       return <Navigate to="/profile" replace />
     }
