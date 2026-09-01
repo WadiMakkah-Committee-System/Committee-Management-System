@@ -389,6 +389,26 @@ async def get_document(
     return document
 
 
+def _assert_public_category_consistency(
+    *, category: DocumentCategory | None, is_public: bool
+) -> None:
+    """
+    قرار منتج (طلب صريح من المستخدمة 2026-08-31، تشديد لا تحذير فقط):
+    الوثيقة اللي تصنيفها خاص بإدارة معينة (scope == "department") ما
+    يجوز تصير "عامة" (is_public=True) — لأن هذا يكسر منطق العزل نفسه:
+    التصنيف محصور بإدارة، لكن الوثيقة نفسها تصير مرئية للجميع، وهذا
+    تناقض يفتح ثغرة رؤية غير مقصودة بدل غلطة تشغيلية بسيطة يكفيها تحذير.
+    التصنيفات العامة (scope == "global") أو عدم اختيار تصنيف أصلًا
+    (category=None) لا قيد عليها.
+    """
+    if category is not None and category.scope == "department" and is_public:
+        raise DocumentValidationError(
+            "لا يمكن جعل الوثيقة عامة (متاحة للجميع) وتصنيفها في نفس الوقت "
+            "خاص بإدارة معينة — إمّا اختاري تصنيفًا عامًا، أو ألغي خيار "
+            '"إتاحة الوثيقة للجميع"'
+        )
+
+
 async def create_document(
     db: AsyncSession,
     *,
@@ -422,7 +442,9 @@ async def create_document(
         ):
             raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
 
-    departments, committees, users = await _resolve_visibility(
+        _assert_public_category_consistency(category=category, is_public=is_public)
+
+departments, committees, users = await _resolve_visibility(
         db, department_ids=department_ids, committee_ids=committee_ids, user_ids=user_ids
     )
 
@@ -493,25 +515,37 @@ async def update_document(
 
     changes: dict[str, object] = {}
 
+        # نحسم أولًا "الحالة النهائية الفعلية" للتصنيف والعمومية قبل أي تعديل
+    # فعلي على الكائن — لأن التعديل جزئي (PATCH): أي حقل لم يُرسَل يبقى على
+    # قيمته الحالية بالوثيقة، فلازم نقارن التصنيف/العمومية الناتجين معًا
+    # (وليس فقط الحقل المُرسَل بمفرده) قبل تطبيق فحص التناقض.
+    resolved_category: DocumentCategory | None
+    if category_explicitly_set:
+        if category_id is not None:
+            resolved_category = await get_category(db, category_id)
+            if resolved_category is None:
+                raise DocumentValidationError("التصنيف المحدد غير موجود")
+            if (
+                resolved_category.scope == "department"
+                and not actor.is_super_admin
+                and resolved_category.department_id != actor.dep_id
+            ):
+                raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
+        else:
+            resolved_category = None
+    else:
+        resolved_category = document.category
+
+    resolved_is_public = is_public if is_public is not None else document.is_public
+    _assert_public_category_consistency(category=resolved_category, is_public=resolved_is_public)
+
     if title is not None:
         changes["title"] = {"before": document.title, "after": title}
         document.title = title
     if description is not None:
         document.description = description
     if category_explicitly_set:
-        if category_id is not None:
-            category = await get_category(db, category_id)
-            if category is None:
-                raise DocumentValidationError("التصنيف المحدد غير موجود")
-            if (
-                category.scope == "department"
-                and not actor.is_super_admin
-                and category.department_id != actor.dep_id
-            ):
-                raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
-            document.category_id = category.category_id
-        else:
-            document.category_id = None
+        document.category_id = resolved_category.category_id if resolved_category else None
     if is_public is not None:
         document.is_public = is_public
 
