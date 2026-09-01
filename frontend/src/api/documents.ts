@@ -1,5 +1,5 @@
 import { apiClient } from '@/lib/apiClient'
-import type { Document, DocumentUpdatePayload } from '@/types'
+import type { Document, DocumentPublishTargets, DocumentUpdatePayload } from '@/types'
 
 /**
  * الهدف: طبقة اتصال بـ /documents — تقابل router في
@@ -25,6 +25,12 @@ export async function fetchDocuments(params: ListDocumentsParams = {}): Promise<
 
 export async function fetchDocument(documentId: string): Promise<Document> {
   const { data } = await apiClient.get<Document>(`/documents/${documentId}`)
+  return data
+}
+
+/** الإدارات واللجان اللي يحق للمستخدم الحالي إتاحة وثيقة لها (مبدأ أقل صلاحية ممكنة) — تُستخدم في فورم الرفع/التعديل بدل القوائم الكاملة. */
+export async function fetchDocumentPublishTargets(): Promise<DocumentPublishTargets> {
+  const { data } = await apiClient.get<DocumentPublishTargets>('/documents/publish-targets')
   return data
 }
 
