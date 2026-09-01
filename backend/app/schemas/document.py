@@ -113,6 +113,16 @@ class DocumentVisibleUserOut(BaseModel):
     last_name: str
 
 
+class DocumentPublishTargetsOut(BaseModel):
+    """
+    الإدارات واللجان اللي يحق فعليًا للمستخدم الحالي إتاحة وثيقة لها عند
+    الرفع (مبدأ أقل صلاحية ممكنة) — راجع document_service.get_publish_targets.
+    """
+
+    departments: list[DocumentVisibleDepartmentOut]
+    committees: list[DocumentVisibleCommitteeOut]
+
+
 class DocumentUpdate(BaseModel):
     """
     تعديل بيانات وثيقة موجودة (Metadata فقط — لا يوجد استبدال للملف نفسه
