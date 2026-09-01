@@ -442,9 +442,9 @@ async def create_document(
         ):
             raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
 
-        _assert_public_category_consistency(category=category, is_public=is_public)
+    _assert_public_category_consistency(category=category, is_public=is_public)
 
-departments, committees, users = await _resolve_visibility(
+    departments, committees, users = await _resolve_visibility(
         db, department_ids=department_ids, committee_ids=committee_ids, user_ids=user_ids
     )
 
@@ -515,7 +515,7 @@ async def update_document(
 
     changes: dict[str, object] = {}
 
-        # نحسم أولًا "الحالة النهائية الفعلية" للتصنيف والعمومية قبل أي تعديل
+    # نحسم أولًا "الحالة النهائية الفعلية" للتصنيف والعمومية قبل أي تعديل
     # فعلي على الكائن — لأن التعديل جزئي (PATCH): أي حقل لم يُرسَل يبقى على
     # قيمته الحالية بالوثيقة، فلازم نقارن التصنيف/العمومية الناتجين معًا
     # (وليس فقط الحقل المُرسَل بمفرده) قبل تطبيق فحص التناقض.
