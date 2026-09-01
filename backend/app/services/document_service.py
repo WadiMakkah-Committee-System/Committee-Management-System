@@ -86,6 +86,54 @@ async def can_view_document(db: AsyncSession, *, current_user: User, document: D
     return False
 
 
+async def get_publish_targets(
+    db: AsyncSession, *, current_user: User
+) -> tuple[list[Department], list[Committee]]:
+    """
+    الإدارات واللجان اللي يحق فعليًا لـcurrent_user إتاحة وثيقة لها عند
+    الرفع/التعديل (مبدأ أقل صلاحية ممكنة) — راجعي docstring
+    DocumentPublishTargetsOut بـ app/schemas/document.py. لا علاقة لها
+    بفحص "رؤية" وثيقة موجودة أصلًا (can_view_document أعلاه) — هذه فقط
+    لتضييق خيارات المستخدم وقت الرفع/التعديل بدل عرض قوائم الإدارات/اللجان
+    الكاملة له.
+
+    النطاق (documents.upload/update، أوسعهما عبر scope_for — بنفس منطق
+    committee_service) هو ما يحدد الاتساع:
+    - 'all' (أو super_admin): كل الإدارات وكل اللجان (غير المحذوفة).
+    - 'department': إدارته فقط (إن وُجدت) + اللجان اللي هو عضو فيها.
+    - 'own' أو بلا نطاق مسجَّل إطلاقًا: بلا إدارات (لا يقدر يشارك إدارة
+      كاملة بوثيقة)، فقط اللجان اللي هو عضو فيها.
+    """
+    scope = current_user.scope_for("documents.upload", "documents.update")
+
+    if current_user.is_super_admin or scope == "all":
+        department_result = await db.execute(
+            select(Department).where(Department.deleted_at.is_(None)).order_by(Department.name)
+        )
+        committee_result = await db.execute(
+            select(Committee).where(Committee.deleted_at.is_(None)).order_by(Committee.name)
+        )
+        return list(department_result.scalars().all()), list(committee_result.scalars().all())
+
+    departments: list[Department] = []
+    if scope == "department" and current_user.dep_id is not None:
+        department = await db.get(Department, current_user.dep_id)
+        if department is not None and not department.is_deleted:
+            departments = [department]
+
+    committee_ids = await _user_committee_ids(db, current_user.user_id)
+    committees: list[Committee] = []
+    if committee_ids:
+        committee_result = await db.execute(
+            select(Committee)
+            .where(Committee.committee_id.in_(committee_ids), Committee.deleted_at.is_(None))
+            .order_by(Committee.name)
+        )
+        committees = list(committee_result.scalars().all())
+
+    return departments, committees
+
+
 # ---------------------------------------------------------------------------
 # تصنيفات الوثائق (Document Categories)
 # ---------------------------------------------------------------------------
