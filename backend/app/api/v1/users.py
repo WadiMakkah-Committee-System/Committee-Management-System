@@ -83,6 +83,9 @@ async def get_my_profile(
     data["has_committee_membership_access"] = await committee_service.user_has_committee_role_view_access(
         db, user_id=current_user.user_id
     )
+    data["has_any_committee_membership"] = await committee_service.user_has_any_committee_membership(
+        db, user_id=current_user.user_id
+    )
     return UserDetailOut.model_validate(data)
 
 
@@ -164,6 +167,9 @@ async def get_user(
     data["permissions"] = sorted(user.permission_codes)
     data["permission_scopes"] = user.permission_scopes
     data["has_committee_membership_access"] = await committee_service.user_has_committee_role_view_access(
+        db, user_id=user.user_id
+    )
+    data["has_any_committee_membership"] = await committee_service.user_has_any_committee_membership(
         db, user_id=user.user_id
     )
     return UserDetailOut.model_validate(data)
