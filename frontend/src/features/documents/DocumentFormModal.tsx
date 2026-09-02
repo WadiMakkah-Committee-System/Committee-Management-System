@@ -58,6 +58,15 @@ interface DocumentFormModalProps {
   /** لجان مُتاحة للمستخدم الحالي فقط، لنفس سبب departments أعلاه. */
   committees: Committee[]
   users: User[]
+  /**
+   * عند الرفع من داخل صفحة لجنة معيّنة (قسم "وثائق اللجنة")، نطاق
+   * الوثيقة يُضبَط تلقائيًا على "لجنة" مع تحديد هذه اللجنة مسبقًا — توفيرًا
+   * لخطوات المستخدمة (رفع مباشر بدل الذهاب واختيار اللجنة يدويًا)، مع
+   * إبقاء إمكانية تغييره (نطاق آخر، أو لجنة أخرى إن كانت عضوة بأكثر من
+   * لجنة) لأن هذا مجرد تعبئة مبدئية وليس قفلًا. تُهمَل في وضع التعديل
+   * (الوثيقة الموجودة تحدد نطاقها من بياناتها الفعلية لا من هذا الحقل).
+   */
+  defaultCommitteeId?: string
   onSubmitCreate: (values: DocumentFormSubmitValues & { file: File }) => void
   onSubmitEdit: (values: DocumentFormSubmitValues) => void
   loading?: boolean
@@ -98,6 +107,7 @@ export function DocumentFormModal({
   departments,
   committees,
   users,
+  defaultCommitteeId,
   onSubmitCreate,
   onSubmitEdit,
   loading,
@@ -137,7 +147,12 @@ export function DocumentFormModal({
     setFileError(null)
     setScopeError(null)
     const nextDepartmentIds = document?.visible_departments.map((d) => d.dep_id) ?? []
-    const nextCommitteeIds = document?.visible_committees.map((c) => c.committee_id) ?? []
+    // ربط تلقائي مع لجنة اللجنة (راجعي defaultCommitteeId أعلاه): فقط في
+    // وضع الإنشاء (لا document) وعدم إرسال لجان أخرى صراحة — التعديل
+    // يعتمد على بيانات الوثيقة الفعلية حصرًا.
+    const nextCommitteeIds =
+      document?.visible_committees.map((c) => c.committee_id) ??
+      (defaultCommitteeId ? [defaultCommitteeId] : [])
     const nextUserIds = document?.visible_users.map((u) => u.user_id) ?? []
     setDepartmentIds(nextDepartmentIds)
     setCommitteeIds(nextCommitteeIds)
@@ -148,7 +163,7 @@ export function DocumentFormModal({
     else if (nextUserIds.length > 0) setScope('users')
     else setScope(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [open, document, reset])
+  }, [open, document, defaultCommitteeId, reset])
 
   // القيد المفروض بالباك-إند: تصنيف خاص بإدارة + وثيقة عامة = تناقض
   // مرفوض. لو المستخدمة اختارت "عامة" ثم بدّلت التصنيف لتصنيف خاص
