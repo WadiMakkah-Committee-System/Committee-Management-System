@@ -1,31 +1,82 @@
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowRight, CalendarDays, FileText, Mail, Users as UsersIcon } from 'lucide-react'
+import { ArrowRight, CalendarDays, Download, FileText, Mail, Plus, Users as UsersIcon } from 'lucide-react'
 import { useCommitteeDetail } from '@/hooks/useCommittees'
+import {
+  useDocumentPublishTargets,
+  useDocuments,
+  useDownloadDocument,
+  useUploadDocument,
+} from '@/hooks/useDocuments'
+import { useDocumentCategories } from '@/hooks/useDocumentCategories'
+import { useUsers } from '@/hooks/useUsers'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { ErrorState } from '@/components/ui/ErrorState'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton, TableSkeleton } from '@/components/ui/Skeleton'
 import { Avatar } from '@/components/ui/Avatar'
 import { CommitteeRoleBadge } from '@/components/ui/StatusBadge'
-import { cn, formatDate, formatDateTime } from '@/lib/utils'
+import { useToast } from '@/components/ui/Toast'
+import { DocumentFormModal, type DocumentFormSubmitValues } from '@/features/documents/DocumentFormModal'
+import { cn, extractErrorMessage, formatDate, formatDateTime, formatFileSize } from '@/lib/utils'
 
 /**
- * تفاصيل لجنة معتمدة واحدة — Phase 5، عرض فقط (Read-only). لا أي إجراء
- * تعديل/إضافة/حذف أعضاء هنا عمدًا — قرار موثّق من Lama (راجعي
- * project_memory: phase2-committee-formation-requests.md).
+ * تفاصيل لجنة معتمدة واحدة — Phase 5، عرض فقط (Read-only) لبيانات
+ * اللجنة والعضوية تحديدًا: لا أي إجراء تعديل/إضافة/حذف أعضاء هنا عمدًا —
+ * قرار موثّق من Lama (راجعي project_memory: phase2-committee-formation-requests.md).
+ * قسم "وثائق اللجنة" أدناه (2026-09-02) استثناء مقصود — ميزة منفصلة
+ * تمامًا عن عضوية اللجنة (رفع وثيقة مرتبطة باللجنة مباشرة، راجعي
+ * defaultCommitteeId بـDocumentFormModal)، وليست جزءًا من القرار أعلاه.
  */
 export function CommitteeDetailPage() {
   const { committeeId } = useParams<{ committeeId: string }>()
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
+  const { showToast } = useToast()
   const { data: committee, isLoading, isError, refetch } = useCommitteeDetail(committeeId)
 
   const permissions = user?.permissions ?? []
   // لا يوجد تجاوز تلقائي لـsuper_admin هنا (قرار موثّق 2026-08-27) — العرض
   // محكوم فعليًا بامتلاك الصلاحية، تمامًا مثل الوصول لصفحة الطلب نفسها.
   const canViewSourceRequest = permissions.includes('committees.request.view')
+
+  // قسم "وثائق اللجنة" (طلب صريح من المستخدمة 2026-09-02): رفع وثيقة من
+  // داخل صفحة اللجنة يضبط نطاقها تلقائيًا على هذه اللجنة تحديدًا
+  // (defaultCommitteeId بـDocumentFormModal) بدل الذهاب لصفحة "الوثائق"
+  // واختيار اللجنة يدويًا — والقائمة هنا مفلترة بـcommittee_id فقط
+  // (documents.list يبقى هو الحارس الفعلي: لا تظهر وثيقة هنا إلا لمن
+  // يحق له رؤيتها أصلًا، عضوية اللجنة شرط حتى لسوبر أدمن، راجعي
+  // can_view_document بالباك-إند).
+  const canUploadDocuments = permissions.includes('documents.upload')
+  const canDownloadDocuments = permissions.includes('documents.download')
+  const [documentFormOpen, setDocumentFormOpen] = useState(false)
+  const [documentFormError, setDocumentFormError] = useState<string | null>(null)
+  const { data: committeeDocuments, isLoading: documentsLoading } = useDocuments({
+    committee_id: committeeId,
+  })
+  const { data: documentCategories } = useDocumentCategories()
+  const { data: publishTargets } = useDocumentPublishTargets()
+  const { data: usersList } = useUsers()
+  const uploadDocumentMutation = useUploadDocument()
+  const downloadDocumentMutation = useDownloadDocument()
+
+  function handleDocumentUpload(values: DocumentFormSubmitValues & { file?: File }) {
+    if (!values.file) return
+    setDocumentFormError(null)
+    uploadDocumentMutation.mutate(
+      { ...values, file: values.file },
+      {
+        onSuccess: () => {
+          setDocumentFormOpen(false)
+          showToast('تم رفع الوثيقة بنجاح', 'success')
+        },
+        onError: (err) => setDocumentFormError(extractErrorMessage(err)),
+      },
+    )
+  }
 
   // مراجعة لاما 2026-09-01: "لما الشخص يدخل لجنته يعرف اذا هو رئيس لجنة
   // او عضو لجنة" — member_roles يحمل دور كل عضو داخل هذه اللجنة تحديدًا
@@ -181,7 +232,85 @@ export function CommitteeDetailPage() {
         </ul>
       </Card>
 
+      <Card className="p-0">
+        <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <FileText size={15} />
+            وثائق اللجنة
+          </h2>
+          {canUploadDocuments && (
+            <Button size="sm" icon={<Plus size={14} />} onClick={() => setDocumentFormOpen(true)}>
+              رفع وثيقة
+            </Button>
+          )}
+        </div>
+        {documentsLoading ? (
+          <div className="p-4">
+            <TableSkeleton />
+          </div>
+        ) : !committeeDocuments || committeeDocuments.length === 0 ? (
+          <EmptyState
+            icon={<FileText size={22} />}
+            title="لا توجد وثائق بعد"
+            description="لا توجد وثائق خاصة بهذه اللجنة حتى الآن"
+          />
+        ) : (
+          <ul>
+            {committeeDocuments.map((doc) => (
+              <li
+                key={doc.document_id}
+                className="flex flex-col gap-1.5 border-b border-border-default px-4 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+              >
+                <button
+                  type="button"
+                  onClick={() => navigate(`/documents/${doc.document_id}`)}
+                  className="flex items-center gap-2 text-start font-medium text-text-primary hover:text-brand-primary"
+                >
+                  <FileText size={15} className="shrink-0 text-brand-primary" />
+                  {doc.title}
+                </button>
+                <div className="flex items-center gap-3 text-xs text-text-muted">
+                  <span>{formatFileSize(doc.file_size_bytes)}</span>
+                  <span>{formatDate(doc.created_at)}</span>
+                  {canDownloadDocuments && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadDocumentMutation.mutate(
+                          { documentId: doc.document_id, fileName: doc.file_name },
+                          { onError: (err) => showToast(extractErrorMessage(err), 'error') },
+                        )
+                      }
+                      className="flex items-center gap-1 rounded-xs p-1 text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                      aria-label="تنزيل"
+                    >
+                      <Download size={14} />
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
       <p className="text-xs text-text-muted">أُنشئت اللجنة في {formatDateTime(committee.created_at)}</p>
+
+      {canUploadDocuments && (
+        <DocumentFormModal
+          open={documentFormOpen}
+          onClose={() => setDocumentFormOpen(false)}
+          categories={documentCategories ?? []}
+          departments={publishTargets?.departments ?? []}
+          committees={publishTargets?.committees ?? []}
+          users={usersList ?? []}
+          defaultCommitteeId={committee.committee_id}
+          onSubmitCreate={handleDocumentUpload}
+          onSubmitEdit={handleDocumentUpload}
+          loading={uploadDocumentMutation.isPending}
+          serverError={documentFormError}
+        />
+      )}
     </div>
   )
 }
