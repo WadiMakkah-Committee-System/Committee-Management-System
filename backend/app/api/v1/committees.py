@@ -40,7 +40,8 @@ from app.schemas.committee import (
     CommitteeReturnRequest,
     DepartmentMemberElsewhereOut,
 )
-from app.services import committee_service
+from app.schemas.user import UserOut
+from app.services import committee_service, user_service
 from app.services.committee_service import (
     CommitteeForbiddenError,
     CommitteeNotFoundError,
@@ -112,6 +113,28 @@ async def list_committee_requests(
         db, actor=current_user, can_view_all=can_view_all
     )
     return [CommitteeFormationRequestOut.model_validate(r) for r in requests]
+
+
+@router.get(
+    "/eligible-members",
+    response_model=list[UserOut],
+    dependencies=[
+        Depends(require_permission("committees.request.create", "committees.request.update"))
+    ],
+)
+async def list_committee_eligible_members(db: AsyncSession = Depends(get_db)) -> list[UserOut]:
+    """
+    مراجعة لاما 2026-08-31: قائمة المستخدمين المؤهلين ليكونوا أعضاء/رئيسًا
+    مقترحًا بطلب تشكيل لجنة — عمدًا **بدون** أي تصفية بنطاق users.view
+    (own/department/all)، لأن هذا الـendpoint مستقل تمامًا عن صلاحية عرض
+    المستخدمين: من يقدر ينشئ/يعدّل طلب تشكيل لجنة (committees.request.create
+    أو .update) يحتاج يشوف مرشحين من كل الإدارات (اللجنة نفسها غالبًا
+    متعددة الإدارات)، بغض النظر عن نطاقه الشخصي على users.view — وقد لا
+    يملك هذه الصلاحية إطلاقًا (مثال: الادمن). قبل /{request_id} بترتيب
+    التسجيل عمدًا (تفادي تضارب المسارات).
+    """
+    users = await user_service.list_users(db)
+    return [UserOut.model_validate(u) for u in users]
 
 
 @router.get("/{request_id}", response_model=CommitteeFormationRequestOut)
@@ -274,12 +297,33 @@ async def approve_committee_request(
 @committees_router.get(
     "",
     response_model=list[CommitteeOut],
-    dependencies=[Depends(require_permission("committees.view"))],
 )
 async def list_committees(
     current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[CommitteeOut]:
-    scope = current_user.scope_for("committees.view") or "own"
+    """
+    بلاغ لاما 2026-09-01: قيد require_permission("committees.view") الثابت
+    هنا كان يمنع تمامًا أي عضو لجنة (رئيس/عضو) لا يملك committees.view على
+    مستوى System Role من رؤية قسم "اللجان" بالواجهة كليًا — رغم أنه عضو
+    فعلي بلجنة معتمدة، ورغم أن get_committee (لجنة واحدة، أدناه) مسموح له
+    عبرها فعليًا منذ مراجعة 2026-08-31. نفس مسار الوصول المزدوج (OR) هناك
+    يُطبَّق هنا الآن: System Role scope (own/department/all) **أو** عضوية
+    لجنة واحدة على الأقل يمنحها دور اللجنة صلاحية committees.view — وفي
+    الحالة الثانية نطاق "own" أصلًا يكفي ويطابق تمامًا المطلوب (يُرجع فقط
+    اللجان التي هو رئيسها/عضو فيها، راجعي committee_service.list_committees).
+    """
+    system_scope = current_user.scope_for("committees.view")
+    has_committee_role_access = system_scope is not None
+    if not has_committee_role_access:
+        has_committee_role_access = await committee_service.user_has_committee_role_view_access(
+            db, user_id=current_user.user_id
+        )
+    if not has_committee_role_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ليست لديك صلاحية للقيام بهذا الإجراء",
+        )
+    scope = system_scope or "own"
     committees = await committee_service.list_committees(db, actor=current_user, scope=scope)
     return [CommitteeOut.model_validate(c) for c in committees]
 
@@ -309,18 +353,62 @@ async def list_department_members_elsewhere(
 @committees_router.get(
     "/{committee_id}",
     response_model=CommitteeOut,
-    dependencies=[Depends(require_permission("committees.view"))],
 )
 async def get_committee(
     committee_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> CommitteeOut:
-    scope = current_user.scope_for("committees.view") or "own"
+    """
+    مراجعة لاما 2026-08-31 ("أدوار اللجان"): أُزيل قيد require_permission
+    الثابت على مستوى الراوت عمدًا (كان يمنع تمامًا أي مستخدم لا يملك
+    صلاحية committees.view النظامية من الوصول، حتى لو كان رئيسًا/عضوًا
+    فعليًا باللجنة نفسها — وأغلب مستخدمي النظام العاديين لا يملكون
+    committees.view أصلًا). الوصول الآن مسار مزدوج (OR وليس AND)، تطبيقًا
+    حرفيًا لصيغة "حساب الصلاحيات" المطلوبة: System Role scope (own/
+    department/all على committees.view) **أو** Committee Role permission
+    ضمن عضوية هذه اللجنة تحديدًا فقط — وليس أي لجنة أخرى.
+    كلا المسارين يُفحصان فعليًا هنا بالباك-إند (وليس فقط بالفرونت)، فلا
+    يقدر أي مستخدم تجاوز نطاق اللجنة عبر استدعاء الـ API مباشرة.
+
+    مراجعة لاما 2026-09-01: حُذفت فئة الصلاحيات المصطنعة "committee_roles"
+    (كانت تحوي كود "committee.view" المنفصل) — أدوار اللجان (رئيس/عضو)
+    تختار الآن صلاحياتها من نفس الأقسام الحقيقية الموجودة أصلًا بالكتالوج
+    (راجعي db/migrations/0017_remove_committee_roles_category.sql). لذلك
+    مسار "Committee Role permission" هنا يتحقق من الكود الحقيقي
+    "committees.view" (نفس الكود المستخدم بالمسار النظامي أعلاه، لكن هنا
+    يُفحص ضمن صلاحيات دور اللجنة الخاصة بهذه العضوية تحديدًا وليس نطاق
+    المستخدم النظامي العام).
+    """
+    system_scope = current_user.scope_for("committees.view")
+    committee_role_codes = await committee_service.get_committee_role_permission_codes(
+        db, user_id=current_user.user_id, committee_id=committee_id
+    )
+    has_committee_role_access = "committees.view" in committee_role_codes
+
+    if system_scope is None and not has_committee_role_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ليست لديك صلاحية للقيام بهذا الإجراء",
+        )
+
     try:
         committee = await committee_service.get_committee(
-            db, committee_id, actor=current_user, scope=scope
+            db, committee_id, actor=current_user, scope=system_scope or "own"
         )
-    except (CommitteeNotFoundError, CommitteeForbiddenError) as exc:
+    except CommitteeForbiddenError as exc:
+        # نطاق الصلاحية النظامية (إن وُجد) لا يغطي هذه اللجنة تحديدًا —
+        # لكن قد يملك وصولًا مستقلًا عبر دور اللجنة (المسار الثاني بالـOR
+        # أعلاه)، فنجرّبه هنا بدل الرفض الفوري.
+        if not has_committee_role_access:
+            raise _handle_errors(exc) from exc
+        try:
+            committee = await committee_service.get_committee(
+                db, committee_id, actor=current_user, scope="own"
+            )
+        except (CommitteeNotFoundError, CommitteeForbiddenError) as exc2:
+            raise _handle_errors(exc2) from exc2
+    except CommitteeNotFoundError as exc:
         raise _handle_errors(exc) from exc
+
     return CommitteeOut.model_validate(committee)
 
 

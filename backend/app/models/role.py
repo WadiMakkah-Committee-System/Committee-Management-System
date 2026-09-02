@@ -63,6 +63,11 @@ class Permission(Base):
     category: Mapped[str] = mapped_column(String(50), nullable=False)
     label_ar: Mapped[str] = mapped_column(String(200), nullable=False)
     sort_order: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    # 'system' (صلاحيات System Roles، الافتراضي) أو 'committee' (صلاحيات
+    # أدوار اللجان — راجعي db/migrations/0016). تمييز فقط لأغراض الفلترة
+    # بالواجهة (تبويب "أدوار اللجان" المنفصل) — لا يُستخدم بمنطق الفحص
+    # الفعلي بالباك-إند (ذاك يعتمد على كود الصلاحية وعضوية اللجنة مباشرة).
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, server_default="system")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -101,6 +106,15 @@ class Role(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     is_super_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # 'user' (دور نظامي عادي، يُسنَد كـuser.role_id — الافتراضي) أو
+    # 'committee' (رئيس اللجنة/عضو اللجنة — يُسنَد فقط عبر عضوية
+    # committee_members.committee_role_id، ولا يظهر أبدًا كخيار عند
+    # إنشاء/تعديل مستخدم). راجعي db/migrations/0016 وnote لاما 2026-08-31:
+    # "لا تعتبر 'رئيس لجنة' أو 'عضو لجنة' من System Roles".
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, server_default="user")
+    # معرّف ثابت غير قابل للتعديل من الواجهة (بخلاف name) — 'chair' أو
+    # 'member' فقط لدوري اللجان الثابتين، و None لكل الأدوار النظامية.
+    committee_role_slug: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

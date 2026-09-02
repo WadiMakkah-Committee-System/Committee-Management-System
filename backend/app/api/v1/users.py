@@ -28,7 +28,7 @@ from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
 from app.models.user import User, UserStatus
 from app.schemas.user import UserCreate, UserDetailOut, UserOut, UserUpdate
-from app.services import user_service
+from app.services import committee_service, user_service
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -56,7 +56,9 @@ def _check_user_scope_access(current_user: User, target: User, *permission_codes
 
 
 @router.get("/me", response_model=UserDetailOut)
-async def get_my_profile(current_user: CurrentUser) -> UserDetailOut:
+async def get_my_profile(
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> UserDetailOut:
     """
     بيانات المستخدم الحالي، بما فيها إدارته كاملة (مضمَّنة عبر
     UserOut.department) وقائمة صلاحياته الفعلية (permissions) — متاح لأي
@@ -65,6 +67,11 @@ async def get_my_profile(current_user: CurrentUser) -> UserDetailOut:
     صلاحيات المستخدم هنا مطلوبة للواجهة الأمامية لتقرير أي شاشات/تبويبات
     تظهر له (مثال: تبويب "الأدوار والصلاحيات" يظهر فقط لمن يملك
     is_super_admin)، دون الاعتماد على أي قائمة أدوار ثابتة في كود الفرونت.
+    permission_scopes (مراجعة لاما 2026-08-31) ضرورية أيضًا لإخفاء إجراءات
+    مقيَّدة بنطاق (مثال: "إرجاع لمقدّم الطلب" بطلبات تشكيل اللجان — نطاق
+    department/all فقط) عن مالك الصلاحية بنطاق own وحده، بدل الاكتفاء
+    بفحص "هل يملك كود الصلاحية" فقط (كان يُظهر الزر خطأً لمن يملك الصلاحية
+    بنطاق own فقط — كالادمن مقدّم الطلب نفسه).
 
     ملاحظة تقنية: current_user يصل هنا محمَّلًا مسبقًا بعلاقة department
     (selectinload) من داخل core.dependencies.get_current_user →
@@ -72,6 +79,13 @@ async def get_my_profile(current_user: CurrentUser) -> UserDetailOut:
     """
     data = UserOut.model_validate(current_user).model_dump()
     data["permissions"] = sorted(current_user.permission_codes)
+    data["permission_scopes"] = current_user.permission_scopes
+    data["has_committee_membership_access"] = await committee_service.user_has_committee_role_view_access(
+        db, user_id=current_user.user_id
+    )
+    data["has_any_committee_membership"] = await committee_service.user_has_any_committee_membership(
+        db, user_id=current_user.user_id
+    )
     return UserDetailOut.model_validate(data)
 
 
@@ -151,6 +165,13 @@ async def get_user(
     _check_user_scope_access(current_user, user, "users.view")
     data = UserOut.model_validate(user).model_dump()
     data["permissions"] = sorted(user.permission_codes)
+    data["permission_scopes"] = user.permission_scopes
+    data["has_committee_membership_access"] = await committee_service.user_has_committee_role_view_access(
+        db, user_id=user.user_id
+    )
+    data["has_any_committee_membership"] = await committee_service.user_has_any_committee_membership(
+        db, user_id=user.user_id
+    )
     return UserDetailOut.model_validate(data)
 
 

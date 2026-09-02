@@ -12,6 +12,7 @@ from app.api.v1 import (
     departments,
     documents,
     job_titles,
+    meetings,
     roles,
     users,
 )
@@ -28,3 +29,4 @@ api_router.include_router(committees.router)
 api_router.include_router(committees.committees_router)
 api_router.include_router(documents.router)
 api_router.include_router(documents.categories_router)
+api_router.include_router(meetings.router)

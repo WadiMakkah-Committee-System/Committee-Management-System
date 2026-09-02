@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton, TableSkeleton } from '@/components/ui/Skeleton'
 import { Avatar } from '@/components/ui/Avatar'
+import { CommitteeRoleBadge } from '@/components/ui/StatusBadge'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 
 /**
@@ -25,6 +26,17 @@ export function CommitteeDetailPage() {
   // لا يوجد تجاوز تلقائي لـsuper_admin هنا (قرار موثّق 2026-08-27) — العرض
   // محكوم فعليًا بامتلاك الصلاحية، تمامًا مثل الوصول لصفحة الطلب نفسها.
   const canViewSourceRequest = permissions.includes('committees.request.view')
+
+  // مراجعة لاما 2026-09-01: "لما الشخص يدخل لجنته يعرف اذا هو رئيس لجنة
+  // او عضو لجنة" — member_roles يحمل دور كل عضو داخل هذه اللجنة تحديدًا
+  // (راجعي schemas/committee.py::CommitteeMemberRoleOut)، نبحث فيه عن صف
+  // المستخدم الحالي نفسه. تبقى undefined لمن يشاهد اللجنة عبر صلاحية
+  // نظامية (committees.view بنطاق department/all) بدون أن يكون عضوًا
+  // فعليًا فيها — لا شارة تظهر له حينها، وهذا صحيح.
+  const myMembership = committee?.member_roles.find((m) => m.user.user_id === user?.user_id)
+  const roleSlugByUserId = new Map(
+    (committee?.member_roles ?? []).map((m) => [m.user.user_id, m.committee_role.committee_role_slug]),
+  )
 
   if (isLoading) {
     return (
@@ -59,7 +71,16 @@ export function CommitteeDetailPage() {
           </button>
           <div>
             <h1 className="text-xl font-bold text-text-primary">{committee.name}</h1>
-            <p className="mt-1 text-sm text-text-muted">لجنة معتمدة رسميًا</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <p className="text-sm text-text-muted">لجنة معتمدة رسميًا</p>
+              {myMembership && (
+                <>
+                  <span className="text-text-muted">·</span>
+                  <span className="text-sm text-text-muted">دورك في اللجنة:</span>
+                  <CommitteeRoleBadge slug={myMembership.committee_role.committee_role_slug} />
+                </>
+              )}
+            </div>
           </div>
         </div>
         {canViewSourceRequest && (
@@ -145,7 +166,11 @@ export function CommitteeDetailPage() {
                 <Avatar firstName={member.first_name} lastName={member.last_name} />
                 <p className="font-medium text-text-primary">
                   {member.first_name} {member.last_name}
+                  {member.user_id === user?.user_id && (
+                    <span className="mr-1.5 text-xs font-normal text-text-muted">(أنت)</span>
+                  )}
                 </p>
+                <CommitteeRoleBadge slug={roleSlugByUserId.get(member.user_id) ?? null} />
               </div>
               <span className="flex items-center gap-1.5 text-sm text-text-secondary">
                 <Mail size={13} className="shrink-0" />

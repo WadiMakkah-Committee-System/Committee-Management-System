@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -69,7 +69,7 @@ const NAV_ITEMS: NavItem[] = [
       },
     ],
   },
-  { label: 'الاجتماعات', icon: CalendarDays, comingSoon: true },
+  { label: 'الاجتماعات', icon: CalendarDays, path: '/meetings', requiredPermission: ['meetings.view'] },
   { label: 'المهام', icon: ListChecks, comingSoon: true },
   { label: 'القرارات', icon: Gavel, comingSoon: true },
   {
@@ -117,7 +117,27 @@ function filterNavItem(item: NavItem, isSuperAdmin: boolean, permissions: string
 export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; onCloseMobile: () => void }) {
   const user = useAuthStore((s) => s.user)
   const isSuperAdmin = !!user?.role?.is_super_admin
-  const permissions = user?.permissions ?? []
+  // بلاغ لاما 2026-09-01: عضو لجنة (رئيس/عضو) قد يملك وصولًا فعليًا لقسم
+  // "اللجان" عبر عضوية اللجنة نفسها فقط، بدون أي صلاحية committees.view
+  // على مستوى System Role — نسخة محلية فقط لفلترة القائمة الجانبية (لا
+  // تُكتب على user.permissions الفعلية، حتى لا تؤثر على أجزاء أخرى من
+  // الواجهة تعتمد عليها كصلاحية نظامية حقيقية، مثل قسم "موظفو إدارتي بلجان
+  // أخرى" بصفحة اللجان). راجعي has_committee_membership_access بالنوع
+  // UserDetail وProtectedRoute.tsx لنفس المنطق على مستوى المسار.
+  const permissions = useMemo(() => {
+    let base = user?.permissions ?? []
+    if (user?.has_committee_membership_access && !base.includes('committees.view')) {
+      base = [...base, 'committees.view']
+    }
+    // قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+    // (2026-09-01): نفس فكرة committees.view أعلاه بالضبط، لكن بحقل أبسط
+    // (مجرّد عضوية بأي لجنة، بدون فحص كود صلاحية داخل دور اللجنة — راجعي
+    // has_any_committee_membership بـtypes/index.ts للفرق الدقيق).
+    if (user?.has_any_committee_membership && !base.includes('meetings.view')) {
+      base = [...base, 'meetings.view']
+    }
+    return base
+  }, [user])
   const location = useLocation()
 
   const items = NAV_ITEMS.map((item) => filterNavItem(item, isSuperAdmin, permissions)).filter(

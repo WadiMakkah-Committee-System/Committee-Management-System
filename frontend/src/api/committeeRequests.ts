@@ -3,6 +3,7 @@ import type {
   CommitteeFormationRequest,
   CommitteeFormationRequestCreatePayload,
   CommitteeFormationRequestUpdatePayload,
+  User,
 } from '@/types'
 
 export async function fetchCommitteeRequests(): Promise<CommitteeFormationRequest[]> {
@@ -12,6 +13,17 @@ export async function fetchCommitteeRequests(): Promise<CommitteeFormationReques
 
 export async function fetchCommitteeRequest(requestId: string): Promise<CommitteeFormationRequest> {
   const { data } = await apiClient.get<CommitteeFormationRequest>(`/committee-requests/${requestId}`)
+  return data
+}
+
+/**
+ * مراجعة لاما 2026-08-31 (بلاغ خطأ): مرشحو عضوية اللجنة (لطلب تشكيل
+ * جديد/تعديل) — من كل الإدارات، بغض النظر عن نطاق users.view لمقدّم/معدّل
+ * الطلب (مستقل تمامًا عن /users). راجعي app/api/v1/committees.py::
+ * list_committee_eligible_members بالباك-إند.
+ */
+export async function fetchCommitteeEligibleMembers(): Promise<User[]> {
+  const { data } = await apiClient.get<User[]>('/committee-requests/eligible-members')
   return data
 }
 

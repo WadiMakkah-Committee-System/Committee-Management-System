@@ -1,4 +1,39 @@
-import type { ApiErrorShape, RoleSummary, SystemRoleName } from '@/types'
+import type { ApiErrorShape, PermissionScope, RoleSummary, SystemRoleName, UserDetail } from '@/types'
+
+/**
+ * ترتيب اتساع نطاقات الوصول من الأوسع للأضيق — يطابق تمامًا
+ * _SCOPE_BREADTH_ORDER في backend/app/models/role.py.
+ */
+const SCOPE_BREADTH_ORDER: readonly PermissionScope[] = ['all', 'department', 'own']
+
+/**
+ * أوسع نطاق يملكه المستخدم بين عدّة أكواد صلاحية بديلة — يطابق تمامًا
+ * User.scope_for() بالباك-إند (نفس منطق require_permission: يكفي امتلاك
+ * واحدة منها). تُرجع null لو لا يملك أي كود منها إطلاقًا.
+ *
+ * مراجعة لاما 2026-08-31 (بلاغ خطأ): قبل هذه الدالة، كانت شاشات مثل صفحة
+ * تفاصيل طلب تشكيل اللجنة تقرر إظهار إجراءات مقيَّدة بنطاق (كـ"إرجاع
+ * لمقدّم الطلب") بالاعتماد فقط على permissions.includes(code) — وجود
+ * الكود لا يعني أن نطاقه واسع بما يكفي، فكان الادمن (نطاق own على
+ * committees.request.update ليقدر يعدّل مسودته) يرى إجراءات المكتب
+ * التنفيذي (نطاق department/all) على طلبه هو نفسه. استخدمي هذه الدالة
+ * دائمًا بدل permissions.includes() لأي إجراء يفرّق الباك-إند فيه بين
+ * النطاقات فعليًا (راجعي دائمًا committee_service.py لتأكيد أن هناك فحص
+ * نطاق فعلي مطابق قبل الاعتماد عليها بالواجهة).
+ */
+export function scopeFor(
+  user: Pick<UserDetail, 'permission_scopes'> | null | undefined,
+  ...codes: string[]
+): PermissionScope | null {
+  if (!user) return null
+  const owned = new Set(
+    codes.map((c) => user.permission_scopes[c]).filter((s): s is PermissionScope => !!s),
+  )
+  for (const candidate of SCOPE_BREADTH_ORDER) {
+    if (owned.has(candidate)) return candidate
+  }
+  return null
+}
 
 /** دمج أسماء classes بشرط تجاهل القيم الفارغة/false — بديل خفيف عن clsx للاستخدام الداخلي. */
 export function cn(...classes: (string | false | null | undefined)[]): string {

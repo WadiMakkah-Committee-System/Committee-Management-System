@@ -17,6 +17,8 @@ import { CommitteesPage } from '@/features/committees/CommitteesPage'
 import { CommitteeDetailPage } from '@/features/committees/CommitteeDetailPage'
 import { DocumentsPage } from '@/features/documents/DocumentsPage'
 import { DocumentDetailPage } from '@/features/documents/DocumentDetailPage'
+import { MeetingsPage } from '@/features/meetings/MeetingsPage'
+import { MeetingDetailPage } from '@/features/meetings/MeetingDetailPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { usersKeys } from '@/hooks/useUsers'
@@ -103,6 +105,15 @@ function App() {
             <Route element={<ProtectedRoute anyPermission={['documents.view', 'documents.search']} />}>
               <Route path="/documents" element={<DocumentsPage />} />
               <Route path="/documents/:documentId" element={<DocumentDetailPage />} />
+            </Route>
+            {/* قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+                (2026-09-01): نفس نمط committees.view تمامًا — anyPermission
+                هنا يمر لمن يملك meetings.view نظاميًا (ادمن/سوبر أدمن)،
+                وProtectedRoute.tsx يحتوي بديلًا (hasMeetingsMembershipBypass)
+                لأي عضو/رئيس لجنة عبر has_any_committee_membership. */}
+            <Route element={<ProtectedRoute anyPermission={['meetings.view']} />}>
+              <Route path="/meetings" element={<MeetingsPage />} />
+              <Route path="/meetings/:meetingId" element={<MeetingDetailPage />} />
             </Route>
 
             <Route path="/" element={<Navigate to="/users" replace />} />

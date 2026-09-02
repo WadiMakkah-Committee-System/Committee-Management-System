@@ -53,13 +53,14 @@ committees/committee_members بعد approved.
 import uuid
 from datetime import date
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
-from app.models.committee import Committee, committee_members
+from app.models.committee import Committee, CommitteeMember, committee_members
 from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
 from app.models.department import Department
+from app.models.role import Permission, Role, RolePermission
 from app.models.user import User
 from app.services import audit_service
 
@@ -505,13 +506,36 @@ async def approve_request(
 
     request.status = CommitteeRequestStatus.approved
 
+    # دور "رئيس اللجنة"/"عضو اللجنة" الثابتان (committee_role_slug — راجعي
+    # db/migrations/0016 وapp/models/role.py) — يُمنحان هنا تلقائيًا حسب
+    # chair_user_id، وليس عبر أي اختيار يدوي؛ عضو واحد رئيس، البقية أعضاء
+    # (طلب لاما 2026-08-31: "عند تحديد الأعضاء... يتم تلقائيًا اعتبار كل
+    # الأعضاء الآخرين المختارين أعضاء عاديين"). هذا لا يغيّر System Role
+    # للمستخدم إطلاقًا — فقط committee_members.committee_role_id.
+    chair_role_result = await db.execute(select(Role).where(Role.committee_role_slug == "chair"))
+    chair_role = chair_role_result.scalar_one()
+    member_role_result = await db.execute(
+        select(Role).where(Role.committee_role_slug == "member")
+    )
+    member_role = member_role_result.scalar_one()
+
     committee = Committee(
         name=request.committee_name,
         statement=request.statement,
         start_date=request.start_date,
         end_date=request.end_date,
         source_request_id=request.request_id,
-        members=list(request.proposed_members),
+        member_roles=[
+            CommitteeMember(
+                user_id=member.user_id,
+                committee_role_id=(
+                    chair_role.role_id
+                    if member.user_id == request.chair_user_id
+                    else member_role.role_id
+                ),
+            )
+            for member in request.proposed_members
+        ],
         chair_user_id=request.chair_user_id,
     )
     db.add(committee)
@@ -600,6 +624,93 @@ async def get_committee(
         if actor.dep_id is None or committee_dep_id != actor.dep_id:
             raise CommitteeForbiddenError("ليست لديك صلاحية لعرض هذه اللجنة")
     return committee
+
+
+async def get_committee_role_permission_codes(
+    db: AsyncSession, *, user_id: uuid.UUID, committee_id: uuid.UUID
+) -> set[str]:
+    """
+    أكواد صلاحيات "دور اللجنة" (رئيس/عضو) الفعلية لـuser_id **داخل هذه
+    اللجنة تحديدًا فقط** — جوهر متطلب لاما 2026-08-31 (نطاق Committee Role
+    ليس own/department/all، بل عضوية اللجنة نفسها). تُرجع مجموعة فارغة إن
+    لم يكن user_id عضوًا في committee_id إطلاقًا (لا رئيسًا ولا عضوًا) —
+    لا يُسمح باستخدام صلاحيات لجنة هو ليس عضوًا فيها (متطلب صريح).
+
+    ملاحظة تصميم: صلاحيات دور اللجنة تُقرأ حيًا من role_permissions عبر
+    Role.permission_codes (نفس مصدر الحقيقة لصلاحيات System Roles تمامًا،
+    ولا يوجد أي نسخ/تجميد لها هنا) — فتعديل صلاحيات "رئيس اللجنة" من صفحة
+    "الأدوار والصلاحيات" ينعكس فورًا على كل رؤساء اللجان بكل اللجان، بلا أي
+    تعديل يدوي لكل لجنة/عضو (متطلب لاما الصريح: نفس الاختبار المطلوب).
+    """
+    result = await db.execute(
+        select(CommitteeMember).where(
+            CommitteeMember.committee_id == committee_id,
+            CommitteeMember.user_id == user_id,
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        return set()
+    return membership.committee_role.permission_codes
+
+
+async def user_has_committee_role_view_access(db: AsyncSession, *, user_id: uuid.UUID) -> bool:
+    """
+    بلاغ لاما 2026-09-01: عضو لجنة (مثلًا "عضو اللجنة") بدون صلاحية
+    committees.view على مستوى System Role كان لا يقدر يوصل إطلاقًا لقسم
+    "اللجان" بالواجهة (لا القائمة الجانبية تظهر له، ولا GET /committees
+    نفسه يرد له أي شيء غير 403) — رغم أنه عضو فعلي بلجنة معتمدة ودور
+    لجنته (Committee Role) يملك صلاحية committees.view. السبب: get_committee
+    (لجنة واحدة) عنده مسار OR يفحص دور اللجنة، لكن list_committees (القائمة
+    كاملة، ونقطة الدخول الفعلية لظهور القسم أصلًا) كان يتطلب فقط
+    committees.view على مستوى System Role، بلا أي مسار بديل عبر عضوية اللجنة.
+
+    هذه الدالة تفحص: هل يملك user_id صلاحية committees.view ضمن دور أي
+    لجنة هو عضو/رئيس فيها (بغض النظر عن أي لجنة تحديدًا) — تُستخدم كبديل
+    لنطاق "own" على مستوى النظام حين لا يملكه المستخدم أصلًا (راجعي
+    app/api/v1/committees.py::list_committees وGET /users/me أدناه، وكلاهما
+    يحتاج فقط "نعم/لا" هنا، وليس أي لجنة بعينها — list_committees بنطاق
+    own أصلًا يُرجع فقط اللجان التي هو رئيسها/عضو فيها، فلا حاجة لأي فلترة
+    إضافية بعد التأكد من امتلاك الصلاحية في لجنة واحدة على الأقل).
+    """
+    stmt = (
+        select(func.count())
+        .select_from(committee_members)
+        .join(RolePermission, RolePermission.role_id == committee_members.c.committee_role_id)
+        .join(Permission, Permission.permission_id == RolePermission.permission_id)
+        .where(
+            committee_members.c.user_id == user_id,
+            Permission.code == "committees.view",
+        )
+    )
+    result = await db.execute(stmt)
+    return (result.scalar() or 0) > 0
+
+
+async def user_has_any_committee_membership(db: AsyncSession, *, user_id: uuid.UUID) -> bool:
+    """
+    قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات" (2026-09-01):
+    هل user_id عضو أو رئيس بأي لجنة معتمدة إطلاقًا — وجود صف واحد على
+    الأقل بـcommittee_members، بغض النظر عن أي كود صلاحية داخل دور عضويته.
+
+    أبسط عمدًا من user_has_committee_role_view_access أعلاه (تلك تتحقق من
+    امتلاك كود committees.view تحديدًا ضمن دور اللجنة): meeting_service.
+    list_meetings/get_meeting يتحققان فعليًا من كود meetings.view الحقيقي
+    داخل دور اللجنة قبل إرجاع أي بيانات — فلا حاجة لتكرار نفس الفحص هنا.
+    هذه الدالة تُستخدم حصرًا لتحديد ظهور رابط/مسار "الاجتماعات" بالواجهة
+    (راجعي Sidebar.tsx وProtectedRoute.tsx)، وليس أي تفويض فعلي على اجتماع
+    بعينه — القائمة نفسها قد ترجع فارغة رغم ظهور الرابط، إن لم تُمنح
+    meetings.view بعد لدور "رئيس اللجنة"/"عضو اللجنة"، وهذا سلوك مقصود
+    (نفس فجوة own/scope الموجودة أصلًا بقسم اللجان قبل هذا القرار، مقبولة
+    هنا لأنها أضيق بكثير من "يظهر الرابط للجميع بلا أي فحص" السابق).
+    """
+    stmt = (
+        select(func.count())
+        .select_from(committee_members)
+        .where(committee_members.c.user_id == user_id)
+    )
+    result = await db.execute(stmt)
+    return (result.scalar() or 0) > 0
 
 
 async def list_department_members_elsewhere(

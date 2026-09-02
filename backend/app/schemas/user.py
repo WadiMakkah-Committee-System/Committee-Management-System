@@ -96,6 +96,35 @@ class UserDetailOut(UserOut):
     """
 
     permissions: list[str] = Field(default_factory=list)
+    # مراجعة لاما 2026-08-31 (بلاغ خطأ): {كود_الصلاحية: نطاقها} — الواجهة
+    # الأمامية كانت تقرر عرض/إخفاء إجراءات مثل "إرجاع لمقدّم الطلب" بالاعتماد
+    # فقط على وجود كود الصلاحية بقائمة permissions (وجود/عدم)، بلا أي فحص
+    # نطاق — فكان الادمن يرى إجراءات المكتب التنفيذي (نطاق department/all)
+    # على طلبه هو نفسه، رغم أن الباك-إند يملك أصلًا فحص نطاق صريح يرفضها لو
+    # حاول فعليًا (committee_service.return_to_admin_request/update_request).
+    # بإضافة هذا الحقل، تقدر الواجهة تطابق نفس فحص الباك-إند بالضبط بدل
+    # التخمين من isOwner أو من وجود الصلاحية فقط.
+    permission_scopes: dict[str, str] = Field(default_factory=dict)
+    # بلاغ لاما 2026-09-01: عضو لجنة (عبر عضوية اللجنة نفسها، لا عبر
+    # System Role) قد يملك وصولًا فعليًا لقسم "اللجان" رغم أن permissions
+    # أعلاه (المشتقة من System Role فقط) لا تحوي committees.view إطلاقًا —
+    # صلاحيات دور اللجنة سياقية (لجنة بعينها) ولا يمكن تسطيحها ضمن
+    # permissions العامة بلا تضليل. هذا الحقل تحديدًا يجيب فقط "هل يملك
+    # committees.view ضمن دور أي لجنة هو عضو/رئيس فيها؟" (راجعي
+    # committee_service.user_has_committee_role_view_access) — تستخدمه
+    # الواجهة الأمامية حصرًا لإظهار قسم "اللجان" بالقائمة الجانبية والسماح
+    # بالوصول لمساره، بدل الاعتماد فقط على permissions العامة.
+    has_committee_membership_access: bool = False
+    # قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+    # (2026-09-01): حقل مستقل ومتعمَّد التبسيط عن الحقل أعلاه — يجيب فقط
+    # "هل هو عضو أو رئيس بأي لجنة معتمدة إطلاقًا؟" (وجود صف بـ
+    # committee_members)، بدون فحص أي كود صلاحية داخل دور عضويته (راجعي
+    # committee_service.user_has_any_committee_membership). السبب: على
+    # عكس committees.py، meeting_service.list_meetings/get_meeting
+    # يتحققان فعليًا من meetings.view الحقيقي داخل دور اللجنة عند طلب أي
+    # بيانات فعلية — فهذا الحقل هنا لإظهار رابط/مسار "الاجتماعات" بالواجهة
+    # فقط، وليس ضمانًا بأن القائمة لن تكون فارغة.
+    has_any_committee_membership: bool = False
 
 
 # app.schemas.department.DepartmentDetailOut يشير إلى "UserOut" كـ Forward

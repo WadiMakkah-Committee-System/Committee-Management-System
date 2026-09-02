@@ -39,6 +39,20 @@ export function RoleFormModal({
 }: RoleFormModalProps) {
   const isEdit = !!role
   const { data: permissions, isLoading: permissionsLoading } = usePermissionsCatalog()
+  // مراجعة لاما 2026-08-31 ("أدوار اللجان"): عند تعديل دور لجنة (رئيس/عضو)،
+  // تُخفى فقط الأقسام الثلاثة اللي ما تخدم اللجان إطلاقًا (الإدارات،
+  // المستخدمون، المسميات الوظيفية) — قرار صريح من لاما: "تظهر كل الأقسام
+  // ماعدا أقسام الإدارات والمستخدمون والمسميات الوظيفية لأنها ما تخدم
+  // اللجان". بقية الأقسام (اللجان، الاجتماعات، المهام، القرارات، البنود
+  // المستخرجة من الذكاء الاصطناعي، الوثائق، المحاضر) تظهر كاملة تمامًا
+  // مثل تعديل أي دور نظامي عادي — لا يوجد قسم "أدوار لجان" منفصل، حسب
+  // رفض لاما الصريح لهذه الفكرة (مراجعة 2026-09-01): الصلاحيات الحقيقية
+  // نفسها هي ما تُختار، وليس نسخة مجردة موازية عنها.
+  const CATEGORIES_HIDDEN_FOR_COMMITTEE_ROLE = new Set(['departments', 'users', 'job_titles'])
+  const filteredPermissions =
+    role?.kind === 'committee'
+      ? (permissions ?? []).filter((p) => !CATEGORIES_HIDDEN_FOR_COMMITTEE_ROLE.has(p.category))
+      : (permissions ?? [])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scopes, setScopes] = useState<Record<string, PermissionScope>>({})
   const [permissionsError, setPermissionsError] = useState<string | null>(null)
@@ -95,7 +109,11 @@ export function RoleFormModal({
       onClose={onClose}
       title={isEdit ? 'تعديل الدور' : 'إنشاء دور جديد'}
       description={
-        isEdit ? `تعديل "${role?.name}"` : 'حدد اسم الدور ووصفه، ثم اختر صلاحياته من الأقسام أدناه'
+        isEdit
+          ? role?.kind === 'committee'
+            ? `تعديل صلاحيات "${role?.name}" — تنطبق تلقائيًا على كل من يحمل هذا الدور بأي لجنة`
+            : `تعديل "${role?.name}"`
+          : 'حدد اسم الدور ووصفه، ثم اختر صلاحياته من الأقسام أدناه'
       }
       size="lg"
       footer={
@@ -126,7 +144,7 @@ export function RoleFormModal({
             <TableSkeleton />
           ) : (
             <PermissionsPicker
-              permissions={permissions ?? []}
+              permissions={filteredPermissions}
               selected={selected}
               onChange={(next) => {
                 setSelected(next)

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/Input'
 import { DateField } from '@/components/ui/DateField'
 import { Textarea } from '@/components/ui/Textarea'
 import { Button } from '@/components/ui/Button'
-import { useUsers } from '@/hooks/useUsers'
+import { useCommitteeEligibleMembers } from '@/hooks/useCommitteeRequests'
 import { MemberPicker } from './MemberPicker'
 import type { CommitteeFormationRequest } from '@/types'
 
@@ -107,7 +107,9 @@ export function CommitteeRequestFormModal({
   serverError,
 }: CommitteeRequestFormModalProps) {
   const isEdit = !!request
-  const { data: users } = useUsers()
+  // مراجعة لاما 2026-08-31: مرشحو العضوية من كل الإدارات (eligible-members)،
+  // وليس useUsers المقيَّد بنطاق users.view لمقدّم/معدّل الطلب نفسه.
+  const { data: users } = useCommitteeEligibleMembers()
 
   const {
     register,

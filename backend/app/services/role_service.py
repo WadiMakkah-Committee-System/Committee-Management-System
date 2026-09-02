@@ -245,6 +245,14 @@ async def delete_role(db: AsyncSession, *, actor_user_id: uuid.UUID, role_id: uu
     if role is None:
         return None
 
+    # حماية جديدة (مراجعة لاما 2026-08-31): "رئيس اللجنة"/"عضو اللجنة"
+    # دوران ثابتان بنيويًا — عضوية أي لجنة (committee_members.committee_role_id)
+    # تشير إليهما مباشرة (NOT NULL)، فحذفهما يكسر كل عضويات اللجان القائمة.
+    # is_system لا يمنع الحذف (قرار سابق موثّق)، لذا الحماية هنا صريحة على
+    # kind='committee' تحديدًا، وليس على is_system.
+    if role.kind == "committee":
+        raise ValueError("لا يمكن حذف أدوار اللجان الثابتة (رئيس اللجنة/عضو اللجنة)")
+
     count_result = await db.execute(
         select(func.count())
         .select_from(User)

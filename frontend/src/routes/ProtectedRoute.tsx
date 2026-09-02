@@ -27,7 +27,25 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     if (superAdminOnly && !isSuperAdmin) {
       return <Navigate to="/profile" replace />
     }
-    if (anyPermission && !anyPermission.some((code) => user.permissions.includes(code))) {
+    // بلاغ لاما 2026-09-01: عضو لجنة (رئيس/عضو) قد يملك وصولًا فعليًا
+    // لصفحة "اللجان المعتمدة" عبر عضوية اللجنة نفسها فقط، بدون أي صلاحية
+    // committees.view على مستوى System Role (permissions العامة أدناه لا
+    // تعكس هذا إطلاقًا) — راجعي has_committee_membership_access بـ
+    // types/index.ts وcommittee_service.user_has_committee_role_view_access
+    // بالباك-إند لتفاصيل الحساب الكامل.
+    const hasCommitteeMembershipBypass =
+      !!anyPermission?.includes('committees.view') && user.has_committee_membership_access
+    // قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
+    // (2026-09-01): نفس فكرة الالتفافة أعلاه بالضبط لمسار /meetings —
+    // راجعي has_any_committee_membership بـtypes/index.ts وSidebar.tsx.
+    const hasMeetingsMembershipBypass =
+      !!anyPermission?.includes('meetings.view') && user.has_any_committee_membership
+    if (
+      anyPermission &&
+      !anyPermission.some((code) => user.permissions.includes(code)) &&
+      !hasCommitteeMembershipBypass &&
+      !hasMeetingsMembershipBypass
+    ) {
       return <Navigate to="/profile" replace />
     }
   }

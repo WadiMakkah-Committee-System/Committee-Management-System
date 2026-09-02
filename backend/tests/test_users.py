@@ -505,3 +505,103 @@ async def test_users_view_department_scope_limits_to_same_department(
     assert listed.status_code == 200
     usernames = {u["username"] for u in listed.json()}
     assert usernames == {"dep_scope_viewer", "dep_a_colleague"}
+
+
+async def test_users_view_department_scope_excludes_ceo_and_super_admin(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """
+    مراجعة لاما 2026-08-31 (بلاغ خطأ): Admin بنطاق department على
+    users.view ما يقدر يشوف الرئيس التنفيذي ولا Super Admin ولا أي
+    مستخدم من إدارة ثانية — حتى لو هم بلا إدارة مسجَّلة (dep_id=None)،
+    القائمة تبقى مقصورة فعليًا على إدارته هو فقط.
+    """
+    dep_finance = await _create_department(
+        client, auth_headers, super_admin_user, "الإدارة المالية اختبار", "FINX"
+    )
+    dep_bank = await _create_department(
+        client, auth_headers, super_admin_user, "إدارة البنك اختبار", "BNKX"
+    )
+
+    role_id = await _create_custom_role(
+        client,
+        auth_headers,
+        name="ادمن_مالية_اختبار",
+        permission_codes=["users.view"],
+        permission_scopes={"users.view": "department"},
+    )
+    finance_admin_headers = await _create_user_and_login(
+        client, auth_headers, username="finance_admin_x", role_id=role_id, dep_id=dep_finance
+    )
+    await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "س",
+            "middle_name": "ص",
+            "last_name": "ض",
+            "username": "bank_user_x",
+            "email": "bank_user_x@example.com",
+            "password": "StrongPass1",
+            "role_id": role_id,
+            "dep_id": dep_bank,
+        },
+        headers=auth_headers,
+    )
+    await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "ط",
+            "middle_name": "ظ",
+            "last_name": "ع",
+            "username": "ceo_user_x",
+            "email": "ceo_user_x@example.com",
+            "password": "StrongPass1",
+            "role_id": roles_by_name["executive_president"],
+            "dep_id": None,
+        },
+        headers=auth_headers,
+    )
+
+    listed = await client.get("/api/v1/users", headers=finance_admin_headers)
+    assert listed.status_code == 200
+    usernames = {u["username"] for u in listed.json()}
+    assert usernames == {"finance_admin_x"}
+    assert "bank_user_x" not in usernames
+    assert "ceo_user_x" not in usernames
+    assert super_admin_user.username not in usernames
+
+
+async def test_me_returns_permission_scopes_matching_role(
+    client: AsyncClient, auth_headers
+) -> None:
+    """
+    مراجعة لاما 2026-08-31 (بلاغ خطأ): /users/me كان يرجع permissions
+    كقائمة أكواد فقط، بلا أي نطاق — فكانت الواجهة الأمامية تُظهر إجراءات
+    مقيَّدة بنطاق (مثال: "إرجاع لمقدّم الطلب" بطلبات تشكيل اللجان) لمن
+    يملك الصلاحية بنطاق own فقط (كمقدّم الطلب نفسه)، لأنها لا تقدر تفرّق
+    بين النطاقات. الآن يجب أن يرجع permission_scopes مطابقًا تمامًا لما
+    هو مسجَّل بدور المستخدم.
+    """
+    role_id = await _create_custom_role(
+        client,
+        auth_headers,
+        name="دور_نطاقات_اختبار",
+        permission_codes=["committees.request.create", "committees.request.update"],
+        permission_scopes={
+            "committees.request.create": "own",
+            "committees.request.update": "own",
+        },
+    )
+    member_headers = await _create_user_and_login(
+        client, auth_headers, username="scopes_probe_x", role_id=role_id
+    )
+
+    me = await client.get("/api/v1/users/me", headers=member_headers)
+    assert me.status_code == 200
+    body = me.json()
+    assert body["permission_scopes"]["committees.request.create"] == "own"
+    assert body["permission_scopes"]["committees.request.update"] == "own"
+    assert set(body["permissions"]) == {
+        "committees.request.create",
+        "committees.request.update",
+    }

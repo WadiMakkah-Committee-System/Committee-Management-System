@@ -31,14 +31,21 @@ class PermissionOut(BaseModel):
     category: str
     label_ar: str
     sort_order: int
+    #: 'system' أو 'committee' — عمليًا كل صلاحيات الكتالوج الحالية
+    #: kind='system' بعد حذف فئة "committee_roles" المصطنعة (مراجعة لاما
+    #: 2026-09-01، راجعي db/migrations/0017_remove_committee_roles_category.sql):
+    #: أدوار اللجان (رئيس/عضو) تختار الآن من نفس الصلاحيات النظامية
+    #: الحقيقية تمامًا كأي دور آخر. العمود بقي بقاعدة البيانات لعدم كسر
+    #: التوافق، لكن لا شيء يعتمد على قيمة 'committee' حاليًا.
+    kind: str
 
     @computed_field  # type: ignore[misc]
     @property
     def is_enforced(self) -> bool:
         """
-        هل هذا القسم فيه فعليًا endpoint يتحقق من الصلاحية، أم مجرد بيانات
-        كتالوج تحضيرًا لمرحلة قادمة؟ تسمح للواجهة بعرض "قريبًا" بدون تكرار
-        قائمة الأقسام المفعّلة يدويًا في كود الفرونت.
+        هل هذه الصلاحية فيها فعليًا endpoint يتحقق منها، أم مجرد بيانات
+        كتالوج تحضيرًا لمرحلة قادمة؟ تسمح للواجهة بعرضها كـ "قريبًا" بدون
+        تكرار قائمة الأقسام/الأكواد المفعّلة يدويًا في كود الفرونت.
         """
         return self.category in ENFORCED_CATEGORIES
 
@@ -77,6 +84,13 @@ class RoleOut(BaseModel):
     description: str | None
     is_system: bool
     is_super_admin: bool
+    #: 'user' (دور نظامي، يظهر بقائمة الأدوار عند إنشاء مستخدم) أو
+    #: 'committee' (رئيس اللجنة/عضو اللجنة — لا يظهر هناك إطلاقًا، قرار
+    #: صريح لاما 2026-08-31). راجعي models/role.py وdb/migrations/0016.
+    kind: str
+    #: 'chair'/'member' لدوري اللجان الثابتين فقط، وNone لكل الأدوار
+    #: النظامية — معرّف موثوق للواجهة بدل الاعتماد على name القابل للتعديل.
+    committee_role_slug: str | None
     created_at: datetime
     updated_at: datetime
 
