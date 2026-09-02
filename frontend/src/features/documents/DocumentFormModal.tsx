@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Save, Upload, FileText, X } from 'lucide-react'
+import { Save, Upload, FileText, X, Globe2, Building2, Users2, UserRound } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Textarea } from '@/components/ui/Textarea'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { MultiCheckPicker } from '@/components/ui/MultiCheckPicker'
+import { cn } from '@/lib/utils'
 import type { Committee, Department, Document, DocumentCategory, User } from '@/types'
 
 const schema = z.object({
@@ -18,6 +19,24 @@ const schema = z.object({
 })
 
 type FormValues = z.infer<typeof schema>
+
+/**
+ * نطاق الوثيقة — اختيار واحد حصري (بدل الأعلام المستقلة is_public +
+ * قوائم إدارات/لجان/مستخدمين معًا كما كان سابقًا، اللي كانت تسمح
+ * بالجمع أو الترك فارغًا بلا وضوح لمن يملأ الفورم). "عامة" تعني للجميع،
+ * وبقية الخيارات كل واحد منها يحدد فئة واحدة فقط لرؤية الوثيقة — يمكن
+ * تحديد أكثر من عنصر داخل نفس الفئة (مثال: أكثر من إدارة) عبر
+ * MultiCheckPicker، لكن لا تركيب بين الفئات نفسها. القيمة null تعني
+ * "لم تُختَر بعد" — تُمنع من الحفظ (راجع submit أدناه).
+ */
+type DocumentScope = 'public' | 'department' | 'committee' | 'users'
+
+const SCOPE_OPTIONS: { value: DocumentScope; label: string; icon: typeof Globe2 }[] = [
+  { value: 'public', label: 'عامة', icon: Globe2 },
+  { value: 'department', label: 'إدارة', icon: Building2 },
+  { value: 'committee', label: 'لجنة', icon: Users2 },
+  { value: 'users', label: 'مستخدمون محددون', icon: UserRound },
+]
 
 export interface DocumentFormSubmitValues {
   title: string
@@ -34,7 +53,9 @@ interface DocumentFormModalProps {
   onClose: () => void
   document?: Document | null
   categories: DocumentCategory[]
+  /** إدارات مُتاحة للمستخدم الحالي لإتاحة الوثيقة لها فقط (مبدأ أقل صلاحية ممكنة) — راجعي useDocumentPublishTargets، وليس القائمة الكاملة لكل إدارات الشركة. */
   departments: Department[]
+  /** لجان مُتاحة للمستخدم الحالي فقط، لنفس سبب departments أعلاه. */
   committees: Committee[]
   users: User[]
   onSubmitCreate: (values: DocumentFormSubmitValues & { file: File }) => void
@@ -54,13 +75,20 @@ const MAX_UPLOAD_MB = 25
  * DocumentUpdate schema بالباك-إند — لتغيير الملف تُرفع وثيقة جديدة).
  *
  * المسؤولية:
- * التحقق من صحة عنوان/وصف/تصنيف الوثيقة (Zod)، وإدارة اختيار نطاق
- * الرؤية المركّب (عام بالكامل أو إدارات/لجان/مستخدمون محددون) عبر
- * MultiCheckPicker، وبناء القيم النهائية لتُرسَل للصفحة الأم التي تستدعي
+ * التحقق من صحة عنوان/وصف/تصنيف الوثيقة (Zod)، وإدارة اختيار "نطاق
+ * الوثيقة" (عامة/إدارة/لجنة/مستخدمون محددون — راجعي DocumentScope أعلاه
+ * لسبب توحيدها باختيار حصري واحد بدل 3 قوائم متزامنة كما كانت سابقًا)،
+ * مع فرض قيد "لا يمكن أن تكون الوثيقة عامة وتصنيفها خاص بإدارة معينة"
+ * على مستوى الواجهة (نفس القيد المفروض بالباك-إند في
+ * document_service._assert_public_category_consistency — هذا مجرد نسخة
+ * فورية بدون رحلة خادم، والباك-إند يبقى مصدر الحقيقة الفعلي والحارس
+ * الأخير له)، ثم بناء القيم النهائية لتُرسَل للصفحة الأم التي تستدعي
  * فعليًا useUploadDocument/useUpdateDocument.
  *
  * الصلاحيات: لا تُفحص هنا — الصفحة الأم (DocumentsPage/DocumentDetailPage)
- * هي من تقرر إظهار زر الفتح أصلًا حسب صلاحيات المستخدم.
+ * هي من تقرر إظهار زر الفتح أصلًا حسب صلاحيات المستخدم، وقوائم
+ * departments/committees الممرَّرة هنا مُصفَّاة مسبقًا حسب مبدأ أقل
+ * صلاحية ممكنة (راجعي التعليق على الحقلين بالأعلى).
  */
 export function DocumentFormModal({
   open,
@@ -80,7 +108,8 @@ export function DocumentFormModal({
 
   const [file, setFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
-  const [isPublic, setIsPublic] = useState(false)
+  const [scope, setScope] = useState<DocumentScope | null>(null)
+  const [scopeError, setScopeError] = useState<string | null>(null)
   const [departmentIds, setDepartmentIds] = useState<string[]>([])
   const [committeeIds, setCommitteeIds] = useState<string[]>([])
   const [userIds, setUserIds] = useState<string[]>([])
@@ -89,8 +118,13 @@ export function DocumentFormModal({
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
+
+  const categoryId = watch('category_id')
+  const selectedCategory = categories.find((c) => c.category_id === categoryId) ?? null
+  const categoryIsDepartmentScoped = selectedCategory?.scope === 'department'
 
   useEffect(() => {
     if (!open) return
@@ -101,12 +135,35 @@ export function DocumentFormModal({
     })
     setFile(null)
     setFileError(null)
-    setIsPublic(document?.is_public ?? false)
-    setDepartmentIds(document?.visible_departments.map((d) => d.dep_id) ?? [])
-    setCommitteeIds(document?.visible_committees.map((c) => c.committee_id) ?? [])
-    setUserIds(document?.visible_users.map((u) => u.user_id) ?? [])
+    setScopeError(null)
+    const nextDepartmentIds = document?.visible_departments.map((d) => d.dep_id) ?? []
+    const nextCommitteeIds = document?.visible_committees.map((c) => c.committee_id) ?? []
+    const nextUserIds = document?.visible_users.map((u) => u.user_id) ?? []
+    setDepartmentIds(nextDepartmentIds)
+    setCommitteeIds(nextCommitteeIds)
+    setUserIds(nextUserIds)
+    if (document?.is_public) setScope('public')
+    else if (nextDepartmentIds.length > 0) setScope('department')
+    else if (nextCommitteeIds.length > 0) setScope('committee')
+    else if (nextUserIds.length > 0) setScope('users')
+    else setScope(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [open, document, reset])
+
+  // القيد المفروض بالباك-إند: تصنيف خاص بإدارة + وثيقة عامة = تناقض
+  // مرفوض. لو المستخدمة اختارت "عامة" ثم بدّلت التصنيف لتصنيف خاص
+  // بإدارة، نُلغي اختيار "عامة" تلقائيًا فورًا (بدل تركها تكتشف الرفض
+  // لاحقًا عند الحفظ) ونشرح السبب — القرار من المستخدمة صراحة: "امنعها"
+  // (تشديد لا تحذير فقط).
+  useEffect(() => {
+    if (scope === 'public' && categoryIsDepartmentScoped) {
+      setScope(null)
+      setScopeError(
+        'تم إلغاء اختيار «عامة» تلقائيًا — التصنيف المختار خاص بإدارة معينة، ولا يمكن أن تكون الوثيقة عامة وتصنيفها خاص بإدارة في نفس الوقت. اختاري نطاقًا آخر.',
+      )
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryIsDepartmentScoped])
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const selected = e.target.files?.[0] ?? null
@@ -119,19 +176,47 @@ export function DocumentFormModal({
     setFile(selected)
   }
 
+  function selectScope(value: DocumentScope) {
+    if (value === 'public' && categoryIsDepartmentScoped) return
+    setScope(value)
+    setScopeError(null)
+  }
+
   function submit(values: FormValues) {
     if (!isEdit && !file) {
       setFileError('اختيار ملف مطلوب')
       return
     }
+    if (!scope) {
+      setScopeError('اختاري نطاق الوثيقة أولًا (عامة/إدارة/لجنة/مستخدمون محددون)')
+      return
+    }
+    if (scope === 'public' && categoryIsDepartmentScoped) {
+      setScopeError('لا يمكن أن تكون الوثيقة عامة وتصنيفها خاص بإدارة معينة في نفس الوقت')
+      return
+    }
+    if (scope === 'department' && departmentIds.length === 0) {
+      setScopeError('اختاري إدارة واحدة على الأقل')
+      return
+    }
+    if (scope === 'committee' && committeeIds.length === 0) {
+      setScopeError('اختاري لجنة واحدة على الأقل')
+      return
+    }
+    if (scope === 'users' && userIds.length === 0) {
+      setScopeError('اختاري مستخدمًا واحدًا على الأقل')
+      return
+    }
+    setScopeError(null)
+
     const common: DocumentFormSubmitValues = {
       title: values.title,
       description: values.description?.trim() || null,
       category_id: values.category_id || null,
-      is_public: isPublic,
-      department_ids: departmentIds,
-      committee_ids: committeeIds,
-      user_ids: userIds,
+      is_public: scope === 'public',
+      department_ids: scope === 'department' ? departmentIds : [],
+      committee_ids: scope === 'committee' ? committeeIds : [],
+      user_ids: scope === 'users' ? userIds : [],
     }
     if (isEdit) {
       onSubmitEdit(common)
@@ -223,58 +308,86 @@ export function DocumentFormModal({
         />
 
         <div className="flex flex-col gap-3 rounded-sm border border-border-default p-3">
-          <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-text-primary">
-            <input
-              type="checkbox"
-              checked={isPublic}
-              onChange={(e) => setIsPublic(e.target.checked)}
-              className="h-4 w-4 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
-            />
-            إتاحة الوثيقة للجميع (عامة)
-          </label>
+          <p className="text-sm font-medium text-text-primary">
+            نطاق الوثيقة
+            <span className="text-danger"> *</span>
+          </p>
 
-          {!isPublic && (
-            <div className="flex flex-col gap-4 border-t border-border-default pt-3">
-              <p className="text-xs text-text-muted">
-                غير عامة — حدّد من يستطيع رؤيتها: إدارات و/أو لجان و/أو مستخدمون محددون (يكفي تحديد واحدة، ويمكن الجمع بينها)
-              </p>
-              <div className="flex flex-col gap-1.5">
-                <p className="text-xs font-bold text-text-secondary">إدارات محددة</p>
-                <MultiCheckPicker
-                  items={departments}
-                  getId={(d) => d.dep_id}
-                  getLabel={(d) => d.name}
-                  selected={departmentIds}
-                  onChange={setDepartmentIds}
-                  searchPlaceholder="ابحث باسم الإدارة..."
-                  emptyText="لا توجد إدارات"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <p className="text-xs font-bold text-text-secondary">لجان محددة</p>
-                <MultiCheckPicker
-                  items={committees}
-                  getId={(c) => c.committee_id}
-                  getLabel={(c) => c.name}
-                  selected={committeeIds}
-                  onChange={setCommitteeIds}
-                  searchPlaceholder="ابحث باسم اللجنة..."
-                  emptyText="لا توجد لجان معتمدة"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <p className="text-xs font-bold text-text-secondary">مستخدمون محددون</p>
-                <MultiCheckPicker
-                  items={users}
-                  getId={(u) => u.user_id}
-                  getLabel={(u) => `${u.first_name} ${u.last_name}`}
-                  getSublabel={(u) => u.email}
-                  selected={userIds}
-                  onChange={setUserIds}
-                  searchPlaceholder="ابحث بالاسم أو البريد الإلكتروني..."
-                  emptyText="لا يوجد مستخدمون"
-                />
-              </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {SCOPE_OPTIONS.map(({ value, label, icon: Icon }) => {
+              const disabled = value === 'public' && categoryIsDepartmentScoped
+              const active = scope === value
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => selectScope(value)}
+                  className={cn(
+                    'flex flex-col items-center gap-1.5 rounded-sm border px-2 py-2.5 text-xs font-medium transition-colors',
+                    active
+                      ? 'border-brand-primary bg-brand-primary/5 text-brand-primary'
+                      : 'border-border-default text-text-secondary hover:bg-bg-elevated',
+                    disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent',
+                  )}
+                >
+                  <Icon size={16} />
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+
+          {categoryIsDepartmentScoped && (
+            <p className="text-xs text-text-muted">
+              التصنيف المختار خاص بإدارة معينة، لذلك لا يمكن اختيار نطاق «عامة» لهذه الوثيقة.
+            </p>
+          )}
+          {scopeError && <p className="text-xs font-medium text-danger">{scopeError}</p>}
+
+          {scope === 'department' && (
+            <div className="flex flex-col gap-1.5 border-t border-border-default pt-3">
+              <p className="text-xs font-bold text-text-secondary">الإدارات</p>
+              <MultiCheckPicker
+                items={departments}
+                getId={(d) => d.dep_id}
+                getLabel={(d) => d.name}
+                selected={departmentIds}
+                onChange={setDepartmentIds}
+                searchPlaceholder="ابحث باسم الإدارة..."
+                emptyText="لا توجد إدارات متاحة لك لإتاحة الوثيقة لها"
+              />
+            </div>
+          )}
+
+          {scope === 'committee' && (
+            <div className="flex flex-col gap-1.5 border-t border-border-default pt-3">
+              <p className="text-xs font-bold text-text-secondary">اللجان</p>
+              <MultiCheckPicker
+                items={committees}
+                getId={(c) => c.committee_id}
+                getLabel={(c) => c.name}
+                selected={committeeIds}
+                onChange={setCommitteeIds}
+                searchPlaceholder="ابحث باسم اللجنة..."
+                emptyText="لا توجد لجان متاحة لك لإتاحة الوثيقة لها"
+              />
+            </div>
+          )}
+
+          {scope === 'users' && (
+            <div className="flex flex-col gap-1.5 border-t border-border-default pt-3">
+              <p className="text-xs font-bold text-text-secondary">المستخدمون</p>
+              <MultiCheckPicker
+                items={users}
+                getId={(u) => u.user_id}
+                getLabel={(u) => `${u.first_name} ${u.last_name}`}
+                getSublabel={(u) => u.email}
+                selected={userIds}
+                onChange={setUserIds}
+                searchPlaceholder="ابحث بالاسم أو البريد الإلكتروني..."
+                emptyText="لا يوجد مستخدمون"
+              />
             </div>
           )}
         </div>
