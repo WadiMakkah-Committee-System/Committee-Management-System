@@ -339,6 +339,13 @@ export type DocumentCategoryScope = 'global' | 'department'
 
 export type DocumentStatus = 'active' | 'archived'
 
+/**
+ * "قسم" الوثيقة لعنصر التحكم المُقسَّم بأعلى صفحة "الوثائق" (الكل/عامة/
+ * إدارتي/لجاني/شورك معي) — مطابق تمامًا لـDocumentScopeFilter بالباك-إند
+ * (backend/app/services/document_service.py) — راجعي GET /documents?scope=.
+ */
+export type DocumentScopeFilter = 'public' | 'department' | 'committee' | 'shared'
+
 export interface DocumentCategory {
   category_id: string
   name: string
