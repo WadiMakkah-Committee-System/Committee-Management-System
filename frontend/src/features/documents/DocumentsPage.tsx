@@ -5,14 +5,13 @@ import { Download, FileText, Globe2, Layers, Pencil, Plus, Trash2 } from 'lucide
 import { useAuthStore } from '@/store/authStore'
 import {
   useDeleteDocument,
+  useDocumentPublishTargets,
   useDocuments,
   useDownloadDocument,
   useUpdateDocument,
   useUploadDocument,
 } from '@/hooks/useDocuments'
 import { useDocumentCategories } from '@/hooks/useDocumentCategories'
-import { useDepartments } from '@/hooks/useDepartments'
-import { useCommittees } from '@/hooks/useCommittees'
 import { useUsers } from '@/hooks/useUsers'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -26,6 +25,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { StatCard } from '@/components/ui/StatCard'
 import { useToast } from '@/components/ui/Toast'
 import { DocumentFormModal, type DocumentFormSubmitValues } from './DocumentFormModal'
+import { DocumentCategoriesModal } from './DocumentCategoriesModal'
 import { cardToneClass, cn, extractErrorMessage, formatDate, formatFileSize } from '@/lib/utils'
 import type { Document } from '@/types'
 
@@ -63,8 +63,10 @@ export function DocumentsPage() {
     category_id: categoryFilter || undefined,
   })
   const { data: categories } = useDocumentCategories()
-  const { data: departments } = useDepartments()
-  const { data: committees } = useCommittees()
+  // إدارات ولجان الرفع مُصفَّاة مسبقًا حسب مبدأ أقل صلاحية ممكنة (راجعي
+  // DocumentFormModal وdocument_service.get_publish_targets) — وليست
+  // القوائم الكاملة لكل إدارات/لجان الشركة كما كانت سابقًا.
+  const { data: publishTargets } = useDocumentPublishTargets()
   const { data: users } = useUsers()
 
   const uploadMutation = useUploadDocument()
@@ -77,6 +79,7 @@ export function DocumentsPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Document | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [categoriesModalOpen, setCategoriesModalOpen] = useState(false)
 
   const permissions = user?.permissions ?? []
   const canUpload = permissions.includes('documents.upload')
@@ -161,7 +164,7 @@ export function DocumentsPage() {
         </div>
         <div className="flex items-center gap-2">
           {canManageCategories && (
-            <Button variant="secondary" icon={<Layers size={16} />} onClick={() => navigate('/documents/categories')}>
+            <Button variant="secondary" icon={<Layers size={16} />} onClick={() => setCategoriesModalOpen(true)}>
               تصنيفات الوثائق
             </Button>
           )}
@@ -301,8 +304,8 @@ export function DocumentsPage() {
         onClose={() => setFormOpen(false)}
         document={editingDoc}
         categories={categories ?? []}
-        departments={departments ?? []}
-        committees={committees ?? []}
+        departments={publishTargets?.departments ?? []}
+        committees={publishTargets?.committees ?? []}
         users={users ?? []}
         onSubmitCreate={handleSubmit}
         onSubmitEdit={handleSubmit}
@@ -320,6 +323,8 @@ export function DocumentsPage() {
         loading={deleteMutation.isPending}
         errorMessage={deleteError}
       />
+
+      <DocumentCategoriesModal open={categoriesModalOpen} onClose={() => setCategoriesModalOpen(false)} />
     </div>
   )
 }
