@@ -437,11 +437,18 @@ export interface DepartmentMemberElsewhere {
 /**
  * أنواع وحدة "إدارة الاجتماعات" — مطابقة تمامًا لـ
  * backend/app/schemas/meeting.py وbackend/app/models/meeting.py.
- * بدون Teams/AI في هذا الـPhase — راجعي رأس db/migrations/0016 للقرار
- * الموثّق. المرفقات غير مضمَّنة هنا عمدًا (تُبنى لاحقًا عبر وحدة الوثائق
- * document_links، وليست جزءًا من هذه الأنواع).
+ * بدون تكامل Teams فعلي بعد — mode='remote' يمهّد لتلك المرحلة فقط.
+ *
+ * تحديث 2026-09-01 (قرارات صاحبة المشروع):
+ * - meeting_type (نص حر) → mode (عن بعد/حضوري) + location.
+ * - لا يوجد حقل مشاركين بالإنشاء/التعديل — يُشتقّون تلقائيًا من عضوية
+ *   اللجنة بالكامل بطبقة الخدمة (Meeting.participants أدناه حقل قراءة
+ *   فقط بالنتيجة، وليس بالـPayload).
+ * - مرفقات الاجتماع (عرض تقديمي + مرفقات عامة) عبر document_links —
+ *   أنواعها بأسفل هذا القسم.
  */
 export type MeetingStatus = 'upcoming' | 'ongoing' | 'finished' | 'recorded'
+export type MeetingMode = 'remote' | 'in_person'
 
 export interface MeetingAgendaItem {
   agenda_item_id: string
@@ -470,7 +477,8 @@ export interface Meeting {
   committee_id: string
   title: string
   description: string | null
-  meeting_type: string | null
+  mode: MeetingMode
+  location: string | null
   scheduled_at: string
   status: MeetingStatus
   creator: CommitteeMemberUser
@@ -484,16 +492,30 @@ export interface MeetingCreatePayload {
   committee_id: string
   title: string
   description?: string | null
-  meeting_type?: string | null
+  mode: MeetingMode
+  location?: string | null
   scheduled_at: string
-  participant_ids: string[]
   agenda_items?: MeetingAgendaItemCreatePayload[]
 }
 
 export interface MeetingUpdatePayload {
   title?: string
   description?: string | null
-  meeting_type?: string | null
+  mode?: MeetingMode
+  location?: string | null
   scheduled_at?: string
-  participant_ids?: string[]
+}
+
+/** قسما مرفقات الاجتماع — يقابلان linked_entity_type بجدول document_links بالباك-إند. */
+export type MeetingAttachmentKind = 'presentation' | 'attachment'
+
+export interface MeetingAttachment {
+  document_id: string
+  kind: MeetingAttachmentKind
+  title: string
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  uploaded_by: CommitteeMemberUser
+  linked_at: string
 }
