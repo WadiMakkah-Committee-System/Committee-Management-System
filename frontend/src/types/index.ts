@@ -519,3 +519,55 @@ export interface MeetingAttachment {
   uploaded_by: CommitteeMemberUser
   linked_at: string
 }
+
+/**
+ * أنواع وحدة "إدارة القرارات" — القرارات المستقلة فقط (بدون قرارات
+ * مستخرجة من اجتماع بالذكاء الاصطناعي — تُبنى لاحقًا). مطابقة تمامًا
+ * لـbackend/app/schemas/decision.py وapp/models/decision.py. راجعي رأس
+ * db/migrations/0021_decisions_schema.sql لكل الاجتهادات الموثّقة.
+ */
+export type DecisionClassification = 'final' | 'voting'
+export type DecisionStatus = 'pending' | 'voting' | 'approved' | 'rejected'
+export type DecisionVoteChoice = 'approve' | 'reject'
+
+export interface DecisionVote {
+  voter: CommitteeMemberUser
+  choice: DecisionVoteChoice
+  voted_at: string
+}
+
+export interface Decision {
+  decision_id: string
+  committee_id: string
+  title: string
+  classification: DecisionClassification
+  status: DecisionStatus
+  start_date: string
+  end_date: string
+  voting_opened_at: string | null
+  voting_deadline: string | null
+  voting_closed_at: string | null
+  rejection_reason: string | null
+  creator: CommitteeMemberUser
+  assignees: CommitteeMemberUser[]
+  votes: DecisionVote[]
+  created_at: string
+  updated_at: string
+}
+
+export interface DecisionCreatePayload {
+  committee_id: string
+  title: string
+  classification: DecisionClassification
+  start_date: string
+  end_date: string
+  assignee_ids: string[]
+}
+
+export interface DecisionUpdatePayload {
+  title?: string
+  classification?: DecisionClassification
+  start_date?: string
+  end_date?: string
+  assignee_ids?: string[]
+}
