@@ -3,6 +3,7 @@ import * as meetingsApi from '@/api/meetings'
 import type {
   MeetingAgendaItemCreatePayload,
   MeetingAgendaItemUpdatePayload,
+  MeetingAttachmentKind,
   MeetingCreatePayload,
   MeetingUpdatePayload,
 } from '@/types'
@@ -10,6 +11,7 @@ import type {
 export const meetingsKeys = {
   all: ['meetings'] as const,
   detail: (meetingId: string) => ['meetings', meetingId] as const,
+  attachments: (meetingId: string) => ['meetings', meetingId, 'attachments'] as const,
 }
 
 export function useMeetings() {
@@ -91,5 +93,42 @@ export function useDeleteAgendaItem() {
     mutationFn: ({ agendaItemId }: { agendaItemId: string; meetingId: string }) =>
       meetingsApi.deleteAgendaItem(agendaItemId),
     onSuccess: (_data, variables) => invalidateMeetingQueries(queryClient, variables.meetingId),
+  })
+}
+
+export function useMeetingAttachments(meetingId: string | undefined, kind?: MeetingAttachmentKind) {
+  return useQuery({
+    queryKey: [...meetingsKeys.attachments(meetingId ?? ''), kind ?? 'all'] as const,
+    queryFn: () => meetingsApi.fetchMeetingAttachments(meetingId as string, kind),
+    enabled: !!meetingId,
+  })
+}
+
+export function useUploadMeetingAttachment() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      meetingId,
+      file,
+      kind,
+      title,
+    }: {
+      meetingId: string
+      file: File
+      kind: MeetingAttachmentKind
+      title?: string
+    }) => meetingsApi.uploadMeetingAttachment(meetingId, file, kind, title),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: meetingsKeys.attachments(variables.meetingId) }),
+  })
+}
+
+export function useDeleteMeetingAttachment() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ meetingId, documentId }: { meetingId: string; documentId: string }) =>
+      meetingsApi.deleteMeetingAttachment(meetingId, documentId),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: meetingsKeys.attachments(variables.meetingId) }),
   })
 }
