@@ -71,7 +71,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   { label: 'الاجتماعات', icon: CalendarDays, path: '/meetings', requiredPermission: ['meetings.view'] },
   { label: 'المهام', icon: ListChecks, comingSoon: true },
-  { label: 'القرارات', icon: Gavel, comingSoon: true },
+  { label: 'القرارات', icon: Gavel, path: '/decisions', requiredPermission: ['decisions.view'] },
   {
     // كانت "الوثائق" قائمة قابلة للتوسّع بعنصرين فرعيين (كل الوثائق /
     // تصنيفات الوثائق) — بعد دمج إدارة التصنيفات داخل صفحة الوثائق نفسها
@@ -135,6 +135,10 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
     // has_any_committee_membership بـtypes/index.ts للفرق الدقيق).
     if (user?.has_any_committee_membership && !base.includes('meetings.view')) {
       base = [...base, 'meetings.view']
+    }
+    // نفس المبدأ لوحدة "القرارات" — راجعي نفس الملاحظة أعلاه.
+    if (user?.has_any_committee_membership && !base.includes('decisions.view')) {
+      base = [...base, 'decisions.view']
     }
     return base
   }, [user])
