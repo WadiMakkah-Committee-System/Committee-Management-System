@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   ArrowRight,
@@ -7,18 +7,26 @@ import {
   FileText,
   ListChecks,
   Mail,
+  MapPin,
+  Paperclip,
   Pencil,
   Plus,
+  Presentation,
   Trash2,
+  Upload,
   Users as UsersIcon,
+  Video,
 } from 'lucide-react'
 import {
   useAddAgendaItem,
   useDeleteAgendaItem,
   useDeleteMeeting,
+  useDeleteMeetingAttachment,
+  useMeetingAttachments,
   useMeetingDetail,
   useUpdateAgendaItem,
   useUpdateMeeting,
+  useUploadMeetingAttachment,
 } from '@/hooks/useMeetings'
 import { useCommitteeDetail } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
@@ -44,11 +52,28 @@ import { cn, extractErrorMessage, formatDateTime } from '@/lib/utils'
 export function MeetingDetailPage() {
   const { meetingId } = useParams<{ meetingId: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const user = useAuthStore((s) => s.user)
   const { showToast } = useToast()
 
   const { data: meeting, isLoading, isError, refetch } = useMeetingDetail(meetingId)
   const { data: committee } = useCommitteeDetail(meeting?.committee_id)
+  const { data: attachments } = useMeetingAttachments(meetingId)
+  const uploadAttachmentMutation = useUploadMeetingAttachment()
+  const deleteAttachmentMutation = useDeleteMeetingAttachment()
+
+  const agendaSectionRef = useRef<HTMLDivElement>(null)
+  const attachmentsSectionRef = useRef<HTMLDivElement>(null)
+
+  /** التمرير التلقائي حسب رابط الإجراء السريع بصفحة القائمة (?tab=agenda|attachments). */
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    if (tab === 'agenda') {
+      agendaSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else if (tab === 'attachments') {
+      attachmentsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [searchParams, meeting])
 
   const updateMeetingMutation = useUpdateMeeting()
   const deleteMeetingMutation = useDeleteMeeting()
@@ -99,9 +124,9 @@ export function MeetingDetailPage() {
         payload: {
           title: values.title,
           description: values.description,
-          meeting_type: values.meeting_type,
+          mode: values.mode,
+          location: values.location,
           scheduled_at: values.scheduled_at,
-          participant_ids: values.participant_ids,
         },
       },
       {
@@ -110,6 +135,28 @@ export function MeetingDetailPage() {
           showToast('تم حفظ التعديلات', 'success')
         },
         onError: (err) => setEditError(extractErrorMessage(err)),
+      },
+    )
+  }
+
+  function handleUploadAttachment(file: File, kind: 'presentation' | 'attachment') {
+    if (!meetingId) return
+    uploadAttachmentMutation.mutate(
+      { meetingId, file, kind },
+      {
+        onSuccess: () => showToast('تم رفع الملف بنجاح', 'success'),
+        onError: (err) => showToast(extractErrorMessage(err), 'error'),
+      },
+    )
+  }
+
+  function handleDeleteAttachment(documentId: string) {
+    if (!meetingId) return
+    deleteAttachmentMutation.mutate(
+      { meetingId, documentId },
+      {
+        onSuccess: () => showToast('تم حذف المرفق', 'success'),
+        onError: (err) => showToast(extractErrorMessage(err), 'error'),
       },
     )
   }
@@ -206,7 +253,7 @@ export function MeetingDetailPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           {
             icon: <CalendarClock size={20} />,
@@ -214,6 +261,19 @@ export function MeetingDetailPage() {
             value: formatDateTime(meeting.scheduled_at),
             label: 'موعد الاجتماع',
           },
+          meeting.mode === 'in_person'
+            ? {
+                icon: <MapPin size={20} />,
+                tone: 'bg-brand-orange/10 text-brand-orange',
+                value: meeting.location ?? '—',
+                label: 'مكان الاجتماع (حضوري)',
+              }
+            : {
+                icon: <Video size={20} />,
+                tone: 'bg-brand-teal/10 text-brand-teal',
+                value: 'عن بُعد',
+                label: 'نوع الاجتماع',
+              },
           {
             icon: <UsersIcon size={20} />,
             tone: 'bg-brand-purple/10 text-brand-purple',
@@ -287,6 +347,7 @@ export function MeetingDetailPage() {
         </ul>
       </Card>
 
+      <div ref={agendaSectionRef}>
       <Card className="p-0">
         <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
@@ -382,8 +443,119 @@ export function MeetingDetailPage() {
           </p>
         )}
       </Card>
+      </div>
+
+      <div ref={attachmentsSectionRef}>
+      <Card className="p-0">
+        <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <Paperclip size={15} />
+            المرفقات
+          </h2>
+        </div>
+
+        <div className="flex flex-col gap-4 p-4">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                <Presentation size={14} className="text-text-muted" />
+                العرض التقديمي
+              </p>
+              {canManage && (
+                <label className="flex cursor-pointer items-center gap-1.5 rounded-sm border border-dashed border-border-default px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-brand-primary hover:text-brand-primary">
+                  <Upload size={12} />
+                  رفع ملف
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) handleUploadAttachment(file, 'presentation')
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+            {(attachments ?? []).filter((a) => a.kind === 'presentation').length === 0 ? (
+              <p className="text-xs text-text-muted">لا يوجد عرض تقديمي مرفوع بعد</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {(attachments ?? [])
+                  .filter((a) => a.kind === 'presentation')
+                  .map((a) => (
+                    <li
+                      key={a.document_id}
+                      className="flex items-center justify-between rounded-xs bg-bg-elevated px-2.5 py-2 text-sm text-text-secondary"
+                    >
+                      <span className="truncate">{a.file_name}</span>
+                      {canManage && (
+                        <button
+                          onClick={() => handleDeleteAttachment(a.document_id)}
+                          className="shrink-0 text-text-muted hover:text-danger"
+                          aria-label={`حذف ${a.file_name}`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-border-default pt-4">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                <Paperclip size={14} className="text-text-muted" />
+                مرفقات الاجتماع
+              </p>
+              {canManage && (
+                <label className="flex cursor-pointer items-center gap-1.5 rounded-sm border border-dashed border-border-default px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-brand-primary hover:text-brand-primary">
+                  <Upload size={12} />
+                  إضافة مرفق
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) handleUploadAttachment(file, 'attachment')
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+            {(attachments ?? []).filter((a) => a.kind === 'attachment').length === 0 ? (
+              <p className="text-xs text-text-muted">لا توجد مرفقات بعد</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {(attachments ?? [])
+                  .filter((a) => a.kind === 'attachment')
+                  .map((a) => (
+                    <li
+                      key={a.document_id}
+                      className="flex items-center justify-between rounded-xs bg-bg-elevated px-2.5 py-2 text-sm text-text-secondary"
+                    >
+                      <span className="truncate">{a.file_name}</span>
+                      {canManage && (
+                        <button
+                          onClick={() => handleDeleteAttachment(a.document_id)}
+                          className="shrink-0 text-text-muted hover:text-danger"
+                          aria-label={`حذف ${a.file_name}`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </Card>
+      </div>
 
       <p className="text-xs text-text-muted">أُنشئ الاجتماع في {formatDateTime(meeting.created_at)}</p>
+
 
       {canManage && (
         <>
