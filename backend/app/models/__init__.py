@@ -7,6 +7,13 @@ SQLAlchemy يكتشف كل النماذج والعلاقات بينها عند �
 from app.models.audit_log import AuditAction, AuditLog
 from app.models.committee import Committee
 from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
+from app.models.decision import (
+    Decision,
+    DecisionClassification,
+    DecisionStatus,
+    DecisionVote,
+    DecisionVoteChoice,
+)
 from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.meeting import Meeting, MeetingAgendaItem, MeetingMode, MeetingStatus
@@ -20,6 +27,11 @@ __all__ = [
     "Committee",
     "CommitteeFormationRequest",
     "CommitteeRequestStatus",
+    "Decision",
+    "DecisionClassification",
+    "DecisionStatus",
+    "DecisionVote",
+    "DecisionVoteChoice",
     "Department",
     "JobTitle",
     "Meeting",
