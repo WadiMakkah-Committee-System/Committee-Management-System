@@ -1,9 +1,24 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { CalendarClock, CalendarDays, Plus, Users2, Video } from 'lucide-react'
+import {
+  CalendarClock,
+  CalendarDays,
+  Eye,
+  ListChecks,
+  Paperclip,
+  Plus,
+  Trash2,
+  Users2,
+  Video,
+} from 'lucide-react'
 import { useCommittees } from '@/hooks/useCommittees'
-import { useCreateMeeting, useMeetings } from '@/hooks/useMeetings'
+import {
+  useCreateMeeting,
+  useDeleteMeeting,
+  useMeetings,
+  useUploadMeetingAttachment,
+} from '@/hooks/useMeetings'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -13,23 +28,21 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { CardSkeleton } from '@/components/ui/Skeleton'
 import { StatCard } from '@/components/ui/StatCard'
 import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
 import { cardToneClass, extractErrorMessage, formatDateTime } from '@/lib/utils'
+import type { Meeting } from '@/types'
 
 /**
- * قائمة الاجتماعات — بدون Teams/AI (Phase 1 من وحدة "إدارة الاجتماعات").
+ * قائمة الاجتماعات — بدون تكامل Teams فعلي بعد.
  *
- * ملاحظة تصميم (محدَّثة 2026-09-01 — قرار توحيد سلوك القائمة الجانبية بين
- * "اللجان" و"الاجتماعات"): المسار الآن محجوب فعليًا خلف
- * ProtectedRoute anyPermission={['meetings.view']} بـApp.tsx، بنفس نمط
- * committees.view تمامًا — لكن مع بديل (Bypass) لأي عضو/رئيس لجنة عبر
- * حقل has_any_committee_membership الجديد (راجعي ProtectedRoute.tsx
- * وSidebar.tsx)، بما أن "رئيس اللجنة"/"عضو اللجنة" أدوار لجنة (Committee
- * Role) وليست أدوارًا عامة بجدول roles تُفحص بمعزل عن اللجنة نفسها.
- * القائمة قد ترجع فارغة رغم ظهور الرابط، إن لم تُمنح meetings.view بعد
- * لدور اللجنة من شاشة الأدوار والصلاحيات — هذا سلوك مقصود ومطابق تمامًا
- * لما يحدث بقسم اللجان أصلًا (راجعي committee_service.list_committees).
+ * ملاحظة تصميم (قرار توحيد سلوك القائمة الجانبية بين "اللجان"
+ * و"الاجتماعات"، 2026-09-01): المسار محجوب خلف
+ * ProtectedRoute anyPermission={['meetings.view']} بـApp.tsx، مع بديل
+ * (Bypass) لأي عضو/رئيس لجنة عبر has_any_committee_membership — راجعي
+ * ProtectedRoute.tsx وSidebar.tsx. القائمة قد ترجع فارغة رغم ظهور
+ * الرابط، إن لم تُمنح meetings.view بعد لدور اللجنة.
  */
 export function MeetingsPage() {
   const navigate = useNavigate()
@@ -37,15 +50,20 @@ export function MeetingsPage() {
   const { data: meetings, isLoading, isError, refetch } = useMeetings()
   const { data: committees } = useCommittees()
   const createMutation = useCreateMeeting()
+  const uploadAttachmentMutation = useUploadMeetingAttachment()
+  const deleteMutation = useDeleteMeeting()
   const { showToast } = useToast()
 
   const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Meeting | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   /**
    * اللجان التي يقدر المستخدم الحالي ينشئ لها اجتماعًا — رئيسها فقط
-   * (نفس القيد الهيكلي المفروض بالباك-إند: meeting_service._authorize_manage).
+   * (القيد الفعلي محكوم بالباك-إند عبر صلاحية meetings.schedule، هذا مجرد
+   * تخمين متفائل لإظهار الزر — راجعي meeting_service._require_access).
    * سوبر أدمن يملك meetings.schedule بالكتالوج فعليًا (منح شامل تلقائي)،
    * فيُتاح له إنشاء اجتماع لأي لجنة، حتى لو لم يكن رئيسها.
    */
@@ -75,15 +93,68 @@ export function MeetingsPage() {
     }
   }, [meetings])
 
-  function handleCreate(values: MeetingFormSubmitValues) {
+  /**
+   * الإنشاء يحتاج خطوتين متتاليتين: 1) إنشاء الاجتماع نفسه (JSON)، ثم
+   * 2) رفع ملفات العرض التقديمي/المرفقات المؤجَّلة (multipart) — تحتاج
+   * meeting_id الفعلي الناتج من الخطوة الأولى. فشل الرفع لا يُلغي الاجتماع
+   * نفسه (أُنشئ بنجاح فعلًا) — يُعرض تحذيرًا فقط بدل استرجاع كامل.
+   */
+  async function handleCreate(values: MeetingFormSubmitValues) {
     setFormError(null)
-    createMutation.mutate(values, {
-      onSuccess: (created) => {
-        setFormOpen(false)
+    try {
+      const created = await createMutation.mutateAsync(values)
+
+      const uploads: Promise<unknown>[] = []
+      if (values.presentationFile) {
+        uploads.push(
+          uploadAttachmentMutation.mutateAsync({
+            meetingId: created.meeting_id,
+            file: values.presentationFile,
+            kind: 'presentation',
+          }),
+        )
+      }
+      for (const file of values.attachmentFiles) {
+        uploads.push(
+          uploadAttachmentMutation.mutateAsync({
+            meetingId: created.meeting_id,
+            file,
+            kind: 'attachment',
+          }),
+        )
+      }
+
+      setFormOpen(false)
+      if (uploads.length > 0) {
+        const results = await Promise.allSettled(uploads)
+        const failed = results.filter((r) => r.status === 'rejected').length
+        if (failed > 0) {
+          showToast(`تم إنشاء الاجتماع، لكن تعذّر رفع ${failed} من المرفقات`, 'error')
+        } else {
+          showToast('تم إنشاء الاجتماع ورفع المرفقات بنجاح', 'success')
+        }
+      } else {
         showToast('تم إنشاء الاجتماع بنجاح', 'success')
-        navigate(`/meetings/${created.meeting_id}`)
+      }
+      navigate(`/meetings/${created.meeting_id}`)
+    } catch (err) {
+      setFormError(extractErrorMessage(err))
+    }
+  }
+
+  function canDelete(meeting: Meeting): boolean {
+    return new Date(meeting.scheduled_at).getTime() > Date.now()
+  }
+
+  function handleDeleteConfirm() {
+    if (!deleteTarget) return
+    setDeleteError(null)
+    deleteMutation.mutate(deleteTarget.meeting_id, {
+      onSuccess: () => {
+        setDeleteTarget(null)
+        showToast('تم حذف الاجتماع', 'success')
       },
-      onError: (err) => setFormError(extractErrorMessage(err)),
+      onError: (err) => setDeleteError(extractErrorMessage(err)),
     })
   }
 
@@ -167,11 +238,7 @@ export function MeetingsPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
             >
-              <Card
-                interactive
-                onClick={() => navigate(`/meetings/${meeting.meeting_id}`)}
-                className={cardToneClass(i)}
-              >
+              <Card className={cardToneClass(i)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-brand-primary/10 text-brand-primary">
                     <CalendarDays size={18} />
@@ -190,6 +257,47 @@ export function MeetingsPage() {
                   <Users2 size={12} />
                   {meeting.participants.length} مشاركين
                 </p>
+
+                {/* إجراءات سريعة — راجعي طلب صاحبة المشروع 2026-09-01: تفاصيل/
+                    جدول أعمال/مرفقات/حذف بجانب كل اجتماع مباشرة. */}
+                <div className="mt-3 flex items-center gap-1 border-t border-border-default pt-3">
+                  <button
+                    onClick={() => navigate(`/meetings/${meeting.meeting_id}`)}
+                    className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-brand-primary"
+                    aria-label="تفاصيل الاجتماع"
+                    title="تفاصيل الاجتماع"
+                  >
+                    <Eye size={16} />
+                  </button>
+                  <button
+                    onClick={() => navigate(`/meetings/${meeting.meeting_id}?tab=agenda`)}
+                    className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-brand-primary"
+                    aria-label="جدول الأعمال"
+                    title="جدول الأعمال"
+                  >
+                    <ListChecks size={16} />
+                  </button>
+                  <button
+                    onClick={() => navigate(`/meetings/${meeting.meeting_id}?tab=attachments`)}
+                    className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-brand-primary"
+                    aria-label="المرفقات"
+                    title="المرفقات"
+                  >
+                    <Paperclip size={16} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDeleteError(null)
+                      setDeleteTarget(meeting)
+                    }}
+                    disabled={!canDelete(meeting)}
+                    className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-danger-bg hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-text-muted"
+                    aria-label="حذف الاجتماع"
+                    title={canDelete(meeting) ? 'حذف الاجتماع' : 'لا يمكن الحذف بعد حلول موعد الاجتماع'}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </Card>
             </motion.div>
           ))}
@@ -201,8 +309,19 @@ export function MeetingsPage() {
         onClose={() => setFormOpen(false)}
         committees={chairableCommittees}
         onSubmit={handleCreate}
-        loading={createMutation.isPending}
+        loading={createMutation.isPending || uploadAttachmentMutation.isPending}
         serverError={formError}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteConfirm}
+        title="حذف الاجتماع"
+        description={`سيتم حذف اجتماع "${deleteTarget?.title}" نهائيًا. هل أنتِ متأكدة؟`}
+        confirmLabel="حذف"
+        loading={deleteMutation.isPending}
+        errorMessage={deleteError}
       />
     </div>
   )
