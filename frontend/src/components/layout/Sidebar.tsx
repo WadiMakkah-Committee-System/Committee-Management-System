@@ -19,7 +19,6 @@ import {
   ChevronDown,
   ClipboardList,
   CheckCircle2,
-  Layers,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -74,22 +73,14 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'المهام', icon: ListChecks, comingSoon: true },
   { label: 'القرارات', icon: Gavel, comingSoon: true },
   {
+    // كانت "الوثائق" قائمة قابلة للتوسّع بعنصرين فرعيين (كل الوثائق /
+    // تصنيفات الوثائق) — بعد دمج إدارة التصنيفات داخل صفحة الوثائق نفسها
+    // كنافذة (راجعي DocumentCategoriesModal.tsx)، صار عنصرًا فرعيًا واحدًا
+    // فقط فلا داعي لقائمة فرعية بعد الآن؛ رابط مباشر أبسط للمستخدم.
     label: 'الوثائق',
     icon: FileText,
-    children: [
-      {
-        label: 'كل الوثائق',
-        icon: FileText,
-        path: '/documents',
-        requiredPermission: ['documents.view', 'documents.search'],
-      },
-      {
-        label: 'تصنيفات الوثائق',
-        icon: Layers,
-        path: '/documents/categories',
-        requiredPermission: ['documents.view', 'documents.upload'],
-      },
-    ],
+    path: '/documents',
+    requiredPermission: ['documents.view', 'documents.search'],
   },
   { label: 'البحث الذكي', icon: Sparkles, comingSoon: true },
   { label: 'الإشعارات', icon: Bell, comingSoon: true },
