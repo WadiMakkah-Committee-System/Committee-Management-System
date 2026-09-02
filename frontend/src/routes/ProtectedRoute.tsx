@@ -40,11 +40,15 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     // راجعي has_any_committee_membership بـtypes/index.ts وSidebar.tsx.
     const hasMeetingsMembershipBypass =
       !!anyPermission?.includes('meetings.view') && user.has_any_committee_membership
+    // نفس المبدأ لمسار /decisions.
+    const hasDecisionsMembershipBypass =
+      !!anyPermission?.includes('decisions.view') && user.has_any_committee_membership
     if (
       anyPermission &&
       !anyPermission.some((code) => user.permissions.includes(code)) &&
       !hasCommitteeMembershipBypass &&
-      !hasMeetingsMembershipBypass
+      !hasMeetingsMembershipBypass &&
+      !hasDecisionsMembershipBypass
     ) {
       return <Navigate to="/profile" replace />
     }
