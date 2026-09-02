@@ -15,6 +15,8 @@ import { CommitteeRequestsPage } from '@/features/committees/CommitteeRequestsPa
 import { CommitteeRequestDetailPage } from '@/features/committees/CommitteeRequestDetailPage'
 import { CommitteesPage } from '@/features/committees/CommitteesPage'
 import { CommitteeDetailPage } from '@/features/committees/CommitteeDetailPage'
+import { DocumentsPage } from '@/features/documents/DocumentsPage'
+import { DocumentDetailPage } from '@/features/documents/DocumentDetailPage'
 import { MeetingsPage } from '@/features/meetings/MeetingsPage'
 import { MeetingDetailPage } from '@/features/meetings/MeetingDetailPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
@@ -100,6 +102,10 @@ function App() {
               <Route path="/committees/approved/:committeeId" element={<CommitteeDetailPage />} />
             </Route>
 
+            <Route element={<ProtectedRoute anyPermission={['documents.view', 'documents.search']} />}>
+              <Route path="/documents" element={<DocumentsPage />} />
+              <Route path="/documents/:documentId" element={<DocumentDetailPage />} />
+            </Route>
             {/* قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات"
                 (2026-09-01): نفس نمط committees.view تمامًا — anyPermission
                 هنا يمر لمن يملك meetings.view نظاميًا (ادمن/سوبر أدمن)،

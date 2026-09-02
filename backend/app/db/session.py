@@ -16,6 +16,16 @@ SQLAlchemy (async) + asyncpg كـ driver، app.core.config لقراءة DATABASE
   (Service Role / Direct Connection) لأن فرض الصلاحيات (RBAC) مسؤولية
   الـ Backend فقط، حسب قاعدة الأمان في CLAUDE.md — الـ RLS مفعّل على
   مستوى القاعدة كطبقة حماية إضافية ضد أي وصول مباشر عبر REST API العام.
+- statement_cache_size=0: عند الاتصال بـ Supabase عبر الـ Connection
+  Pooler (وضع Transaction، المنفذ 6543 غالبًا) بدل الاتصال المباشر،
+  asyncpg يخزّن الاستعلامات المُجهَّزة (prepared statements) محليًا على
+  افتراض إنه نفس الاتصال بالسيرفر طول الوقت — بينما الـ Pooler يبدّل
+  اتصال السيرفر الفعلي خلف الكواليس بين كل معاملة (transaction)، فيصير
+  أحيانًا خطأ 500 عشوائي/متقطع (نوعه غالبًا DuplicatePreparedStatementError
+  أو "prepared statement does not exist") يظهر بالمتصفح كـ CORS/Network
+  Error مضلِّل لأن FastAPI ما يقدر يضيف ترويسات CORS على استجابة خطأ غير
+  متوقَّع كهذي. تعطيل الكاش هنا آمن مع الاتصال المباشر (5432) أيضًا —
+  بدون أي أثر جانبي حقيقي لحجم مشروع بهذا الحجم.
 """
 
 from collections.abc import AsyncGenerator
@@ -32,6 +42,7 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
     pool_pre_ping=True,  # يتحقق من صلاحية الاتصال قبل استخدامه (يتجنب اتصالات ميتة)
+    connect_args={"statement_cache_size": 0},
 )
 
 AsyncSessionLocal = async_sessionmaker(

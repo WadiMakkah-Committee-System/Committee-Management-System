@@ -328,6 +328,100 @@ export interface Committee {
 }
 
 /**
+ * أنواع وحدة "إدارة الوثائق" — مطابقة تمامًا لـ
+ * backend/app/schemas/document.py وbackend/app/models/document.py.
+ * الرفع نفسه (POST /documents) لا يمر بـ JSON بل multipart/form-data —
+ * لهذا لا يوجد DocumentCreatePayload هنا (يُبنى FormData مباشرة في
+ * DocumentFormModal)، بعكس DocumentUpdatePayload (تعديل Metadata فقط،
+ * JSON عادي — لا يوجد استبدال للملف نفسه في هذه المرحلة).
+ */
+export type DocumentCategoryScope = 'global' | 'department'
+
+export type DocumentStatus = 'active' | 'archived'
+
+export interface DocumentCategory {
+  category_id: string
+  name: string
+  scope: DocumentCategoryScope
+  department_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DocumentCategoryCreatePayload {
+  name: string
+  scope: DocumentCategoryScope
+  department_id: string | null
+}
+
+export interface DocumentCategoryUpdatePayload {
+  name: string
+}
+
+export interface DocumentUploaderSummary {
+  user_id: string
+  first_name: string
+  middle_name: string
+  last_name: string
+}
+
+export interface DocumentVisibleDepartment {
+  dep_id: string
+  name: string
+}
+
+export interface DocumentVisibleCommittee {
+  committee_id: string
+  name: string
+}
+
+export interface DocumentVisibleUser {
+  user_id: string
+  first_name: string
+  middle_name: string
+  last_name: string
+}
+
+export interface Document {
+  document_id: string
+  title: string
+  description: string | null
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  category: DocumentCategory | null
+  status: DocumentStatus
+  is_public: boolean
+  uploader: DocumentUploaderSummary
+  visible_departments: DocumentVisibleDepartment[]
+  visible_committees: DocumentVisibleCommittee[]
+  visible_users: DocumentVisibleUser[]
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * الإدارات واللجان اللي يحق للمستخدم الحالي إتاحة وثيقة لها عند الرفع
+ * (مبدأ أقل صلاحية ممكنة) — راجعي GET /documents/publish-targets
+ * وbackend/app/services/document_service.py::get_publish_targets.
+ */
+export interface DocumentPublishTargets {
+  departments: DocumentVisibleDepartment[]
+  committees: DocumentVisibleCommittee[]
+}
+
+/** كل الحقول اختيارية: الحقل المتروك undefined لا يُرسَل ولا يُعدَّل. */
+export interface DocumentUpdatePayload {
+  title?: string
+  description?: string | null
+  category_id?: string | null
+  is_public?: boolean
+  department_ids?: string[]
+  committee_ids?: string[]
+  user_ids?: string[]
+}
+
+/**
  * سطر تعريفي خفيف — موظف من إدارة المستخدم الحالي عضو بلجنة رئيسها من
  * إدارة ثانية (أو بدون إدارة معروفة). مراجعة لاما 2026-08-30 (الجولة
  * الثالثة). عمدًا بدون بقية تفاصيل اللجنة — راجعي

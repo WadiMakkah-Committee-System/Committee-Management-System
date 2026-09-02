@@ -33,7 +33,10 @@ from app.schemas.document import (
     DocumentCategoryOut,
     DocumentCategoryUpdate,
     DocumentOut,
+    DocumentPublishTargetsOut,
     DocumentUpdate,
+    DocumentVisibleCommitteeOut,
+    DocumentVisibleDepartmentOut,
 )
 from app.services import document_service
 
@@ -216,6 +219,35 @@ async def upload_document(
     except storage_client.StorageError as exc:
         raise _storage_error_to_http(exc) from exc
     return DocumentOut.model_validate(document)
+
+
+@router.get(
+    "/publish-targets",
+    response_model=DocumentPublishTargetsOut,
+    dependencies=[Depends(require_permission("documents.upload", "documents.update"))],
+)
+async def get_document_publish_targets(
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> DocumentPublishTargetsOut:
+    """
+    الإدارات واللجان اللي يحق للمستخدم الحالي إتاحة وثيقة لها (مبدأ أقل
+    صلاحية ممكنة) — يستخدمها الفرونت-إند عند فتح فورم رفع/تعديل وثيقة
+    بدل قوائم الإدارات/اللجان الكاملة. لازم تُعرَّف قبل GET
+    /{document_id} (وليس بعده) وإلا FastAPI بيحاول يفسّر "publish-targets"
+    كـ document_id فيفشل بخطأ تحقق UUID.
+
+    الصلاحية: documents.upload أو documents.update (أيّهما كافٍ) — لأن
+    الفورم نفسه (DocumentFormModal) يستخدم هذه القائمة في وضعي الرفع
+    والتعديل معًاٌ وDocumentDetailPage.tsx يستدعيها حتى لو كان المستخدم
+    يملك صلاحية التعديل فقط بلا صلاحية الرفع.
+    """
+    departments, committees = await document_service.get_publish_targets(
+        db, current_user=current_user
+    )
+    return DocumentPublishTargetsOut(
+        departments=[DocumentVisibleDepartmentOut.model_validate(d) for d in departments],
+        committees=[DocumentVisibleCommitteeOut.model_validate(c) for c in committees],
+    )
 
 
 @router.get(

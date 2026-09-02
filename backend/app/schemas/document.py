@@ -12,9 +12,10 @@ DocumentCreateForm هنا للتوثيق فقط (Swagger)، الفعلي في ا
 
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.document import DocumentStatus
 
@@ -59,6 +60,19 @@ class DocumentCategoryOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _coerce_scope(cls, value: object) -> object:
+        """
+        القيمة القادمة من الـ ORM هي app.models.document.DocumentCategoryScope
+        (عضوها "global_" بقيمة "global") وليست str عادية — رغم إنها str
+        فعليًا (str, Enum)، Pydantic v2 يرفضها ضد Literal["global",
+        "department"] لأنه ما يعتبرها مطابقة تلقائيًا (literal_error). نحوّلها
+        هنا صراحةً لقيمتها النصية (.value) قبل التحقق، بدل تغيير الـ Literal
+        نفسه (راجعي التعليق فوق DocumentCategoryScope لسبب استخدام Literal).
+        """
+        return value.value if isinstance(value, Enum) else value
+
 
 # ---------------------------------------------------------------------------
 # الوثائق (Documents)
@@ -97,6 +111,16 @@ class DocumentVisibleUserOut(BaseModel):
     first_name: str
     middle_name: str
     last_name: str
+
+
+class DocumentPublishTargetsOut(BaseModel):
+    """
+    الإدارات واللجان اللي يحق فعليًا للمستخدم الحالي إتاحة وثيقة لها عند
+    الرفع (مبدأ أقل صلاحية ممكنة) — راجع document_service.get_publish_targets.
+    """
+
+    departments: list[DocumentVisibleDepartmentOut]
+    committees: list[DocumentVisibleCommitteeOut]
 
 
 class DocumentUpdate(BaseModel):

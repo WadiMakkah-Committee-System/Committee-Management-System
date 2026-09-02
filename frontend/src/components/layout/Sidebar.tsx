@@ -72,7 +72,16 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'الاجتماعات', icon: CalendarDays, path: '/meetings', requiredPermission: ['meetings.view'] },
   { label: 'المهام', icon: ListChecks, comingSoon: true },
   { label: 'القرارات', icon: Gavel, comingSoon: true },
-  { label: 'الوثائق', icon: FileText, comingSoon: true },
+  {
+    // كانت "الوثائق" قائمة قابلة للتوسّع بعنصرين فرعيين (كل الوثائق /
+    // تصنيفات الوثائق) — بعد دمج إدارة التصنيفات داخل صفحة الوثائق نفسها
+    // كنافذة (راجعي DocumentCategoriesModal.tsx)، صار عنصرًا فرعيًا واحدًا
+    // فقط فلا داعي لقائمة فرعية بعد الآن؛ رابط مباشر أبسط للمستخدم.
+    label: 'الوثائق',
+    icon: FileText,
+    path: '/documents',
+    requiredPermission: ['documents.view', 'documents.search'],
+  },
   { label: 'البحث الذكي', icon: Sparkles, comingSoon: true },
   { label: 'الإشعارات', icon: Bell, comingSoon: true },
   { label: 'التقارير', icon: BarChart3, comingSoon: true },
@@ -89,7 +98,7 @@ function isChildPathActive(pathname: string, childPath: string): boolean {
 }
 
 /** يفلتر عنصرًا (وأبناءه إن وُجدوا) حسب صلاحيات المستخدم — يُسقط أي عنصر فرعي غير مسموح به،
- *  ويُسقط العنصر الأب بالكامل إذا لم يتبقَّ له أي عنصر فرعي ظاهر. */
+ *  ويُҳقط العنصر الأب بالكامل إذا لم يتبقَّ له أي عنصر فرعي ظاهر. */
 function filterNavItem(item: NavItem, isSuperAdmin: boolean, permissions: string[]): NavItem | null {
   if (item.children) {
     const children = item.children

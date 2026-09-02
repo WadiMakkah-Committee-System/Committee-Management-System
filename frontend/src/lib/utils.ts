@@ -89,7 +89,7 @@ export const PERMISSION_CATEGORY_ORDER = [
 ]
 
 /**
- * درجات فاتحة جدًا من ألوان هوية الشركة — تُستخدم كخلفية للبطاقات (بطاقات
+ * درجات فاتح جدًا من ألوان هوية الشركة *يُستخدم كخلفية لبطاقات (بطاقات
  * الإدارات وبطاقات الأدوار والصلاحيات) لإضفاء تمييز بصري خفيف بين البطاقات
  * دون طغيان اللون، حسب طلب العمل. الشفافية منخفضة جدًا (٦٪) عمدًا لتبقى
  * الخلفية "فاتحة جدًا" في كلا الوضعين (فاتح/داكن).
@@ -150,6 +150,13 @@ export function formatDate(value: string | null): string {
     month: 'short',
     day: 'numeric',
   }).format(new Date(value))
+}
+
+/** يحوّل حجم ملف بالبايت إلى نص مقروء (كيلوبايت/ميجابايت) — يُستخدم في وحدة الوثائق. */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} بايت`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} كيلوبايت`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} ميجابايت`
 }
 
 export function formatDateTime(value: string | null): string {
