@@ -14,12 +14,11 @@ import { useAuthStore } from '@/store/authStore'
 import {
   useDeleteDocument,
   useDocumentDetail,
+  useDocumentPublishTargets,
   useDownloadDocument,
   useUpdateDocument,
 } from '@/hooks/useDocuments'
 import { useDocumentCategories } from '@/hooks/useDocumentCategories'
-import { useDepartments } from '@/hooks/useDepartments'
-import { useCommittees } from '@/hooks/useCommittees'
 import { useUsers } from '@/hooks/useUsers'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -46,8 +45,9 @@ export function DocumentDetailPage() {
 
   const { data: doc, isLoading, isError, refetch } = useDocumentDetail(documentId)
   const { data: categories } = useDocumentCategories()
-  const { data: departments } = useDepartments()
-  const { data: committees } = useCommittees()
+  // إدارات ولجان الرفع مُصفَّاة مسبقًا حسب مبدأ أقل صلاحية ممكنة — راجعي
+  // نفس التعليق في DocumentsPage.tsx.
+  const { data: publishTargets } = useDocumentPublishTargets()
   const { data: users } = useUsers()
 
   const updateMutation = useUpdateDocument()
@@ -255,8 +255,8 @@ export function DocumentDetailPage() {
         onClose={() => setFormOpen(false)}
         document={doc}
         categories={categories ?? []}
-        departments={departments ?? []}
-        committees={committees ?? []}
+        departments={publishTargets?.departments ?? []}
+        committees={publishTargets?.committees ?? []}
         users={users ?? []}
         onSubmitCreate={() => {}}
         onSubmitEdit={handleEdit}
