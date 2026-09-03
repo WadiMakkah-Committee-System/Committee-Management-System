@@ -568,7 +568,6 @@ export interface DecisionCreatePayload {
   classification: DecisionClassification
   start_date: string
   end_date: string
-  assignee_ids: string[]
 }
 
 export interface DecisionUpdatePayload {
@@ -576,5 +575,4 @@ export interface DecisionUpdatePayload {
   classification?: DecisionClassification
   start_date?: string
   end_date?: string
-  assignee_ids?: string[]
 }
