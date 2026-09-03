@@ -165,6 +165,8 @@ async def list_documents(
     current_user: CurrentUser,
     q: str | None = None,
     category_id: uuid.UUID | None = None,
+    scope: document_service.DocumentScopeFilter | None = None,
+    committee_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentOut]:
     can_search_content = current_user.role.is_super_admin or (
@@ -176,6 +178,8 @@ async def list_documents(
         q=q,
         category_id=category_id,
         can_search_content=can_search_content,
+        scope=scope,
+        committee_id=committee_id,
     )
     return [DocumentOut.model_validate(d) for d in documents]
 

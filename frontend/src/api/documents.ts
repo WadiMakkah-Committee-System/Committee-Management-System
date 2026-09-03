@@ -1,5 +1,5 @@
 import { apiClient } from '@/lib/apiClient'
-import type { Document, DocumentPublishTargets, DocumentUpdatePayload } from '@/types'
+import type { Document, DocumentPublishTargets, DocumentScopeFilter, DocumentUpdatePayload } from '@/types'
 
 /**
  * الهدف: طبقة اتصال بـ /documents — تقابل router في
@@ -11,6 +11,10 @@ import type { Document, DocumentPublishTargets, DocumentUpdatePayload } from '@/
 export interface ListDocumentsParams {
   q?: string
   category_id?: string
+  /** عنصر التحكم المُقسَّم بأعلى صفحة الوثائق (الكل/عامة/إدارتي/لجاني/شورك معي) — راجعي DocumentScopeFilter. */
+  scope?: DocumentScopeFilter
+  /** لتصفية وثائق لجنة معيّنة فقط (قسم "وثائق اللجنة" بصفحة تفاصيل اللجنة). */
+  committee_id?: string
 }
 
 export async function fetchDocuments(params: ListDocumentsParams = {}): Promise<Document[]> {
@@ -18,6 +22,8 @@ export async function fetchDocuments(params: ListDocumentsParams = {}): Promise<
     params: {
       q: params.q || undefined,
       category_id: params.category_id || undefined,
+      scope: params.scope || undefined,
+      committee_id: params.committee_id || undefined,
     },
   })
   return data

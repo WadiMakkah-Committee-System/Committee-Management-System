@@ -1,7 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Download, FileText, Globe2, Layers, Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+  Building2,
+  Download,
+  FileText,
+  Globe2,
+  LayoutGrid,
+  Layers,
+  Pencil,
+  Plus,
+  Trash2,
+  UserRound,
+  Users2,
+} from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import {
   useDeleteDocument,
@@ -27,7 +39,32 @@ import { useToast } from '@/components/ui/Toast'
 import { DocumentFormModal, type DocumentFormSubmitValues } from './DocumentFormModal'
 import { DocumentCategoriesModal } from './DocumentCategoriesModal'
 import { cardToneClass, cn, extractErrorMessage, formatDate, formatFileSize } from '@/lib/utils'
-import type { Document } from '@/types'
+import type { Document, DocumentScopeFilter } from '@/types'
+
+/**
+ * عنصر التحكم المُقسَّم (segmented filter) بأعلى صفحة "الوثائق" —
+ * فلترة بـ"قسم" الوثيقة (الكل/عامة/إدارتي/لجاني/شورك معي)، بنفس الصفحة
+ * وبدون تبويب/مسار جديد (طلب صريح من المستخدمة)، مدفوعة بمعامل رابط
+ * (?scope=) بدل State محلي فقط — يحفظ اختيار المستخدمة عند تحديث الصفحة
+ * أو مشاركة الرابط، ويطابق GET /documents?scope= بالباك-إند تمامًا
+ * (راجعي DocumentScopeFilter بـtypes/index.ts وdocument_service.py).
+ */
+const SCOPE_FILTER_OPTIONS: { value: DocumentScopeFilter | 'all'; label: string; icon: typeof Globe2 }[] = [
+  { value: 'all', label: 'الكل', icon: LayoutGrid },
+  { value: 'public', label: 'عامة', icon: Globe2 },
+  { value: 'department', label: 'إدارتي', icon: Building2 },
+  { value: 'committee', label: 'لجاني', icon: Users2 },
+  { value: 'shared', label: 'شورك معي', icon: UserRound },
+]
+
+/** أيقونة "قسم" الوثيقة لشارة كل بطاقة — نفس مجموعة أيقونات DocumentScope بـDocumentFormModal. */
+function documentScopeBadge(doc: Document): { label: string; icon: typeof Globe2 } | null {
+  if (doc.is_public) return { label: 'عامة', icon: Globe2 }
+  if (doc.visible_departments.length > 0) return { label: 'إدارة', icon: Building2 }
+  if (doc.visible_committees.length > 0) return { label: 'لجنة', icon: Users2 }
+  if (doc.visible_users.length > 0) return { label: 'مستخدمون محددون', icon: UserRound }
+  return null
+}
 
 /**
  * الهدف:
@@ -48,10 +85,27 @@ export function DocumentsPage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
   const { showToast } = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+
+  const scopeFilterParam = searchParams.get('scope')
+  const scopeFilter: DocumentScopeFilter | 'all' =
+    scopeFilterParam === 'public' ||
+    scopeFilterParam === 'department' ||
+    scopeFilterParam === 'committee' ||
+    scopeFilterParam === 'shared'
+      ? scopeFilterParam
+      : 'all'
+
+  function setScopeFilter(value: DocumentScopeFilter | 'all') {
+    const next = new URLSearchParams(searchParams)
+    if (value === 'all') next.delete('scope')
+    else next.set('scope', value)
+    setSearchParams(next, { replace: true })
+  }
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedSearch(search.trim()), 350)
@@ -61,6 +115,7 @@ export function DocumentsPage() {
   const { data: documents, isLoading, isError, refetch } = useDocuments({
     q: debouncedSearch || undefined,
     category_id: categoryFilter || undefined,
+    scope: scopeFilter === 'all' ? undefined : scopeFilter,
   })
   const { data: categories } = useDocumentCategories()
   // إدارات ولجان الرفع مُصفَّاة مسبقًا حسب مبدأ أقل صلاحية ممكنة (راجعي
@@ -198,6 +253,28 @@ export function DocumentsPage() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-1.5 rounded-sm border border-border-default bg-bg-surface p-1.5">
+        {SCOPE_FILTER_OPTIONS.map(({ value, label, icon: Icon }) => {
+          const active = scopeFilter === value
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setScopeFilter(value)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-xs px-2.5 py-1.5 text-xs font-semibold transition-colors',
+                active
+                  ? 'bg-brand-primary text-white'
+                  : 'text-text-secondary hover:bg-bg-elevated',
+              )}
+            >
+              <Icon size={13} />
+              {label}
+            </button>
+          )
+        })}
+      </div>
+
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -209,14 +286,17 @@ export function DocumentsPage() {
       ) : !documents || documents.length === 0 ? (
         <EmptyState
           icon={<FileText size={26} />}
-          title={search || categoryFilter ? 'لا توجد نتائج مطابقة' : 'لا توجد وثائق بعد'}
+          title={search || categoryFilter || scopeFilter !== 'all' ? 'لا توجد نتائج مطابقة' : 'لا توجد وثائق بعد'}
           description={
-            search || categoryFilter ? 'جرّب كلمات بحث أو تصنيفًا مختلفًا' : 'ابدأ برفع أول وثيقة في النظام'
+            search || categoryFilter || scopeFilter !== 'all'
+              ? 'جرّب كلمات بحث أو تصنيفًا أو قسمًا مختلفًا'
+              : 'ابدأ برفع أول وثيقة في النظام'
           }
           action={
             canUpload &&
             !search &&
-            !categoryFilter && (
+            !categoryFilter &&
+            scopeFilter === 'all' && (
               <Button size="sm" icon={<Plus size={14} />} onClick={openCreateForm}>
                 رفع وثيقة
               </Button>
@@ -247,6 +327,7 @@ export function DocumentsPage() {
                   ]
                 : []),
             ]
+            const scopeBadge = documentScopeBadge(doc)
             return (
               <motion.div
                 key={doc.document_id}
@@ -281,10 +362,15 @@ export function DocumentsPage() {
                         {doc.category.name}
                       </span>
                     )}
-                    {doc.is_public && (
-                      <span className="flex items-center gap-1 rounded-xs bg-success-bg px-1.5 py-0.5 font-semibold text-success">
-                        <Globe2 size={11} />
-                        عامة
+                    {scopeBadge && (
+                      <span
+                        className={cn(
+                          'flex items-center gap-1 rounded-xs px-1.5 py-0.5 font-semibold',
+                          doc.is_public ? 'bg-success-bg text-success' : 'bg-brand-primary/10 text-brand-primary',
+                        )}
+                      >
+                        <scopeBadge.icon size={11} />
+                        {scopeBadge.label}
                       </span>
                     )}
                     <span>{formatFileSize(doc.file_size_bytes)}</span>
