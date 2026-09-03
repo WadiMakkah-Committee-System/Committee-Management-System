@@ -61,7 +61,6 @@ async def create_decision(
             classification=payload.classification,
             start_date=payload.start_date,
             end_date=payload.end_date,
-            assignee_ids=payload.assignee_ids,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
@@ -103,7 +102,6 @@ async def update_decision(
             classification=payload.classification,
             start_date=payload.start_date,
             end_date=payload.end_date,
-            assignee_ids=payload.assignee_ids,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
