@@ -31,7 +31,7 @@ import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
-import { cardToneClass, extractErrorMessage, formatDateTime } from '@/lib/utils'
+import { cardToneClass, extractErrorMessage, formatDateTime, scopeFor } from '@/lib/utils'
 import type { Meeting } from '@/types'
 
 /**
@@ -61,15 +61,27 @@ export function MeetingsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   /**
-   * اللجان التي يقدر المستخدم الحالي ينشئ لها اجتماعًا — رئيسها فقط
-   * (القيد الفعلي محكوم بالباك-إند عبر صلاحية meetings.schedule، هذا مجرد
-   * تخمين متفائل لإظهار الزر — راجعي meeting_service._require_access).
-   * سوبر أدمن يملك meetings.schedule بالكتالوج فعليًا (منح شامل تلقائي)،
-   * فيُتاح له إنشاء اجتماع لأي لجنة، حتى لو لم يكن رئيسها.
+   * اللجان التي يقدر المستخدم الحالي ينشئ لها اجتماعًا — رئيسها، أو أي
+   * لجنة إطلاقًا لو يملك meetings.schedule بنطاق 'all' فعليًا.
+   *
+   * تصحيح 2026-09-02 (بلاغ خطأ من صاحبة المشروع): كان هذا الفحص يعتمد
+   * على user.role?.is_super_admin مباشرة — يخالف مبدأ النظام الموثّق
+   * (لا تجاوز تلقائي للصلاحيات لسوبر أدمن، حتى بالفرونت — راجعي تعليق
+   * Role.is_super_admin بالباك-إند). النتيجة: زر "اجتماع جديد" وكل اللجان
+   * كانت تظهر لأي سوبر أدمن حتى لو سُحبت منه صلاحية meetings.schedule
+   * فعليًا من شاشة الأدوار والصلاحيات — الباك-إند كان يرفض الطلب بشكل
+   * صحيح (403)، لكن الواجهة كانت مضلِّلة (تعرض الزر رغم الرفض الحتمي).
+   * الفحص الآن عبر scopeFor() الحقيقي، بنفس مصدر الحقيقة الذي يستخدمه
+   * الباك-إند (permission_scopes)، بدل افتراض ثابت بالكود.
+   *
+   * ملاحظة: نطاق 'department' غير مُعالَج هنا خصيصًا (لا حقل dep_id على
+   * CommitteeMemberUser المصغّر بالفرونت للتحقق من تطابق إدارة الرئيس) —
+   * غير مؤثر عمليًا حاليًا لأن لا دور نظامي يملك meetings.schedule بنطاق
+   * department فعليًا بالكتالوج الحالي (فقط 'all' لسوبر أدمن، أو لا شيء).
    */
   const chairableCommittees = useMemo(() => {
     if (!committees || !user) return []
-    if (user.role?.is_super_admin) return committees
+    if (scopeFor(user, 'meetings.schedule') === 'all') return committees
     return committees.filter((c) => c.chair_user_id === user.user_id)
   }, [committees, user])
 
