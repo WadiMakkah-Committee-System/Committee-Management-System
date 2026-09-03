@@ -16,8 +16,10 @@ from app.schemas.committee import CommitteeMemberUserOut
 class DecisionCreate(BaseModel):
     """
     إنشاء قرار مستقل جديد (FR-001 مسار "الإصدار المباشر" فقط — بدون مصدر
-    اجتماع، يُبنى لاحقًا). المنفذون حصريًا من أعضاء اللجنة (قرار صاحبة
-    المشروع 2026-09-02)، يُتحقَّق منه بطبقة الخدمة.
+    اجتماع، يُبنى لاحقًا). لا يوجد حقل منفذين هنا — كل أعضاء اللجنة
+    (بمن فيهم رئيسها) يُضافون تلقائيًا كمنفذين، بنفس مبدأ مشاركي الاجتماع
+    (قرار صاحبة المشروع 2026-09-02، مُعدَّل من اختيار يدوي إلى تلقائي
+    بالكامل — راجعي decision_service.create_decision).
     """
 
     committee_id: uuid.UUID
@@ -25,7 +27,6 @@ class DecisionCreate(BaseModel):
     classification: DecisionClassification
     start_date: date
     end_date: date
-    assignee_ids: list[uuid.UUID] = Field(min_length=1)
 
     @model_validator(mode="after")
     def _end_after_start(self) -> "DecisionCreate":
@@ -35,13 +36,16 @@ class DecisionCreate(BaseModel):
 
 
 class DecisionUpdate(BaseModel):
-    """تعديل بيانات قرار — متاح فقط بحالة pending (قبل فتح التصويت أو الاعتماد المباشر)."""
+    """
+    تعديل بيانات قرار — متاح فقط بحالة pending (قبل فتح التصويت أو
+    الاعتماد المباشر). لا يوجد حقل منفذين — يُعاد اشتقاقهم تلقائيًا من
+    عضوية اللجنة عند أي تعديل، بنفس منطق الإنشاء.
+    """
 
     title: str | None = Field(default=None, min_length=2, max_length=255)
     classification: DecisionClassification | None = None
     start_date: date | None = None
     end_date: date | None = None
-    assignee_ids: list[uuid.UUID] | None = None
 
 
 class DecisionVoteCast(BaseModel):
