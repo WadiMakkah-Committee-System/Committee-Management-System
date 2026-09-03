@@ -173,7 +173,6 @@ async def test_chair_can_create_final_decision_and_approve_directly(
             "classification": "final",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
-            "assignee_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -201,7 +200,6 @@ async def test_non_chair_cannot_create_decision(
             "classification": "final",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
-            "assignee_ids": [ctx["member_ids"][0]],
         },
         headers=ctx["member_headers_list"][0],
     )
@@ -221,7 +219,6 @@ async def test_cannot_edit_or_delete_decision_after_voting_opened(
             "classification": "voting",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
-            "assignee_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -259,7 +256,6 @@ async def test_voting_decision_approved_when_majority_reached(
             "classification": "voting",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
-            "assignee_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -310,7 +306,6 @@ async def test_voting_decision_auto_rejected_without_majority(
             "classification": "voting",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
-            "assignee_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -355,7 +350,6 @@ async def test_outsider_cannot_view_decision(
             "classification": "final",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
-            "assignee_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -365,24 +359,28 @@ async def test_outsider_cannot_view_decision(
     assert view.status_code == 403
 
 
-async def test_assignee_must_be_committee_member(
+async def test_assignees_are_derived_automatically_from_committee_membership(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:
-    ctx = await _create_approved_committee(client, auth_headers, roles_by_name, suffix="badassignee")
-    outsider_headers, outsider_id = await _create_user_with_role(
-        client, auth_headers, roles_by_name, username="dt_bad_assignee", role_name="admin"
+    """
+    تحديث 2026-09-02: لا يوجد اختيار يدوي للمنفذين — كل أعضاء اللجنة
+    (رئيسها + عضو واحد بهذا الاختبار) يُضافون تلقائيًا فور الإنشاء.
+    """
+    ctx = await _create_approved_committee(
+        client, auth_headers, roles_by_name, suffix="autoassignee", member_count=1
     )
 
-    response = await client.post(
+    create = await client.post(
         "/api/v1/decisions",
         json={
             "committee_id": ctx["committee_id"],
-            "title": "قرار بمنفذ خاطئ",
+            "title": "قرار بمنفذين تلقائيين",
             "classification": "final",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
-            "assignee_ids": [outsider_id],
         },
         headers=ctx["chair_headers"],
     )
-    assert response.status_code == 400, response.text
+    assert create.status_code == 201, create.text
+    assignee_ids = {a["user_id"] for a in create.json()["assignees"]}
+    assert assignee_ids == {ctx["chair_id"], ctx["member_ids"][0]}
