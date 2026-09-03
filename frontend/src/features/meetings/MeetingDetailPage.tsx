@@ -41,7 +41,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu'
 import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
-import { cn, extractErrorMessage, formatDateTime } from '@/lib/utils'
+import { cn, extractErrorMessage, formatDateTime, scopeFor } from '@/lib/utils'
 
 /**
  * تفاصيل اجتماع واحد + إدارة جدول أعماله. إجراءات التعديل/الحذف/إدارة
@@ -92,8 +92,15 @@ export function MeetingDetailPage() {
   const [editingItemTitle, setEditingItemTitle] = useState('')
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
 
+  /**
+   * تصحيح 2026-09-02 — نفس إصلاح MeetingsPage.tsx.chairableCommittees:
+   * لا تجاوز ثابت لسوبر أدمن — الفحص عبر meetings.update/meetings.delete
+   * الفعليتين (يكفي امتلاك إحداهما بنطاق 'all' لعرض إجراءات الإدارة هنا؛
+   * الفحص الدقيق لكل إجراء على حدة يبقى مسؤولية الباك-إند كالمعتاد).
+   */
   const canManage =
-    !!user?.role?.is_super_admin || (committee && committee.chair_user_id === user?.user_id)
+    scopeFor(user, 'meetings.update', 'meetings.delete') === 'all' ||
+    (committee && committee.chair_user_id === user?.user_id)
 
   if (isLoading) {
     return (
