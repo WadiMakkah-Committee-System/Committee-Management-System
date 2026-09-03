@@ -111,7 +111,6 @@ export function DecisionDetailPage() {
           classification: values.classification,
           start_date: values.start_date,
           end_date: values.end_date,
-          assignee_ids: values.assignee_ids,
         },
       },
       {
