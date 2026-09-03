@@ -17,6 +17,13 @@ decisions.vote.view_result / decisions.approve.
 تفاعل مع القرار (عرض/تصويت/محاولة اعتماد) — لا يوجد Scheduler/Cron
 بالمشروع بعد لإغلاقه تلقائيًا بلحظة انتهاء الموعد بالضبط؛ التأخر هنا لا
 يتجاوز وقت أول طلب API يلمس القرار بعد الموعد.
+
+تحديث 2026-09-02 (بعد تجربة فعلية من صاحبة المشروع): المنفذون (assignees)
+لم يعودوا يُختارون يدويًا عند الإنشاء/التعديل — كل أعضاء اللجنة (بمن فيهم
+رئيسها) يُضافون تلقائيًا، بنفس مبدأ مشاركي الاجتماع تمامًا (راجعي
+meeting_service._all_committee_members). هذا تراجع عن التصميم الأول
+(اختيار يدوي مقيَّد بعضوية اللجنة) — القيد نفسه (لا يمكن إسناد قرار لغير
+عضو باللجنة) أصبح تلقائيًا بحكم الاشتقاق، لا حاجة للتحقق منه صراحة.
 """
 
 import uuid
@@ -125,16 +132,18 @@ def _committee_voter_ids(committee: Committee) -> set[uuid.UUID]:
     return ids
 
 
-def _resolve_assignees(committee: Committee, assignee_ids: list[uuid.UUID]) -> list[User]:
-    """المنفذون حصريًا من أعضاء اللجنة (بمن فيهم رئيسها) — قرار صاحبة المشروع 2026-09-02."""
-    valid_ids = _committee_voter_ids(committee)
-    unknown = set(assignee_ids) - valid_ids
-    if unknown:
-        raise DecisionValidationError("لا يمكن إسناد القرار لمستخدم ليس عضوًا في اللجنة المرتبطة")
-    all_members = {m.user_id: m for m in committee.members}
+def _all_committee_members(committee: Committee) -> list[User]:
+    """
+    كل أعضاء اللجنة (بمن فيهم رئيسها) — مصدر المنفذين التلقائي الوحيد
+    الآن (قرار مُعدَّل 2026-09-02: من اختيار يدوي مقيَّد بعضوية اللجنة،
+    إلى اشتقاق تلقائي كامل — بنفس مبدأ meeting_service._all_committee_members
+    تمامًا). لا تكرار: الرئيس قد يكون أيضًا ضمن committee.members حسب لحظة
+    الاستعلام، فنستبعد تكراره صراحة.
+    """
+    members: dict[uuid.UUID, User] = {m.user_id: m for m in committee.members}
     if committee.chair is not None:
-        all_members[committee.chair_user_id] = committee.chair
-    return [all_members[uid] for uid in assignee_ids]
+        members[committee.chair_user_id] = committee.chair
+    return list(members.values())
 
 
 # ============================== إغلاق التصويت (كسلي) ==============================
@@ -185,15 +194,12 @@ async def create_decision(
     classification: DecisionClassification,
     start_date: date,
     end_date: date,
-    assignee_ids: list[uuid.UUID],
 ) -> Decision:
     """FR-001 (إصدار مباشر) + FR-005 (تسجيل البيانات) + FR-006 (التصنيف)."""
     committee = await _load_committee(db, committee_id)
     await _require_access(
         db, actor, committee, "decisions.create", "ليست لديك صلاحية إنشاء قرار لهذه اللجنة"
     )
-
-    assignees = _resolve_assignees(committee, assignee_ids)
 
     decision = Decision(
         committee_id=committee_id,
@@ -202,7 +208,7 @@ async def create_decision(
         start_date=start_date,
         end_date=end_date,
         created_by=actor.user_id,
-        assignees=assignees,
+        assignees=_all_committee_members(committee),
     )
     db.add(decision)
     await db.flush()
@@ -280,7 +286,6 @@ async def update_decision(
     classification: DecisionClassification | None,
     start_date: date | None,
     end_date: date | None,
-    assignee_ids: list[uuid.UUID] | None,
 ) -> Decision:
     """FR-017: تعديل — متاح فقط بحالة pending (قبل فتح التصويت أو الاعتماد المباشر)."""
     decision = await _load_decision(db, decision_id)
@@ -307,8 +312,9 @@ async def update_decision(
         decision.start_date = start_date
     if end_date is not None:
         decision.end_date = end_date
-    if assignee_ids is not None:
-        decision.assignees = _resolve_assignees(committee, assignee_ids)
+    # المنفذون تُعاد إعادة اشتقاقهم دائمًا من عضوية اللجنة الحالية (قد
+    # تكون تغيّرت منذ الإنشاء) — بلا حاجة لحقل مُدخَل، بنفس منطق الإنشاء.
+    decision.assignees = _all_committee_members(committee)
 
     await audit_service.log_action(
         db,
