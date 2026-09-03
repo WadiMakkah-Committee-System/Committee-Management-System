@@ -16,7 +16,7 @@ import { DecisionStatusBadge } from '@/components/ui/StatusBadge'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { DecisionFormModal, type DecisionFormSubmitValues } from './DecisionFormModal'
-import { cardToneClass, extractErrorMessage, formatDate } from '@/lib/utils'
+import { cardToneClass, extractErrorMessage, formatDate, scopeFor } from '@/lib/utils'
 import type { Decision } from '@/types'
 
 /**
@@ -39,9 +39,18 @@ export function DecisionsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Decision | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  /**
+   * اللجان التي يقدر المستخدم الحالي يصدر لها قرارًا — رئيسها، أو أي
+   * لجنة إطلاقًا لو يملك decisions.create بنطاق 'all' فعليًا.
+   *
+   * تصحيح 2026-09-02 (بلاغ خطأ من صاحبة المشروع): نفس إصلاح
+   * MeetingsPage.tsx.chairableCommittees بالضبط — راجعي التعليق هناك
+   * للتفصيل الكامل. كان يعتمد على user.role?.is_super_admin مباشرة
+   * (تجاوز ثابت مخالف لمبدأ النظام)، بدل قراءة الصلاحيات الفعلية.
+   */
   const chairableCommittees = useMemo(() => {
     if (!committees || !user) return []
-    if (user.role?.is_super_admin) return committees
+    if (scopeFor(user, 'decisions.create') === 'all') return committees
     return committees.filter((c) => c.chair_user_id === user.user_id)
   }, [committees, user])
 
