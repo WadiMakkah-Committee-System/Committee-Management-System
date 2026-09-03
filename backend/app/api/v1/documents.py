@@ -19,7 +19,9 @@
   (content_text) أو العنوان/الوصف فقط.
 """
 
+import os
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,6 +67,29 @@ def _require_category_permission(current_user: User, *, scope: str, action: str)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="ليست لديك صلاحية للقيام بهذا الإجراء"
         )
+
+
+def _content_disposition(file_name: str) -> str:
+    """
+    إصلاح خلل حقيقي (اكتشفته المستخدمة 2026-09-03 أثناء التجربة الفعلية،
+    ليس مرتبطًا بإصلاح مفتاح التخزين السابق): رأس HTTP لا يقبل إلا أحرفًا
+    Latin-1، فأي اسم ملف عربي (وهو الحال الغالب هنا) كان يفجّر
+    UnicodeEncodeError عند التحميل ويوقف الطلب بالكامل — يعني التحميل ما
+    كان يشتغل إطلاقًا لأي ملف باسم عربي من الأساس. الحل القياسي (RFC 5987):
+    filename عادي كـfallback آمن (Latin-1) لمتصفحات قديمة جدًا، إلى جانب
+    filename* بترميز UTF-8 percent-encoded يحمل الاسم العربي الفعلي —
+    كل المتصفحات الحديثة تقرأ filename* وتتجاهل filename الاحتياطي.
+    """
+    # الامتداد (.pdf، .docx...) شبه دائمًا Latin-1 حتى لو بقية الاسم عربي —
+    # نستخدمه مع اسم عام لبديل قابل للقراءة بدل ترك الاسم فارغًا بالكامل
+    # لمن لا يدعم filename* (نادر جدًا اليوم). os.path.splitext (وليس
+    # rpartition) لأنه يرجع ('اسم', '') بلا نقطة لو ما فيه امتداد أصلًا —
+    # rpartition كان راح يحط الاسم الكامل غلط بمكان الامتداد بهالحالة.
+    _, ext = os.path.splitext(file_name)
+    ascii_ext = ext.encode("ascii", errors="ignore").decode("ascii").strip()
+    ascii_fallback = f"document{ascii_ext}" if ascii_ext else "download"
+    encoded = quote(file_name)
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
 
 
 def _storage_error_to_http(exc: storage_client.StorageError) -> HTTPException:
@@ -336,5 +361,5 @@ async def download_document(
     return Response(
         content=content,
         media_type=document.mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{document.file_name}"'},
+        headers={"Content-Disposition": _content_disposition(document.file_name)},
     )
