@@ -10,6 +10,7 @@ RBAC/الرؤية/البيانات الوصفية هو ما تختبره هذه 
 """
 
 import io
+from urllib.parse import quote
 
 import pytest
 from httpx import AsyncClient
@@ -254,9 +255,14 @@ async def test_storage_path_uses_document_id_not_original_file_name(
     client: AsyncClient, auth_headers
 ) -> None:
     """
-    إصلاح خلل InvalidKey بـSupabase Storage: مفتاح الكائن يجب ألا يحتوي
-    اسم الملف الأصلي (قد يحمل أحرفًا عربية أو مسافات) — الاسم الأصلي يبقى
-    فقط ببيانات الوثيقة الوصفية (file_name) لا كجزء من storage_path.
+    تغطي خللين حقيقيين مختلفين، كلاهما يظهر فقط مع اسم ملف غير-Latin-1 (عربي):
+    1) InvalidKey بـSupabase Storage — مفتاح الكائن يجب ألا يحتوي اسم
+       الملف الأصلي (storage_path)، راجعي document_service.create_document.
+    2) UnicodeEncodeError عند التحميل (اكتشفته المستخدمة 2026-09-03 فعليًا
+       أثناء التجربة) — رأس Content-Disposition كان يحط الاسم العربي
+       مباشرة بلا ترميز RFC 5987، فيفجّر الطلب بالكامل (الملف يتخزّن صح،
+       لكن التحميل نفسه يفشل بـ500) — راجعي _content_disposition
+       بـapp/api/v1/documents.py.
     """
     files = {"file": ("ملف تجريبي عربي.txt", io.BytesIO(DOCUMENT_TEST_CONTENT), "text/plain")}
     data = {
@@ -276,9 +282,13 @@ async def test_storage_path_uses_document_id_not_original_file_name(
     # استُخدم بالرفع والتحميل معًا)، ورأس Content-Disposition ما زال
     # يحمل الاسم الأصلي للعرض.
     download = await client.get(f"/api/v1/documents/{document_id}/download", headers=auth_headers)
-    assert download.status_code == 200
+    assert download.status_code == 200, download.text
     assert download.content == DOCUMENT_TEST_CONTENT
-    assert "content-disposition" in download.headers
+    content_disposition = download.headers["content-disposition"]
+    # الاسم العربي الفعلي يوصل عبر filename* (UTF-8 percent-encoded،
+    # RFC 5987) — لا يوضع خامًا بالرأس (هذا بالضبط ما كان يفجّر الطلب).
+    assert "filename*=UTF-8''" in content_disposition
+    assert quote("ملف تجريبي عربي.txt") in content_disposition
 
 
 async def test_create_document_rejects_multiple_visibility_categories(
