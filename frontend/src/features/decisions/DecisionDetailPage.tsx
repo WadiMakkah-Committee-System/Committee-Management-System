@@ -35,7 +35,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu'
 import { DecisionStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { DecisionFormModal, type DecisionFormSubmitValues } from './DecisionFormModal'
-import { cn, extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
+import { cn, extractErrorMessage, formatDate, formatDateTime, scopeFor } from '@/lib/utils'
 
 /**
  * تفاصيل قرار واحد + التصويت والاعتماد. راجعي رأس decision_service.py
@@ -64,8 +64,17 @@ export function DecisionDetailPage() {
   const [votingDeadline, setVotingDeadline] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
 
+  /**
+   * تصحيح 2026-09-02 — نفس إصلاح MeetingDetailPage.tsx.canManage بالضبط.
+   */
   const canManage =
-    !!user?.role?.is_super_admin || (committee && committee.chair_user_id === user?.user_id)
+    scopeFor(
+      user,
+      'decisions.update',
+      'decisions.delete',
+      'decisions.vote.open',
+      'decisions.approve',
+    ) === 'all' || (committee && committee.chair_user_id === user?.user_id)
 
   const isVoter =
     !!user &&
