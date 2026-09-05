@@ -150,3 +150,15 @@ class Committee(Base):
         if today > self.end_date:
             return "ended"
         return "ongoing"
+
+    @property
+    def lifecycle_state_today(self) -> str:
+        """
+        قرار 2026-09-05: نفس lifecycle_state أعلاه لكن بتاريخ اليوم الفعلي
+        (date.today())، كـproperty بلا معامل — لأن schemas.document
+        .DocumentVisibleCommitteeOut تحتاج قراءتها تلقائيًا عبر from_attributes
+        (validation_alias)، وذلك غير ممكن لدالة تطلب معاملًا. السبب: وثيقة
+        مشتركة مع لجنة منتهت مدتها كانت تظهر لصفحة تفاصيل الوثيقة وكأن اللجنة
+        ما زالت قائمة — بلا أي إشارة لانتهائها، لا هناك ولا بصفحة اللجان نفسها.
+        """
+        return self.lifecycle_state(today=date.today())
