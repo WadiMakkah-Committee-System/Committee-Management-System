@@ -213,6 +213,11 @@ export function DocumentDetailPage() {
                       </span>
                     ))}
                   </div>
+                  {/* قرار 2026-09-05: نبّهت لجينـ إلى أنه ما فيه أي إشارة تبيّن
+                      انتهاء مدة اللجنة عند مشاركة وثيقة معها — أضفنا شارة صغيرة
+                      هنا فقط (نطاق ضروري مطابق لسؤالها الفعلي: "جنب الملف"،
+                      بدون توسيع لصفحات اللجان نفسها التي ما زالت بلا هذه
+                      الشارة إلى أن تقرر إضافتها هناك أيضًا). */}
                 </div>
               )}
               {doc.visible_committees.length > 0 && (
@@ -223,8 +228,21 @@ export function DocumentDetailPage() {
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {doc.visible_committees.map((c) => (
-                      <span key={c.committee_id} className="rounded-xs bg-bg-elevated px-2 py-0.5 text-xs text-text-primary">
+                      <span
+                        key={c.committee_id}
+                        className="flex items-center gap-1 rounded-xs bg-bg-elevated px-2 py-0.5 text-xs text-text-primary"
+                      >
                         {c.name}
+                        {c.lifecycle_state === 'ended' && (
+                          <span className="rounded-xs bg-danger-bg px-1 py-0.5 text-[10px] font-semibold text-danger">
+                            منتهية
+                          </span>
+                        )}
+                        {c.lifecycle_state === 'upcoming' && (
+                          <span className="rounded-xs bg-warning-bg px-1 py-0.5 text-[10px] font-semibold text-warning">
+                            لم تبدأ بعد
+                          </span>
+                        )}
                       </span>
                     ))}
                   </div>
