@@ -380,6 +380,8 @@ export interface DocumentVisibleDepartment {
 export interface DocumentVisibleCommittee {
   committee_id: string
   name: string
+  /** قادمة/جارية/منتهية — محسوبة بالباك-إند من start_date/end_date وقت الاستعلام. */
+  lifecycle_state: 'upcoming' | 'ongoing' | 'ended'
 }
 
 export interface DocumentVisibleUser {
