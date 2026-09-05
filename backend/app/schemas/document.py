@@ -102,6 +102,14 @@ class DocumentVisibleCommitteeOut(BaseModel):
 
     committee_id: uuid.UUID
     name: str
+    # قرار 2026-09-05: حالة اللجنة الزمنية (قادمة/جارية/منتهية) محسوبة وقت
+    # الاستعلام من Committee.lifecycle_state_today — راجعي docstring
+    # الـ property بـ app/models/committee.py لسبب استخدام validation_alias
+    # هنا بدل اسم حقل مطابق مباشرة (الدالة الأصلية lifecycle_state تطلب
+    # معامل today، فأضفنا property بلا معامل خصيصًا لهذا الغرض).
+    lifecycle_state: Literal["upcoming", "ongoing", "ended"] = Field(
+        validation_alias="lifecycle_state_today"
+    )
 
 
 class DocumentVisibleUserOut(BaseModel):
