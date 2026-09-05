@@ -10,12 +10,14 @@ RBAC/الرؤية/البيانات الوصفية هو ما تختبره هذه 
 """
 
 import io
+from datetime import date, timedelta
 from urllib.parse import quote
 
 import pytest
 from httpx import AsyncClient
 
 from app.core import storage_client
+from app.models.committee import Committee
 from app.models.user import User
 
 
@@ -474,3 +476,58 @@ async def test_documents_scope_filter(client: AsyncClient, auth_headers) -> None
     titles = {d["title"] for d in public_only.json()}
     assert "وثيقة عامة للفلترة" in titles
     assert "وثيقة خاصة للفلترة" not in titles
+
+
+def test_committee_lifecycle_state_today_covers_all_three_states() -> None:
+    """
+    قرار 2026-09-05: لجينـ لاحظت إن اللجان "مؤقتة" (لها start_date/end_date)
+    لكن ما فيه أي إشارة — لا بصفحة اللجان ولا جنب الوثيقة — توضّح إذا انتهت
+    مدة اللجنة. Committee.lifecycle_state كانت دالة محسوبة موجودة أصلًا
+    بالموديل لكن غير مستخدمة بأي مكان فعليًا؛ Committee.lifecycle_state_today
+    (property جديدة بلا معامل، أُضيفت لتُقرأ تلقائيًا عبر Pydantic
+    from_attributes بـDocumentVisibleCommitteeOut) هي ما يُبنى عليه.
+
+    اختبار وحدة مباشر على الموديل (بدون DB/API) بتواريخ نسبية لتاريخ اليوم
+    الفعلي — يغطي الحالات الثلاث بثبات بغض النظر عن تاريخ تشغيل الاختبار.
+    """
+    today = date.today()
+
+    upcoming = Committee(
+        name="لجنة قادمة", start_date=today + timedelta(days=10), end_date=today + timedelta(days=20)
+    )
+    ongoing = Committee(
+        name="لجنة جارية", start_date=today - timedelta(days=5), end_date=today + timedelta(days=5)
+    )
+    ended = Committee(
+        name="لجنة منتهية", start_date=today - timedelta(days=20), end_date=today - timedelta(days=10)
+    )
+
+    assert upcoming.lifecycle_state_today == "upcoming"
+    assert ongoing.lifecycle_state_today == "ongoing"
+    assert ended.lifecycle_state_today == "ended"
+
+
+async def test_document_detail_exposes_committee_lifecycle_state(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    يتأكد إن /documents/{id} يرجّع lifecycle_state فعليًا لكل لجنة بـ
+    visible_committees عبر الـAPI الحقيقي (وليس بمستوى الموديل فقط كالاختبار
+    أعلاه) — اللجنة المُنشأة هنا (عبر _create_approved_committee_with_member)
+    تواريخها 2026-09-01 → 2026-12-01، أي "ongoing" وقت كتابة هذا الاختبار.
+    """
+    committee_id, member_headers, _ = await _create_approved_committee_with_member(
+        client, auth_headers, roles_by_name, slug="doccomm2", name="لجنة وثائق ٢"
+    )
+    upload = await _upload_document(
+        client, member_headers, title="وثيقة بلجنة جارية", committee_ids=committee_id
+    )
+    assert upload.status_code == 201, upload.text
+    document_id = upload.json()["document_id"]
+
+    get_response = await client.get(f"/api/v1/documents/{document_id}", headers=member_headers)
+    assert get_response.status_code == 200, get_response.text
+    committees = get_response.json()["visible_committees"]
+    assert len(committees) == 1
+    assert committees[0]["committee_id"] == committee_id
+    assert committees[0]["lifecycle_state"] == "ongoing"
