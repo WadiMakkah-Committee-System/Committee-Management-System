@@ -152,6 +152,34 @@ export function DocumentsPage() {
     [categories],
   )
 
+  // إخفاء أزرار "إداري"/"لجاني" لو ما تنطبق أصلًا على المستخدم الحالي
+  // (طلب صريح 2026-09-03 — بدل ترك زر يرجّع دايمًا قائمة فاضية له).
+  // "إداري": super_admin يشوف وثائق كل الإدارات بغض النظر عن dep_id
+  // شخصيًا (راجعي can_view_document بالباك-إند)، فيبقى الزر له حتى بدون
+  // dep_id — غيره يحتاج dep_id فعلي. "لجاني": يعتمد فقط على عضوية لجنة
+  // فعلية (has_any_committee_membership من GET /users/me) — بما فيهم
+  // سوبر أدمن نفسه، لأن رؤية اللجان صارت تحتاج عضوية فعلية حتى له (قرار
+  // 2026-09-02، تضييق تجاوز سوبر أدمن).
+  const visibleScopeFilterOptions = useMemo(
+    () =>
+      SCOPE_FILTER_OPTIONS.filter(({ value }) => {
+        if (value === 'department') return !!user?.role.is_super_admin || !!user?.dep_id
+        if (value === 'committee') return !!user?.has_any_committee_membership
+        return true
+      }),
+    [user],
+  )
+
+  // لو النطاق النشط بالرابط (?scope=) صار غير متاح للمستخدم الحالي (مثال:
+  // رابط قديم محفوظ، أو تغيّرت عضويته)، نرجّعها "الكل" تلقائيًا بدل ترك
+  // فلتر فعّال بدون زر ظاهر له.
+  useEffect(() => {
+    if (scopeFilter !== 'all' && !visibleScopeFilterOptions.some((o) => o.value === scopeFilter)) {
+      setScopeFilter('all')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeFilter, visibleScopeFilterOptions])
+
   function openCreateForm() {
     setEditingDoc(null)
     setFormError(null)
@@ -254,7 +282,7 @@ export function DocumentsPage() {
       </div>
 
       <div className="flex flex-wrap gap-1.5 rounded-sm border border-border-default bg-bg-surface p-1.5">
-        {SCOPE_FILTER_OPTIONS.map(({ value, label, icon: Icon }) => {
+        {visibleScopeFilterOptions.map(({ value, label, icon: Icon }) => {
           const active = scopeFilter === value
           return (
             <button
