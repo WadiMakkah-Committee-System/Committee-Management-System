@@ -56,12 +56,13 @@ const TASK_STATUS_TEXT_CLASS: Record<TaskStatus, string> = {
  * تصميم البطاقات (بطلب صريح من Lujain، على غرار بطاقات "الأدوار
  * والصلاحيات"): خلفية البطاقة كاملة بتدرّج لون الحالة + أيقونة الحالة
  * بمربّع ملوّن بالزاوية، بدل خط علوي رفيع أو تلوين عشوائي (cardToneClass
- * القديم). قائمة "⋮" (ActionMenu) تظهر فقط لمن يملك صلاحية إدارة المهمة
- * فعليًا (رئيسة اللجنة الفعلية لتلك اللجنة تحديدًا، أو سوبر أدمن) — نفس
- * منطق chairableCommittees أدناه المستخدم أصلًا لإنشاء المهام، لأن
- * create/update/delete غير مقيَّدة بالكائن نفسه بالباك-إند وتُمنح فعليًا
- * لدور الرئيس فقط (راجعي رأس task_service.py). العضو المكلَّف بمهمة
- * بلجنة لا يرأسها يشوف بطاقة للعرض فقط، بدون القائمة.
+ * القديم). قائمة "⋮" (ActionMenu) تظهر فقط لرئيسة اللجنة الفعلية لتلك
+ * اللجنة تحديدًا (chair_user_id) — عمدًا بدون استثناء لسوبر أدمن: هذا
+ * تحديدًا الفرق الموثَّق برأس Role.scope_for بالباك-إند ("لا يُستخدم
+ * للتجاوز التلقائي للصلاحيات — قرار 2026-08-27")، فسوبر أدمن يشوف كل
+ * المهام (tasks.view نطاقه all فعليًا) لكن ما يقدر يدير/ينشئ مهمة لأي
+ * لجنة إلا لو كان رئيسها هو شخصيًا فعليًا (بطلب صريح من Lujain). العضو
+ * المكلَّف بمهمة بلجنة لا يرأسها يشوف بطاقة للعرض فقط، بدون القائمة.
  */
 export function TasksPage() {
   const navigate = useNavigate()
@@ -83,7 +84,6 @@ export function TasksPage() {
 
   const chairableCommittees = useMemo(() => {
     if (!committees || !user) return []
-    if (user.role?.is_super_admin) return committees
     return committees.filter((c) => c.chair_user_id === user.user_id)
   }, [committees, user])
 

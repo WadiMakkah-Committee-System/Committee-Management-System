@@ -73,17 +73,18 @@ export function TaskDetailPage() {
   const [completeConfirmOpen, setCompleteConfirmOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  const isSuperAdmin = !!user?.role?.is_super_admin
   const isChair = !!committee && committee.chair_user_id === user?.user_id
   const isAssignee = !!task && task.assignee.user_id === user?.user_id
 
-  // نفس مبدأ canManage بوحدة القرارات — رئيس اللجنة أو سوبر أدمن فقط
-  // للإنشاء/التعديل/الحذف/إعادة الإسناد (tasks.create/update/delete غير
-  // مقيَّدة بالكائن نفسه، لكنها تُمنح فعليًا لدور الرئيس فقط).
-  const canManage = isSuperAdmin || isChair
-  // تحديث الحالة مقيَّد بالكائن نفسه — رئيس اللجنة أو سوبر أدمن لأي مهمة،
-  // والمسؤول الحالي عن المهمة لمهمته هو تحديدًا فقط.
-  const canUpdateStatus = isSuperAdmin || isChair || isAssignee
+  // بطلب صريح من Lujain: سوبر أدمن يشوف كل المهام (tasks.view نطاقه all)
+  // لكن ما يقدر يدير/يعدّل/يحذف/يعيد إسناد أي مهمة إلا لو كان هو نفسه
+  // رئيس تلك اللجنة فعليًا — عمدًا بدون استثناء لعلامة is_super_admin،
+  // بالضبط زي الموثَّق برأس Role.scope_for بالباك-إند ("لا يُستخدم
+  // للتجاوز التلقائي للصلاحيات — قرار 2026-08-27").
+  const canManage = isChair
+  // تحديث الحالة مقيَّد بالكائن نفسه — رئيس اللجنة لأي مهمة بلجنته، أو
+  // المسؤول الحالي عن المهمة لمهمته هو تحديدًا فقط (نفس المبدأ أعلاه).
+  const canUpdateStatus = isChair || isAssignee
 
   const isLocked = task?.status === 'completed'
 
