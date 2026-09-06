@@ -15,6 +15,7 @@ from app.api.v1 import (
     job_titles,
     meetings,
     roles,
+    tasks,
     users,
 )
 
@@ -32,3 +33,4 @@ api_router.include_router(documents.router)
 api_router.include_router(documents.categories_router)
 api_router.include_router(meetings.router)
 api_router.include_router(decisions.router)
+api_router.include_router(tasks.router)

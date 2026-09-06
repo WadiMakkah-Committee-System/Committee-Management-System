@@ -19,6 +19,7 @@ from app.models.job_title import JobTitle
 from app.models.meeting import Meeting, MeetingAgendaItem, MeetingMode, MeetingStatus
 from app.models.password_reset_token import PasswordResetToken
 from app.models.role import Permission, Role
+from app.models.task import Task, TaskAssignmentHistory, TaskStatus
 from app.models.user import User, UserStatus
 
 __all__ = [
@@ -41,6 +42,9 @@ __all__ = [
     "PasswordResetToken",
     "Permission",
     "Role",
+    "Task",
+    "TaskAssignmentHistory",
+    "TaskStatus",
     "User",
     "UserStatus",
 ]
