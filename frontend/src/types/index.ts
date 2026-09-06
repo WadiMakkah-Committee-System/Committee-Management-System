@@ -603,3 +603,56 @@ export interface DecisionUpdatePayload {
   start_date?: string
   end_date?: string
 }
+
+/**
+ * أنواع وحدة "إدارة المهام" — إنشاء مباشر من واجهة المهام فقط (بدون مهام
+ * مستخرجة من اجتماع بالذكاء الاصطناعي — تُبنى لاحقًا)، مسؤول واحد فقط لكل
+ * مهمة (قرار صاحبة المشروع 2026-09-06). مطابقة تمامًا لـ
+ * backend/app/schemas/task.py وapp/models/task.py. راجعي رأس
+ * db/migrations/0024_tasks_schema.sql لكل الاجتهادات الموثّقة.
+ */
+export type TaskStatus = 'todo' | 'in_progress' | 'on_hold' | 'completed'
+
+export interface TaskAssignmentHistoryEntry {
+  history_id: string
+  from_user: CommitteeMemberUser | null
+  to_user: CommitteeMemberUser
+  changer: CommitteeMemberUser
+  changed_at: string
+}
+
+export interface Task {
+  task_id: string
+  committee_id: string
+  title: string
+  status: TaskStatus
+  start_date: string
+  end_date: string
+  assignee: CommitteeMemberUser
+  creator: CommitteeMemberUser
+  assignment_history: TaskAssignmentHistoryEntry[]
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskCreatePayload {
+  committee_id: string
+  title: string
+  start_date: string
+  end_date: string
+  assignee_user_id: string
+}
+
+export interface TaskUpdatePayload {
+  title?: string
+  start_date?: string
+  end_date?: string
+}
+
+export interface TaskStatusUpdatePayload {
+  status: TaskStatus
+}
+
+export interface TaskReassignPayload {
+  assignee_user_id: string
+}

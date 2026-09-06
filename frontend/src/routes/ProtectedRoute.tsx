@@ -43,12 +43,17 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     // نفس المبدأ لمسار /decisions.
     const hasDecisionsMembershipBypass =
       !!anyPermission?.includes('decisions.view') && user.has_any_committee_membership
+    // نفس المبدأ لمسار /tasks — عضو اللجنة (رئيس أو عادي) يملك وصولًا
+    // فعليًا لمهامه على الأقل، حتى بدون tasks.view على مستوى System Role.
+    const hasTasksMembershipBypass =
+      !!anyPermission?.includes('tasks.view') && user.has_any_committee_membership
     if (
       anyPermission &&
       !anyPermission.some((code) => user.permissions.includes(code)) &&
       !hasCommitteeMembershipBypass &&
       !hasMeetingsMembershipBypass &&
-      !hasDecisionsMembershipBypass
+      !hasDecisionsMembershipBypass &&
+      !hasTasksMembershipBypass
     ) {
       return <Navigate to="/profile" replace />
     }
