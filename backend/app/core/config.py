@@ -80,6 +80,15 @@ class Settings(BaseSettings):
       AGORA_APP_CERTIFICATE: str = ""
       AGORA_TOKEN_TTL_SECONDS: int = 3600
 
+    # --- Google Gemini (تحويل تسجيل الاجتماع الصوتي إلى مسودة —
+    # meetings.record_audio/draft.summarize، migration 0025) ---
+    # GEMINI_API_KEY اختياري بقيمة افتراضية فارغة (نفس نمط CLAUDE_API_KEY/
+    # AGORA_*/SUPABASE_* أعلاه) — لا يصل للـFrontend أبدًا، يُستخدَم من
+    # app.core.gemini_client فقط. GEMINI_MODEL قابل للتغيير بدون تعديل
+    # الكود (أسماء نماذج Gemini تتحدّث بمرور الوقت).
+      GEMINI_API_KEY: str = ""
+      GEMINI_MODEL: str = "gemini-2.5-flash"
+
     # --- عام ---
       ENVIRONMENT: str = "development"
 

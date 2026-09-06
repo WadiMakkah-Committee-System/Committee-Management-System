@@ -51,15 +51,18 @@ from app.schemas.meeting import (
     MeetingOut,
     MeetingUpdate,
 )
+from app.schemas.meeting_draft import MeetingDraftOut, MeetingRecordingOut
 from app.services import meeting_service, notification_service
 from app.services.document_service import DocumentValidationError
 from app.services.meeting_service import (
     AgendaItemNotFoundError,
     AttachmentNotFoundError,
+    DraftNotFoundError,
     MeetingForbiddenError,
     MeetingInvalidStateError,
     MeetingNotFoundError,
     MeetingValidationError,
+    RecordingNotFoundError,
 )
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -68,6 +71,8 @@ _SERVICE_ERRORS = (
     MeetingNotFoundError,
     AgendaItemNotFoundError,
     AttachmentNotFoundError,
+    RecordingNotFoundError,
+    DraftNotFoundError,
     MeetingForbiddenError,
     MeetingInvalidStateError,
     MeetingValidationError,
@@ -78,7 +83,7 @@ _SERVICE_ERRORS = (
 
 def _handle_errors(exc: Exception) -> Exception:
     """يترجم استثناءات طبقة الخدمة إلى استجابات HTTP مناسبة، مركزيًا."""
-    if isinstance(exc, (MeetingNotFoundError, AgendaItemNotFoundError, AttachmentNotFoundError)):
+    if isinstance(exc, (MeetingNotFoundError, AgendaItemNotFoundError, AttachmentNotFoundError, RecordingNotFoundError, DraftNotFoundError)):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if isinstance(exc, MeetingForbiddenError):
         return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
@@ -414,3 +419,130 @@ async def delete_meeting_attachment(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+
+
+
+# ============================== التسجيل الصوتي + المسودة (AI) ==============================
+# راجعي رأس app/services/meeting_service.py (قسم "التسجيل الصوتي +
+# المسودة") لتفصيل التفويض والتصميم. ملاحظة: generate_draft لا يرمي
+# GeminiError للراوت مباشرة — تلتقطه طبقة الخدمة داخليًا وتخزّن
+# status='failed' + error_message بجدول meeting_drafts، فتُعاد استجابة
+# 200 عادية بحالة "failed" بدل خطأ HTTP (الواجهة تعرض رسالة الخطأ من
+# الحقل نفسه). هذا قرار مقصود: فشل استدعاء خارجي (Gemini) ليس خطأ من
+# المستخدم يستحق 4xx/5xx، بل نتيجة عملية طويلة تُحفَظ وتُعرَض كما هي.
+
+
+def _recording_out(recording) -> MeetingRecordingOut:
+    return MeetingRecordingOut(
+        recording_id=recording.recording_id,
+        file_name=recording.file_name,
+        mime_type=recording.mime_type,
+        file_size_bytes=recording.file_size_bytes,
+        duration_seconds=recording.duration_seconds,
+        recorded_by=CommitteeMemberUserOut.model_validate(recording.recorder),
+        recorded_at=recording.recorded_at,
+    )
+
+
+def _draft_out(draft) -> MeetingDraftOut:
+    return MeetingDraftOut(
+        draft_id=draft.draft_id,
+        meeting_id=draft.meeting_id,
+        status=draft.status.value,
+        error_message=draft.error_message,
+        full_transcript=draft.full_transcript,
+        summary=draft.summary,
+        decisions=draft.decisions,
+        action_items=draft.action_items,
+        key_points=draft.key_points,
+        generated_by=CommitteeMemberUserOut.model_validate(draft.generator),
+        generated_at=draft.generated_at,
+        created_at=draft.created_at,
+        updated_at=draft.updated_at,
+    )
+
+
+@router.post(
+    "/{meeting_id}/recording",
+    response_model=MeetingRecordingOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_meeting_recording(
+    meeting_id: uuid.UUID,
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    duration_seconds: int | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+) -> MeetingRecordingOut:
+    """رفع تسجيل صوتي للاجتماع (FR: تسجيل الاجتماع صوتيًا) — يتطلب
+    meetings.record_audio. multipart/form-data بنفس نمط رفع المرفقات."""
+    content = await file.read()
+    try:
+        recording = await meeting_service.upload_recording(
+            db,
+            actor=current_user,
+            meeting_id=meeting_id,
+            file_name=file.filename or "recording",
+            mime_type=file.content_type or "application/octet-stream",
+            content=content,
+            duration_seconds=duration_seconds,
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _recording_out(recording)
+
+
+@router.get("/{meeting_id}/recording", response_model=MeetingRecordingOut)
+async def get_meeting_recording(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingRecordingOut:
+    try:
+        recording = await meeting_service.get_latest_recording(
+            db, actor=current_user, meeting_id=meeting_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _recording_out(recording)
+
+
+@router.get("/{meeting_id}/recording/download")
+async def download_meeting_recording(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> Response:
+    try:
+        recording, content = await meeting_service.download_recording(
+            db, actor=current_user, meeting_id=meeting_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return Response(
+        content=content,
+        media_type=recording.mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{recording.file_name}"'},
+    )
+
+
+@router.post("/{meeting_id}/draft", response_model=MeetingDraftOut, status_code=status.HTTP_201_CREATED)
+async def generate_meeting_draft(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingDraftOut:
+    """تحويل تسجيل الاجتماع الصوتي إلى مسودة بالذكاء الاصطناعي (FR-AI-001)
+    — يتطلب meetings.draft.summarize، وتسجيلًا صوتيًا مرفوعًا مسبقًا.
+    مزامنة (لا Background Job) — قد يأخذ الطلب دقيقة أو أكثر لاجتماع
+    طويل (رفع الملف لـGemini + المعالجة). راجعي meeting_service.generate_draft."""
+    try:
+        draft = await meeting_service.generate_draft(db, actor=current_user, meeting_id=meeting_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _draft_out(draft)
+
+
+@router.get("/{meeting_id}/draft", response_model=MeetingDraftOut)
+async def get_meeting_draft(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingDraftOut:
+    try:
+        draft = await meeting_service.get_draft(db, actor=current_user, meeting_id=meeting_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _draft_out(draft)

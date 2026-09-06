@@ -47,7 +47,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.core import agora_client, storage_client
+from app.core import agora_client, gemini_client, storage_client
 from app.models.committee import Committee, committee_members
 from app.models.document import Document, DocumentLink
 from app.models.meeting import (
@@ -57,6 +57,7 @@ from app.models.meeting import (
     MeetingMode,
     MeetingStatus,
 )
+from app.models.meeting_draft import MeetingDraft, MeetingDraftStatus, MeetingRecording
 from app.models.role import Permission, RolePermission
 from app.models.user import User
 from app.services import audit_service, committee_service, document_service
@@ -792,3 +793,178 @@ async def get_attachment_download(
     document = row[1]
     content = await storage_client.download_object(document.storage_path)
     return document, content
+
+
+
+# ============================== التسجيل الصوتي + المسودة (AI) ==============================
+# راجعي رأس db/migrations/0025_meeting_recordings_and_drafts.sql للتصميم
+# الكامل الموثّق (صلاحيات meetings.record_audio/draft.summarize/draft.view
+# مزروعة أصلًا بكتالوج الصلاحيات منذ 0006). ملاحظة صلاحيات: meetings.summary.view
+# محجوزة لعرض ملخّص مبسّط لعموم الأعضاء بمرحلة لاحقة — هذي المرحلة تكتفي
+# بـmeetings.draft.view للوصول الكامل (رئيس اللجنة أساسًا).
+
+
+class RecordingNotFoundError(Exception):
+    """لا يوجد تسجيل صوتي مرفوع لهذا الاجتماع — تُترجَم إلى 404."""
+
+
+class DraftNotFoundError(Exception):
+    """لا توجد مسودة مولَّدة بعد لهذا الاجتماع — تُترجَم إلى 404."""
+
+
+async def upload_recording(
+    db: AsyncSession,
+    *,
+    actor: User,
+    meeting_id: uuid.UUID,
+    file_name: str,
+    mime_type: str,
+    content: bytes,
+    duration_seconds: int | None = None,
+) -> MeetingRecording:
+    """يتطلب meetings.record_audio. لا يمنع تكرار الرفع لنفس الاجتماع عمدًا
+    (راجعي تعليق الجدول بالـmigration) — أحدث تسجيل هو المعتمَد ضمنيًا
+    عند توليد المسودة (get_latest_recording أدناه)."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.record_audio",
+        "ليست لديك صلاحية تسجيل هذا الاجتماع صوتيًا",
+    )
+
+    recording_id = uuid.uuid4()
+    storage_path = f"meeting-recordings/{meeting_id}/{recording_id}_{file_name}"
+    await storage_client.upload_object(storage_path, content, content_type=mime_type)
+
+    recording = MeetingRecording(
+        recording_id=recording_id,
+        meeting_id=meeting_id,
+        storage_path=storage_path,
+        file_name=file_name,
+        mime_type=mime_type,
+        file_size_bytes=len(content),
+        duration_seconds=duration_seconds,
+        recorded_by=actor.user_id,
+    )
+    db.add(recording)
+    await db.commit()
+    await db.refresh(recording)
+    return recording
+
+
+async def get_latest_recording(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingRecording:
+    """يتطلب meetings.record_audio — نفس صلاحية الرفع (من يقدر يسجّل يقدر
+    يراجع/يحمّل التسجيل الخام)."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db, actor, committee, "meetings.record_audio", "ليست لديك صلاحية الوصول لتسجيل هذا الاجتماع"
+    )
+
+    result = await db.execute(
+        select(MeetingRecording)
+        .where(MeetingRecording.meeting_id == meeting_id, MeetingRecording.deleted_at.is_(None))
+        .order_by(MeetingRecording.recorded_at.desc())
+        .limit(1)
+    )
+    recording = result.scalar_one_or_none()
+    if recording is None:
+        raise RecordingNotFoundError("لا يوجد تسجيل صوتي لهذا الاجتماع بعد")
+    return recording
+
+
+async def download_recording(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> tuple[MeetingRecording, bytes]:
+    """يتطلب meetings.record_audio — يرجع محتوى الملف الصوتي الفعلي (أحدث تسجيل)."""
+    recording = await get_latest_recording(db, actor=actor, meeting_id=meeting_id)
+    content = await storage_client.download_object(recording.storage_path)
+    return recording, content
+
+
+async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingDraft:
+    """يتطلب meetings.draft.summarize (FR-AI-001) — بشرط وجود تسجيل صوتي
+    فعلي مسبقًا (MeetingValidationError إن لم يوجد، مطابقةً لنص المتطلب
+    حرفيًا: "بشرط أن يكون التسجيل الصوتي متاح"). العملية مزامنة حاليًا
+    (await مباشر لـgemini_client، بدون Background Job/Queue) — قرار
+    مقصود لتبسيط هذي المرحلة الأولى؛ قابل للتحويل لاحقًا لو صارت مدة
+    الانتظار مزعجة بالواجهة لاجتماعات طويلة جدًا."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.draft.summarize",
+        "ليست لديك صلاحية تحويل تسجيل هذا الاجتماع إلى مسودة",
+    )
+
+    try:
+        recording = await get_latest_recording(db, actor=actor, meeting_id=meeting_id)
+    except RecordingNotFoundError as exc:
+        raise MeetingValidationError(
+            "لا يمكن توليد مسودة بدون تسجيل صوتي — يجب رفع تسجيل الاجتماع أولًا"
+        ) from exc
+
+    result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        draft = MeetingDraft(
+            meeting_id=meeting_id,
+            recording_id=recording.recording_id,
+            generated_by=actor.user_id,
+        )
+        db.add(draft)
+    else:
+        draft.recording_id = recording.recording_id
+        draft.generated_by = actor.user_id
+    draft.status = MeetingDraftStatus.processing
+    draft.error_message = None
+    await db.commit()
+    await db.refresh(draft)
+
+    participant_names = [member.full_name for member in _all_committee_members(committee)]
+    audio_content = await storage_client.download_object(recording.storage_path)
+
+    try:
+        generated = await gemini_client.generate_meeting_draft(
+            meeting_title=meeting.title,
+            participant_names=participant_names,
+            audio_content=audio_content,
+            audio_mime_type=recording.mime_type,
+            audio_file_name=recording.file_name,
+        )
+    except gemini_client.GeminiError as exc:
+        draft.status = MeetingDraftStatus.failed
+        draft.error_message = str(exc)
+        await db.commit()
+        await db.refresh(draft)
+        return draft
+
+    draft.full_transcript = generated["full_transcript"]
+    draft.summary = generated["summary"]
+    draft.decisions = generated["decisions"]
+    draft.action_items = generated["action_items"]
+    draft.key_points = generated["key_points"]
+    draft.status = MeetingDraftStatus.completed
+    draft.error_message = None
+    draft.generated_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(draft)
+    return draft
+
+
+async def get_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingDraft:
+    """يتطلب meetings.draft.view."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض مسودة هذا الاجتماع"
+    )
+
+    result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise DraftNotFoundError("لا توجد مسودة مولَّدة لهذا الاجتماع بعد")
+    return draft
