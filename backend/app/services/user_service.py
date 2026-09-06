@@ -21,12 +21,12 @@ import uuid
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.security import hash_password
 from app.models.department import Department
 from app.models.job_title import JobTitle
-from app.models.role import Role
+from app.models.role import Role, RolePermission
 from app.models.user import User, UserStatus
 from app.services import audit_service
 
@@ -140,15 +140,25 @@ async def list_users(
     db: AsyncSession, *, dep_id: uuid.UUID | None = None
 ) -> list[User]:
     """عرض المستخدمين النشطين (غير المحذوفين)، مع تصفية اختيارية حسب الإدارة."""
+    # نفس تحسين get_user أعلاه، لكن بحذر إضافي هنا: department/manager
+    # علاقة واحد-لواحد فتجميعها بـjoinedload آمن دائمًا (رحلة شبكة واحدة
+    # بدل اثنتين). أما role_permission_links/permission فعلاقة واحد-لعدة
+    # (كل دور قد يملك عشرات الصلاحيات) — تركناها selectin (تحميلها التلقائي
+    # من مستوى الموديل، بدون .options() صريح) بدل joinedload هنا تحديدًا،
+    # لأن joinedload لعلاقة "عدة" مع استعلام يرجّع *قائمة* مستخدمين (وليس
+    # مستخدمًا واحدًا كـget_user) يضاعف صفوف النتيجة الخام بعدد صلاحيات كل
+    # دور × عدد المستخدمين المشتركين بنفس الدور — selectin هنا يبقى فعليًا
+    # رحلة شبكة واحدة فقط تغطي كل الأدوار المسحوبة دفعة واحدة، فلا داعٍ
+    # لتحمّل مخاطرة تضخّم النتيجة مقابل نفس الفائدة تقريبًا.
     stmt = (
         select(User)
-        .options(selectinload(User.department).selectinload(Department.manager))
+        .options(joinedload(User.department).joinedload(Department.manager))
         .where(User.deleted_at.is_(None))
     )
     if dep_id is not None:
         stmt = stmt.where(User.dep_id == dep_id)
     result = await db.execute(stmt.order_by(User.created_at.desc()))
-    return list(result.scalars().all())
+    return list(result.unique().scalars().all())
 
 
 async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
@@ -159,10 +169,18 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
     """
     result = await db.execute(
         select(User)
-        .options(selectinload(User.department).selectinload(Department.manager))
+        .options(
+            joinedload(User.department).joinedload(Department.manager),
+            joinedload(User.role).joinedload(Role.role_permission_links).joinedload(
+                RolePermission.permission
+            ),
+        )
         .where(User.user_id == user_id, User.deleted_at.is_(None))
     )
-    return result.scalar_one_or_none()
+    # .unique() إلزامي هنا لأن role_permission_links مجموعة (one-to-many)
+    # مُحمَّلة بـjoinedload — بدونها SQLAlchemy يرمي خطأ لاحتمال تكرار صف
+    # User الواحد بعدد صلاحيات دوره بنتيجة الـJOIN الخام.
+    return result.unique().scalar_one_or_none()
 
 
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:

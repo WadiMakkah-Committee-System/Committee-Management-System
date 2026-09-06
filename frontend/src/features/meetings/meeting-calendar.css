@@ -1,0 +1,208 @@
+/* =====================================================================
+   meeting-calendar.css
+   إعادة تلبيس (Reskin) مكتبة react-big-calendar لمطابقة نظام تصميم
+   "وادي مكة" (Wadi Makkah UI Design System) بدل مظهرها الافتراضي —
+   بدون أي تعديل على منطق المكتبة نفسها، فقط متغيرات CSS الموجودة أصلًا
+   بـ index.css (تعمل تلقائيًا مع الوضع الداكن Dark Mode بلا أي كود إضافي
+   هنا، لأنها نفس المتغيرات التي يتغيّر تعريفها تحت [data-theme="dark"]).
+
+   نطاق العزل: كل قاعدة هنا مقيَّدة تحت .wm-calendar (الغلاف بـ
+   MeetingCalendarView.tsx) — لا تُسرّب أي تنسيق خارج مكوّن التقويم.
+
+   تحديث 2026-09-05 (ملاحظة لاما: "التقويم كله أبيض، اضف عليه الوان يصير
+   حياة"): رفعنا حضور ألوان الهوية بكل مكان ممكن — شريط علوي متدرّج بألوان
+   الشركة، صفوف أيام الأسبوع بخلفية زرقاء فاتحة، أحداث بشريط لون جانبي
+   وخلفية أوضح (color-mix مع لون السطح بدل التوكِن الفاتح جدًا)، بدون كسر
+   التباين بالوضع الداكن (كل الألوان مبنية على متغيرات CSS تتغيّر تلقائيًا
+   حسب [data-theme="dark"] — راجعي رأس الملف).
+
+   تحديث 2026-09-05 (٢) (ملاحظة لاما: أيام الأسبوع والمربعات "بعد" خافتة
+   مقارنة بالبطاقات الأربع فوق): رفعنا نسبة خلفية رأس الأعمدة (rbc-header
+   ورأس جدول الأجندة) من 8٪ إلى 20٪، وأصلحنا خللًا كامنًا بتباين الوضع
+   الداكن كان موجودًا أصلًا بأول تحديث: النص كان يستخدم var(--brand-primary)
+   (نفس القيمة الحرفية بالوضعين، غير مصمَّمة كنص على خلفية داكنة) — استُبدل
+   بـvar(--text-secondary) لرأس الأعمدة (تلوين بالخلفية فقط، نفس مبدأ
+   cardToneClass)، وبـvar(--brand-primary-hover) لعناصر أصغر كـrbc-now
+   وrbc-show-more (متغيّر مصمَّم أصلًا كنسخة آمنة التباين بكل وضع). كذلك
+   رفعنا نسبة تلوين خلفية الأحداث بـMeetingCalendarView.tsx (STATUS_COLOR)
+   من 14-16٪ إلى 26-30٪.
+   ===================================================================== */
+
+.wm-calendar {
+  --rbc-border-color: var(--border-default);
+  position: relative;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+}
+
+/* شريط علوي متدرّج بألوان الشركة — لمسة "حياة" بصرية أولى تُرى فور فتح
+   التقويم، بنفس نصف قطر انحناء الحاوية (rounded-md بـMeetingCalendarView). */
+.wm-calendar::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 4px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: linear-gradient(
+    90deg,
+    var(--brand-primary),
+    var(--brand-teal) 35%,
+    var(--brand-accent) 65%,
+    var(--brand-orange)
+  );
+}
+
+.wm-calendar .rbc-calendar {
+  font-family: inherit;
+}
+
+/* --- الحدود والخلفيات العامة --- */
+.wm-calendar .rbc-off-range-bg {
+  background: var(--bg-app);
+}
+
+.wm-calendar .rbc-off-range {
+  color: var(--text-muted);
+}
+
+.wm-calendar .rbc-today {
+  background-color: color-mix(in srgb, var(--brand-accent) 18%, transparent);
+}
+
+.wm-calendar .rbc-header {
+  padding: 10px 4px;
+  font-size: 12.5px;
+  font-weight: 700;
+  /* نص محايد آمن التباين بكلا الوضعين (بدل var(--brand-primary) التي تفشل
+     بالوضع الداكن — نفس القيمة الحرفية بكل الأوضاع). التلوين يظهر بالخلفية
+     فقط، بنفس مبدأ cardToneClass (خلفية/حدود ملوّنة، نص محايد). */
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+  background: color-mix(in srgb, var(--brand-primary) 20%, transparent);
+}
+
+.wm-calendar .rbc-month-view,
+.wm-calendar .rbc-time-view,
+.wm-calendar .rbc-agenda-view table.rbc-agenda-table {
+  border-color: var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.wm-calendar .rbc-day-bg + .rbc-day-bg,
+.wm-calendar .rbc-month-row + .rbc-month-row,
+.wm-calendar .rbc-header + .rbc-header,
+.wm-calendar .rbc-time-content > * + * > *,
+.wm-calendar .rbc-timeslot-group,
+.wm-calendar .rbc-time-header-content,
+.wm-calendar .rbc-time-content {
+  border-color: var(--border-default);
+}
+
+.wm-calendar .rbc-date-cell {
+  padding: 4px 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.wm-calendar .rbc-date-cell.rbc-now {
+  font-weight: 700;
+  color: var(--brand-primary-hover);
+}
+
+.wm-calendar .rbc-off-range-bg ~ .rbc-date-cell,
+.wm-calendar .rbc-day-bg.rbc-off-range-bg {
+  opacity: 0.6;
+}
+
+/* --- الأحداث (اجتماعات) --- */
+.wm-calendar .rbc-event {
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  border-style: solid;
+  border-block-width: 1px;
+  border-inline-end-width: 1px;
+  /* شريط لون سميك بجهة البداية (يمين بالعربي RTL) — لون الحالة نفسه القادم
+     من eventPropGetter (borderColor) — يعطي الحدث هيئة "شريحة ملوّنة" بدل
+     مجرد نص خافت. */
+  border-inline-start-width: 4px;
+  border-color: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.wm-calendar .rbc-event:hover,
+.wm-calendar .rbc-event:focus {
+  filter: brightness(0.95);
+  outline: none;
+}
+
+.wm-calendar .rbc-event.rbc-selected {
+  box-shadow: 0 0 0 2px var(--brand-accent);
+}
+
+.wm-calendar .rbc-event-label {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.wm-calendar .rbc-show-more {
+  background: transparent;
+  color: var(--brand-primary-hover);
+  font-weight: 700;
+  font-size: 11.5px;
+}
+
+/* --- شريط الوقت (أسبوع/يوم) --- */
+.wm-calendar .rbc-time-gutter .rbc-timeslot-group {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.wm-calendar .rbc-current-time-indicator {
+  background-color: var(--status-error-main);
+  height: 2px;
+}
+
+/* --- جدول الأجندة (Agenda) --- */
+.wm-calendar .rbc-agenda-view table.rbc-agenda-table thead > tr > th {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--brand-primary) 20%, var(--table-header-bg));
+  /* نفس إصلاح .rbc-header أعلاه: نص محايد آمن التباين، تلوين بالخلفية فقط. */
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.wm-calendar .rbc-agenda-view table.rbc-agenda-table tbody > tr > td {
+  padding: 10px 12px;
+  border-color: var(--border-default);
+}
+
+.wm-calendar .rbc-agenda-view table.rbc-agenda-table tbody > tr:hover {
+  background: var(--table-hover-bg);
+  cursor: pointer;
+}
+
+.wm-calendar .rbc-agenda-date-cell,
+.wm-calendar .rbc-agenda-time-cell {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.wm-calendar .rbc-agenda-empty {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* RTL: مكتبة react-big-calendar تدعم rtl عبر prop rtl (تضيف كلاس rbc-rtl
+   وتقلب الاتجاه المنطقي داخليًا) — لا حاجة لأي Override إضافي هنا سوى
+   التأكد أن الخط والألوان متسقة، لأن التخطيط نفسه (اتجاه الأعمدة/الأسهم)
+   تتكفّل به المكتبة عبر rbc-rtl. خصائص border-inline-* وinset-inline أعلاه
+   منطقية (Logical Properties) أصلًا فتتبع rtl/ltr تلقائيًا بلا أي كود إضافي. */

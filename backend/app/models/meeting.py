@@ -41,6 +41,13 @@ class MeetingStatus(str, enum.Enum):
     recorded = "recorded"
 
 
+class MeetingMode(str, enum.Enum):
+    """نوع انعقاد الاجتماع — عن بعد/حضوري (db/migrations/0020_meetings_mode_location.sql)."""
+
+    remote = "remote"
+    in_person = "in_person"
+
+
 # مشاركو الاجتماع — جدول وسيط بسيط (meeting_id, user_id)، بنفس نمط
 # committee_members/committee_formation_request_members.
 meeting_participants = Table(
@@ -68,8 +75,20 @@ class Meeting(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    meeting_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    mode: Mapped[MeetingMode] = mapped_column(
+        SAEnum(MeetingMode, name="meeting_mode", native_enum=True), nullable=False
+    )
+    # مكان الانعقاد داخل الشركة — إلزامي فقط لو mode='in_person' (مفروض
+    # بقاعدة البيانات نفسها عبر CHECK constraint
+    # meetings_location_required_when_in_person_chk — راجعي رأس
+    # db/migrations/0020_meetings_mode_location.sql للقرار الموثّق).
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # وقت النهاية المخطَّط عند الجدولة (migration 0023) — Nullable لأن
+    # الاجتماعات القديمة قبل هذا الحقل ليس لها قيمة حقيقية معروفة؛ إلزامي
+    # فقط للاجتماعات الجديدة عبر MeetingCreate. مصدر حساب الحالة الديناميكية
+    # (upcoming/ongoing/finished) — راجعي meeting_service._maybe_transition_status.
+    scheduled_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     status: Mapped[MeetingStatus] = mapped_column(
         SAEnum(MeetingStatus, name="meeting_status", native_enum=True),
@@ -84,6 +103,11 @@ class Meeting(Base):
     # محجوزان لمرحلة تكامل Microsoft Teams القادمة — غير مستخدَمين بعد.
     teams_meeting_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     teams_join_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # وقت أول/آخر حضور فعلي بغرفة Agora (db/migrations/0022) — معلوماتي بحت،
+    # منفصل تمامًا عن status (راجعي ملاحظة النطاق برأس الـmigration نفسه).
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -131,3 +155,31 @@ class MeetingAgendaItem(Base):
     )
 
     meeting: Mapped["Meeting"] = relationship(back_populates="agenda_items")
+
+
+class MeetingAttendance(Base):
+    """
+    سطر تدقيق حضور فعلي لجلسة Agora واحدة (انضمام إلى مغادرة) — منفصل عن
+    meeting_participants (المدعوّون المخطّط لهم عند الجدولة). راجعي رأس
+    db/migrations/0022_meetings_agora_video.sql للتفصيل الكامل. لا Soft
+    Delete هنا (سجل تدقيقي بحت، بنفس فلسفة audit_logs).
+    """
+
+    __tablename__ = "meeting_attendance"
+
+    attendance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    meeting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.meeting_id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    # uid عشوائي (32-bit آمن) يولّده meeting_service.join_meeting لكل جلسة
+    # انضمام — وليس من العميل (يمنع انتحال uid شخص آخر داخل غرفة Agora).
+    agora_uid: Mapped[int] = mapped_column(Integer, nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -192,3 +192,39 @@ body {
   background-color: var(--border-default);
   border-radius: 8px;
 }
+
+/* ==========================================================================
+   زر "دخول الاجتماع" النابض — يظهر فقط لما يبدأ وقت الاجتماع فعليًا
+   (راجعي isMeetingLive بـMeetingDetailPage.tsx). نستخدم --status-success-main
+   نفسه (اللون المستخدم أصلًا لحالة status='ongoing' بـStatusBadge.tsx) حفاظًا
+   على نفس الدلالة اللونية: أخضر = جارٍ الآن.
+   ========================================================================== */
+
+@keyframes live-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-success-main) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 12px color-mix(in srgb, var(--status-success-main) 0%, transparent);
+  }
+}
+
+@keyframes live-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
+
+.animate-live-pulse-ring {
+  animation: live-pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-live-dot-pulse {
+  animation: live-dot-pulse 1.4s ease-in-out infinite;
+}

@@ -21,12 +21,41 @@ from sqlalchemy import text
 
 from sqlalchemy import select
 
+from app.core import storage_client
 from app.core.redis_client import redis_client
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.role import Role
 from app.models.user import User
+
+
+@pytest.fixture(autouse=True)
+def _fake_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    يستبدل Supabase Storage بقاموس بالذاكرة — لا اتصال شبكة فعلي أثناء
+    الاختبارات. مركزيًا هنا (وليس مكررًا بكل ملف اختبار) لأنه صار مُستخدَمًا
+    من أكثر من وحدة الآن (test_documents.py، وtest_meetings.py لمرفقات
+    الاجتماعات — أول استخدام فعلي لـdocument_links، راجعي رأس
+    db/migrations/0021). autouse=True آمن حتى للاختبارات التي لا تستخدم
+    الرفع إطلاقًا — لا تأثير لها.
+    """
+    fake_files: dict[str, bytes] = {}
+
+    async def fake_upload(storage_path: str, content: bytes, *, content_type: str) -> None:
+        fake_files[storage_path] = content
+
+    async def fake_download(storage_path: str) -> bytes:
+        if storage_path not in fake_files:
+            raise storage_client.StorageError("الملف غير موجود بالتخزين الوهمي")
+        return fake_files[storage_path]
+
+    async def fake_delete(storage_path: str) -> None:
+        fake_files.pop(storage_path, None)
+
+    monkeypatch.setattr(storage_client, "upload_object", fake_upload)
+    monkeypatch.setattr(storage_client, "download_object", fake_download)
+    monkeypatch.setattr(storage_client, "delete_object", fake_delete)
 
 
 @pytest_asyncio.fixture(autouse=True)

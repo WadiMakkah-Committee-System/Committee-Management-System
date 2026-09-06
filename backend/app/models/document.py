@@ -242,6 +242,10 @@ class DocumentLink(Base):
     )
     linked_entity_type: Mapped[str] = mapped_column(String(50), primary_key=True)
     linked_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    # يميّز دور الربط ضمن نفس الكيان (مثال: 'presentation' لمرفقات
+    # الاجتماعات — راجعي رأس db/migrations/0021) — NULL لأي مرفق عام
+    # بلا تمييز خاص. راجعي app/services/meeting_service.py للاستخدام الفعلي.
+    link_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
     linked_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False
     )

@@ -1,24 +1,36 @@
-import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   ArrowRight,
   CalendarClock,
+  Download,
   FileText,
   ListChecks,
   Mail,
+  MapPin,
+  Paperclip,
   Pencil,
   Plus,
+  Presentation,
+  Radio,
   Trash2,
+  Upload,
   Users as UsersIcon,
+  Video,
 } from 'lucide-react'
 import {
   useAddAgendaItem,
   useDeleteAgendaItem,
   useDeleteMeeting,
+  useDeleteMeetingAttachment,
+  useDownloadMeetingAttachment,
+  useOpenMeetingAttachment,
+  useMeetingAttachments,
   useMeetingDetail,
   useUpdateAgendaItem,
   useUpdateMeeting,
+  useUploadMeetingAttachment,
 } from '@/hooks/useMeetings'
 import { useCommitteeDetail } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
@@ -33,28 +45,99 @@ import { ActionMenu } from '@/components/ui/ActionMenu'
 import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
-import { cn, extractErrorMessage, formatDateTime } from '@/lib/utils'
+import { MeetingRoom } from './MeetingRoom'
+import { cn, extractErrorMessage, formatDateTime, formatFileSize } from '@/lib/utils'
+import type { MeetingAttachment, MeetingAttachmentLinkRole } from '@/types'
 
 /**
- * تفاصيل اجتماع واحد + إدارة جدول أعماله. إجراءات التعديل/الحذف/إدارة
- * الأجندة تظهر فقط لرئيس اللجنة المرتبط بالاجتماع (أو سوبر أدمن) — نفس
- * القيد الهيكلي المفروض بالباك-إند (meeting_service._authorize_manage)،
+ * تفاصيل اجتماع واحد + إدارة جدول أعماله ومرفقاته. إجراءات التعديل/الحذف/
+ * إدارة الأجندة والمرفقات تظهر فقط لرئيس اللجنة المرتبط بالاجتماع (أو
+ * سوبر أدمن) — نفس القيد الهيكلي المفروض بالباك-إند
+ * (meeting_service._require_access مقابل meetings.update/attachments.*)،
  * وليس صلاحية عامة من الكتالوج (راجعي MeetingsPage.tsx لتفصيل السبب).
+ *
+ * تحديث 2026-09-01 (قرار موثّق مع لاما): قسم "المرفقات" الجديد (بقسمَين:
+ * العرض التقديمي، ومرفقات الاجتماع) — أول استخدام فعلي لـdocument_links
+ * بالواجهة (راجعي رأس db/migrations/0021 بالباك-إند). كذلك id="agenda-section"/
+ * id="attachments-section" + تمرير تلقائي (Scroll) عند فتح الصفحة بـ
+ * #agenda أو #attachments بالرابط — تدعم أيقونات الوصول السريع بـ
+ * MeetingsPage.tsx.
  */
+/** سطر مرفق واحد — قسم فرعي واحد (عرض تقديمي/مرفقات عامة) بصفحة التفاصيل. مرفوعة لمستوى الملف (وليست معرَّفة داخل MeetingDetailPage) لتفادي إعادة تعريفها بكل Render. */
+function AttachmentRow({
+  attachment,
+  canManage,
+  onOpen,
+  onDownload,
+  onDeleteRequest,
+}: {
+  attachment: MeetingAttachment
+  canManage: boolean
+  onOpen: () => void
+  onDownload: () => void
+  onDeleteRequest: () => void
+}) {
+  return (
+    <li className="flex items-center justify-between gap-3 border-b border-border-default px-3 py-2 last:border-0">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 items-center gap-2 text-start"
+        title="فتح المرفق"
+      >
+        <FileText size={14} className="shrink-0 text-text-muted" />
+        <div className="min-w-0">
+          <p className="truncate text-sm text-text-primary hover:underline">{attachment.file_name}</p>
+          <p className="text-[11px] text-text-muted">
+            {formatFileSize(attachment.file_size_bytes)} · {attachment.uploaded_by.first_name}{' '}
+            {attachment.uploaded_by.last_name}
+          </p>
+        </div>
+      </button>
+      <div className="flex shrink-0 items-center gap-1">
+        <button
+          onClick={onDownload}
+          className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
+          aria-label="تحميل المرفق"
+          title="تحميل"
+        >
+          <Download size={14} />
+        </button>
+        {canManage && (
+          <button
+            onClick={onDeleteRequest}
+            className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+            aria-label="حذف المرفق"
+            title="حذف"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
+      </div>
+    </li>
+  )
+}
+
 export function MeetingDetailPage() {
   const { meetingId } = useParams<{ meetingId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const user = useAuthStore((s) => s.user)
   const { showToast } = useToast()
 
   const { data: meeting, isLoading, isError, refetch } = useMeetingDetail(meetingId)
   const { data: committee } = useCommitteeDetail(meeting?.committee_id)
+  const { data: attachments, isLoading: attachmentsLoading } = useMeetingAttachments(meetingId)
 
   const updateMeetingMutation = useUpdateMeeting()
   const deleteMeetingMutation = useDeleteMeeting()
   const addAgendaItemMutation = useAddAgendaItem()
   const updateAgendaItemMutation = useUpdateAgendaItem()
   const deleteAgendaItemMutation = useDeleteAgendaItem()
+  const uploadAttachmentMutation = useUploadMeetingAttachment()
+  const deleteAttachmentMutation = useDeleteMeetingAttachment()
+  const downloadAttachmentMutation = useDownloadMeetingAttachment()
+  const openAttachmentMutation = useOpenMeetingAttachment()
 
   const [editOpen, setEditOpen] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
@@ -67,8 +150,48 @@ export function MeetingDetailPage() {
   const [editingItemTitle, setEditingItemTitle] = useState('')
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
 
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<string | null>(null)
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const presentationInputRef = useRef<HTMLInputElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
+
   const canManage =
     !!user?.role?.is_super_admin || (committee && committee.chair_user_id === user?.user_id)
+
+  const canDeleteMeeting = !!meeting && new Date(meeting.scheduled_at).getTime() > Date.now()
+
+  const [roomOpen, setRoomOpen] = useState(false)
+
+  // "الوقت الحالي" التفاعلي — يُحدَّث كل 15 ثانية لتقييم isMeetingLive أدناه
+  // بدون الحاجة لإعادة تحميل الصفحة (Date.now() وحده لا يُعيد Render تلقائيًا).
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    const interval = window.setInterval(() => setNowTick(Date.now()), 15_000)
+    return () => window.clearInterval(interval)
+  }, [])
+
+  // زر "دخول الاجتماع" النابض يظهر فقط: اجتماع عن بُعد (mode='remote') +
+  // وصل موعده فعليًا (scheduled_at <= الآن) + لم يُغلَق بعد (status !== 'finished').
+  // نعتمد الوقت المجدوَل وليس started_at لأن started_at لا يُضبط إلا بعد أول
+  // /join فعلي (الباك-إند، migration 0022) — لو اعتمدنا عليه لن يظهر الزر
+  // لأول شخص يحاول الدخول أصلًا (معضلة الدجاجة والبيضة). راجعي رأس
+  // meeting_service.py لقرار عدم ربط status تلقائيًا بهذا الحدث.
+  const isMeetingLive =
+    !!meeting &&
+    meeting.mode === 'remote' &&
+    meeting.status !== 'finished' &&
+    new Date(meeting.scheduled_at).getTime() <= nowTick &&
+    (!meeting.scheduled_end_at || new Date(meeting.scheduled_end_at).getTime() > nowTick)
+
+  // تمرير تلقائي لقسم الأجندة/المرفقات عند فتح الصفحة برابط يحمل
+  // #agenda أو #attachments (أيقونات الوصول السريع بـMeetingsPage.tsx).
+  useEffect(() => {
+    if (!meeting) return
+    const hash = location.hash.replace('#', '')
+    if (!hash) return
+    const el = document.getElementById(`${hash}-section`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [meeting, location.hash])
 
   if (isLoading) {
     return (
@@ -99,8 +222,10 @@ export function MeetingDetailPage() {
         payload: {
           title: values.title,
           description: values.description,
-          meeting_type: values.meeting_type,
+          mode: values.mode,
+          location: values.location,
           scheduled_at: values.scheduled_at,
+          scheduled_end_at: values.scheduled_end_at,
           participant_ids: values.participant_ids,
         },
       },
@@ -162,6 +287,28 @@ export function MeetingDetailPage() {
     )
   }
 
+  function handleUploadAttachment(files: FileList | null, linkRole: MeetingAttachmentLinkRole) {
+    if (!meetingId || !files || files.length === 0) return
+    setAttachmentError(null)
+    Array.from(files).forEach((file) => {
+      uploadAttachmentMutation.mutate(
+        { meetingId, file, linkRole },
+        { onError: (err) => setAttachmentError(extractErrorMessage(err)) },
+      )
+    })
+  }
+
+  function confirmDeleteAttachment() {
+    if (!deletingAttachmentId || !meetingId) return
+    deleteAttachmentMutation.mutate(
+      { meetingId, documentId: deletingAttachmentId },
+      { onSuccess: () => setDeletingAttachmentId(null) },
+    )
+  }
+
+  const presentationAttachments = (attachments ?? []).filter((a) => a.link_role === 'presentation')
+  const generalAttachments = (attachments ?? []).filter((a) => a.link_role === 'attachment')
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
@@ -181,29 +328,42 @@ export function MeetingDetailPage() {
             {committee && <p className="mt-1 text-sm text-text-muted">لجنة: {committee.name}</p>}
           </div>
         </div>
-        {canManage && (
-          <ActionMenu
-            items={[
-              {
-                label: 'تعديل الاجتماع',
-                icon: <Pencil size={14} />,
-                onClick: () => {
-                  setEditError(null)
-                  setEditOpen(true)
+        <div className="flex items-center gap-2">
+          {isMeetingLive && (
+            <button
+              type="button"
+              onClick={() => setRoomOpen(true)}
+              className="animate-live-pulse-ring flex items-center gap-2 rounded-sm bg-success px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-95 active:scale-[0.98]"
+            >
+              <Radio size={15} />
+              دخول الاجتماع
+            </button>
+          )}
+          {canManage && (
+            <ActionMenu
+              items={[
+                {
+                  label: 'تعديل الاجتماع',
+                  icon: <Pencil size={14} />,
+                  onClick: () => {
+                    setEditError(null)
+                    setEditOpen(true)
+                  },
                 },
-              },
-              {
-                label: 'حذف الاجتماع',
-                icon: <Trash2 size={14} />,
-                tone: 'danger',
-                onClick: () => {
-                  setDeleteError(null)
-                  setDeleteOpen(true)
+                {
+                  label: 'حذف الاجتماع',
+                  icon: <Trash2 size={14} />,
+                  tone: 'danger',
+                  disabled: !canDeleteMeeting,
+                  onClick: () => {
+                    setDeleteError(null)
+                    setDeleteOpen(true)
+                  },
                 },
-              },
-            ]}
-          />
-        )}
+              ]}
+            />
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -246,13 +406,30 @@ export function MeetingDetailPage() {
         ))}
       </div>
 
-      {meeting.description && (
+      {(meeting.description || meeting.mode) && (
         <Card>
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-            <FileText size={15} />
-            وصف الاجتماع
-          </h2>
-          <p className="mt-2 text-sm leading-relaxed text-text-secondary">{meeting.description}</p>
+          {meeting.description && (
+            <>
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <FileText size={15} />
+                وصف الاجتماع
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-text-secondary">{meeting.description}</p>
+            </>
+          )}
+          {meeting.mode && (
+            <p
+              className={cn(
+                'flex items-center gap-1.5 text-sm text-text-secondary',
+                meeting.description && 'mt-3 border-t border-border-default pt-3',
+              )}
+            >
+              {meeting.mode === 'remote' ? <Video size={14} /> : <MapPin size={14} />}
+              {meeting.mode === 'in_person'
+                ? `اجتماع حضوري${meeting.location ? ` — ${meeting.location}` : ''}`
+                : 'اجتماع عن بُعد'}
+            </p>
+          )}
         </Card>
       )}
 
@@ -287,7 +464,7 @@ export function MeetingDetailPage() {
         </ul>
       </Card>
 
-      <Card className="p-0">
+      <Card id="agenda-section" className="scroll-mt-4 p-0">
         <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
             <ListChecks size={15} />
@@ -383,6 +560,118 @@ export function MeetingDetailPage() {
         )}
       </Card>
 
+      <Card id="attachments-section" className="scroll-mt-4 p-0">
+        <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <Paperclip size={15} />
+            المرفقات
+          </h2>
+        </div>
+
+        <div className="flex flex-col gap-4 p-4">
+          <div className="rounded-sm border border-border-default">
+            <div className="flex items-center justify-between gap-2 border-b border-border-default px-3 py-2">
+              <h3 className="flex items-center gap-2 text-xs font-semibold text-text-primary">
+                <Presentation size={14} className="text-text-muted" />
+                العرض التقديمي
+              </h3>
+              {canManage && (
+                <button
+                  onClick={() => presentationInputRef.current?.click()}
+                  className="flex items-center gap-1 text-xs font-medium text-brand-primary hover:underline"
+                >
+                  <Upload size={12} />
+                  رفع ملف
+                </button>
+              )}
+              <input
+                ref={presentationInputRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  handleUploadAttachment(e.target.files, 'presentation')
+                  e.target.value = ''
+                }}
+              />
+            </div>
+            {attachmentsLoading ? (
+              <p className="px-3 py-4 text-center text-xs text-text-muted">جارِ التحميل...</p>
+            ) : presentationAttachments.length === 0 ? (
+              <p className="px-3 py-4 text-center text-xs text-text-muted">لا يوجد عرض تقديمي بعد</p>
+            ) : (
+              <ul>
+                {presentationAttachments.map((a) => (
+                  <AttachmentRow
+                    key={a.document_id}
+                    attachment={a}
+                    canManage={!!canManage}
+                    onOpen={() =>
+                      openAttachmentMutation.mutate({ meetingId: meetingId!, documentId: a.document_id })
+                    }
+                    onDownload={() =>
+                      downloadAttachmentMutation.mutate({ meetingId: meetingId!, documentId: a.document_id })
+                    }
+                    onDeleteRequest={() => setDeletingAttachmentId(a.document_id)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="rounded-sm border border-border-default">
+            <div className="flex items-center justify-between gap-2 border-b border-border-default px-3 py-2">
+              <h3 className="flex items-center gap-2 text-xs font-semibold text-text-primary">
+                <Paperclip size={14} className="text-text-muted" />
+                مرفقات الاجتماع
+              </h3>
+              {canManage && (
+                <button
+                  onClick={() => attachmentInputRef.current?.click()}
+                  className="flex items-center gap-1 text-xs font-medium text-brand-primary hover:underline"
+                >
+                  <Upload size={12} />
+                  رفع ملف
+                </button>
+              )}
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  handleUploadAttachment(e.target.files, 'attachment')
+                  e.target.value = ''
+                }}
+              />
+            </div>
+            {attachmentsLoading ? (
+              <p className="px-3 py-4 text-center text-xs text-text-muted">جارِ التحميل...</p>
+            ) : generalAttachments.length === 0 ? (
+              <p className="px-3 py-4 text-center text-xs text-text-muted">لا توجد مرفقات بعد</p>
+            ) : (
+              <ul>
+                {generalAttachments.map((a) => (
+                  <AttachmentRow
+                    key={a.document_id}
+                    attachment={a}
+                    canManage={!!canManage}
+                    onOpen={() =>
+                      openAttachmentMutation.mutate({ meetingId: meetingId!, documentId: a.document_id })
+                    }
+                    onDownload={() =>
+                      downloadAttachmentMutation.mutate({ meetingId: meetingId!, documentId: a.document_id })
+                    }
+                    onDeleteRequest={() => setDeletingAttachmentId(a.document_id)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {attachmentError && <p className="text-xs font-medium text-danger">{attachmentError}</p>}
+        </div>
+      </Card>
+
       <p className="text-xs text-text-muted">أُنشئ الاجتماع في {formatDateTime(meeting.created_at)}</p>
 
       {canManage && (
@@ -415,7 +704,20 @@ export function MeetingDetailPage() {
             confirmLabel="حذف"
             loading={deleteAgendaItemMutation.isPending}
           />
+          <ConfirmDialog
+            open={!!deletingAttachmentId}
+            onClose={() => setDeletingAttachmentId(null)}
+            onConfirm={confirmDeleteAttachment}
+            title="حذف المرفق"
+            description="سيتم حذف هذا المرفق نهائيًا. هل أنتِ متأكدة؟"
+            confirmLabel="حذف"
+            loading={deleteAttachmentMutation.isPending}
+          />
         </>
+      )}
+
+      {roomOpen && meetingId && (
+        <MeetingRoom meetingId={meetingId} meetingTitle={meeting.title} onClose={() => setRoomOpen(false)} />
       )}
     </div>
   )

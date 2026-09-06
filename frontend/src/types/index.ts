@@ -344,10 +344,29 @@ export interface DepartmentMemberElsewhere {
  * أنواع وحدة "إدارة الاجتماعات" — مطابقة تمامًا لـ
  * backend/app/schemas/meeting.py وbackend/app/models/meeting.py.
  * بدون Teams/AI في هذا الـPhase — راجعي رأس db/migrations/0016 للقرار
- * الموثّق. المرفقات غير مضمَّنة هنا عمدًا (تُبنى لاحقًا عبر وحدة الوثائق
- * document_links، وليست جزءًا من هذه الأنواع).
+ * الموثّق.
+ *
+ * تحديث 2026-09-02 (مطابقة db/migrations/0020_meetings_mode_location.sql
+ * المطبَّق فعليًا على قاعدة البيانات الحقيقية): نوع الاجتماع اختيار مقيَّد
+ * بحقل mode (ENUM حقيقي remote/in_person)، بدل meeting_type القديم (نص حر
+ * تم حذفه نهائيًا من قاعدة البيانات ذاتها بهذا الـmigration، لا يوجد أي صف
+ * قديم يحمل قيمة أخرى). Meeting.mode لذلك `MeetingMode` غير قابل لـnull،
+ * وليس `string | null` كما كان مخطَّطًا سابقًا. المرفقات (MeetingAttachment)
+ * — أول استخدام فعلي لجدول document_links (راجعي رأس db/migrations/0021).
  */
 export type MeetingStatus = 'upcoming' | 'ongoing' | 'finished' | 'recorded'
+export type MeetingMode = 'remote' | 'in_person'
+export type MeetingAttachmentLinkRole = 'presentation' | 'attachment'
+
+export interface MeetingAttachment {
+  document_id: string
+  link_role: MeetingAttachmentLinkRole
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  uploaded_by: CommitteeMemberUser
+  linked_at: string
+}
 
 export interface MeetingAgendaItem {
   agenda_item_id: string
@@ -376,9 +395,16 @@ export interface Meeting {
   committee_id: string
   title: string
   description: string | null
-  meeting_type: string | null
+  mode: MeetingMode
+  location: string | null
   scheduled_at: string
+  /** وقت النهاية المخطَّط عند الجدولة — null فقط للاجتماعات القديمة قبل هذا الحقل (migration 0023). */
+  scheduled_end_at: string | null
   status: MeetingStatus
+  /** أول وقت انضم فيه أحد فعليًا (Agora) — null لو ما بدأ الاجتماع بعد. معلوماتي فقط، لا يغيّر status. */
+  started_at: string | null
+  /** آخر وقت غادر فيه الجميع (Agora) — null لو ما انتهى بعد أو ما بدأ أصلًا. */
+  ended_at: string | null
   creator: CommitteeMemberUser
   participants: CommitteeMemberUser[]
   agenda_items: MeetingAgendaItem[]
@@ -390,16 +416,32 @@ export interface MeetingCreatePayload {
   committee_id: string
   title: string
   description?: string | null
-  meeting_type?: string | null
+  mode: MeetingMode
+  /** إلزامي لو in_person، ويجب تركه undefined/null لو remote — راجعي MeetingFormModal. */
+  location?: string | null
   scheduled_at: string
-  participant_ids: string[]
+  /** إلزامي — لا يمكن إنشاء اجتماع بلا وقت نهاية معروف (قرار 2026-09-05). يجب أن يكون بعد scheduled_at. */
+  scheduled_end_at: string
+  /** لا يوجد هنا — أعضاء اللجنة كلهم (+ الرئيس) يُضافون تلقائيًا من الباك اند عند الإنشاء. */
   agenda_items?: MeetingAgendaItemCreatePayload[]
+}
+
+/** استجابة POST /meetings/{id}/join — بيانات الدخول لغرفة الفيديو عبر Agora. */
+export interface MeetingJoinResponse {
+  app_id: string
+  channel: string
+  token: string
+  uid: number
+  /** Unix timestamp (ثواني) — وقت انتهاء صلاحية الـtoken. */
+  expires_at: number
 }
 
 export interface MeetingUpdatePayload {
   title?: string
   description?: string | null
-  meeting_type?: string | null
+  mode?: MeetingMode
+  location?: string | null
   scheduled_at?: string
+  scheduled_end_at?: string
   participant_ids?: string[]
 }

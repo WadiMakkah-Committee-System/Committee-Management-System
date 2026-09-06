@@ -20,6 +20,17 @@ apiClient.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
+  // FormData (رفع ملفات — راجعي uploadMeetingAttachment بـapi/meetings.ts):
+  // axios.create({ headers: { 'Content-Type': 'application/json' } }) أعلاه
+  // يضبط Content-Type ثابتًا على مستوى الـinstance نفسه (defaults.headers)،
+  // وهذا لا يُزال تلقائيًا عند إرسال FormData بخلاف axios.defaults العادي —
+  // فيصل multipart/form-data للباك-إند بـContent-Type: application/json
+  // خطأ، فيفشل FastAPI بقراءة File()/Form() ويرجع 422 "Field required" لكل
+  // حقل (لأنه لا يقرأ الـbody كـmultipart إطلاقًا). الحذف الصريح هنا يترك
+  // المتصفح يضبط Content-Type الصحيح (multipart/form-data; boundary=...).
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    delete config.headers['Content-Type']
+  }
   return config
 })
 

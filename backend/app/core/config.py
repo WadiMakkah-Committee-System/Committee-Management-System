@@ -49,10 +49,17 @@ class Settings(BaseSettings):
       MAX_FAILED_LOGIN_ATTEMPTS: int = 5
       ACCOUNT_LOCKOUT_MINUTES: int = 15
 
-    # --- Email / SMTP (لإرسال OTP واسترجاع كلمة المرور - FR-UM-018) ---
+    # --- Email / SMTP (لإرسال OTP واسترجاع كلمة المرور - FR-UM-018 -
+    # ولإشعارات الاجتماعات إنشاء/تعديل/حذف - قرار لاما 2026-09-06) ---
       SMTP_HOST: str = ""
+      SMTP_PORT: int = 587
       SMTP_USER: str = ""
       SMTP_PASSWORD: str = ""
+      # اسم/عنوان المُرسِل الظاهر بالبريد — افتراضيًا نفس SMTP_USER لو تُرك فارغًا.
+      SMTP_FROM_EMAIL: str = ""
+      SMTP_FROM_NAME: str = "نظام إدارة اللجان"
+      # True لـ Gmail/Outlook القياسي (STARTTLS على المنفذ 587).
+      SMTP_USE_TLS: bool = True
 
     # --- الذكاء الاصطناعي (مراحل لاحقة) ---
       CLAUDE_API_KEY: str = ""
@@ -62,6 +69,16 @@ class Settings(BaseSettings):
       SUPABASE_SERVICE_ROLE_KEY: str = ""
       SUPABASE_STORAGE_BUCKET: str = "documents"
       MAX_DOCUMENT_UPLOAD_MB: int = 25
+
+    # --- Agora (اجتماعات الفيديو عن بعد — meetings.join) ---
+    # AGORA_APP_ID/AGORA_APP_CERTIFICATE اختياريان بقيمة افتراضية فارغة (نفس
+    # نمط SUPABASE_*/SMTP_* أعلاه) حتى لا تنكسر بيئات .env القديمة. يُستخدَمان
+    # من app.core.agora_client فقط لإصدار Token قصير العمر (Server-Side)، ولا
+    # يصلان للـFrontend أبدًا (نفس مبدأ SUPABASE_SERVICE_ROLE_KEY أعلاه) —
+    # العميل يستلم Token جاهز فقط عبر POST /meetings/{id}/join.
+      AGORA_APP_ID: str = ""
+      AGORA_APP_CERTIFICATE: str = ""
+      AGORA_TOKEN_TTL_SECONDS: int = 3600
 
     # --- عام ---
       ENVIRONMENT: str = "development"

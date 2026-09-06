@@ -5,38 +5,17 @@
 ملاحظة تصميم للاختبارات:
 Supabase Storage (الملف الفعلي) لا يُستدعى فعليًا هنا — app.core.storage_client
 يُستبدل بـ monkeypatch لثلاث دوال بسيطة (upload/download/delete) تعمل على
-قاموس بايثون في الذاكرة، بدل شبكة حقيقية. هذا يطابق حدود الوحدة: منطق
-RBAC/الرؤية/البيانات الوصفية هو ما تختبره هذه الوحدة، وليس Supabase نفسه.
+قاموس بايثون في الذاكرة، بدل شبكة حقيقية (fixture _fake_storage، انتقلت
+لـconftest.py 2026-09-01 لأنها صارت مُستخدَمة من أكثر من ملف اختبار). هذا
+يطابق حدود الوحدة: منطق RBAC/الرؤية/البيانات الوصفية هو ما تختبره هذه
+الوحدة، وليس Supabase نفسه.
 """
 
 import io
 
-import pytest
 from httpx import AsyncClient
 
-from app.core import storage_client
 from app.models.user import User
-
-
-@pytest.fixture(autouse=True)
-def _fake_storage(monkeypatch: pytest.MonkeyPatch) -> None:
-    """يستبدل Supabase Storage بقاموس بالذاكرة — لا اتصال شبكة فعلي أثناء الاختبارات."""
-    fake_files: dict[str, bytes] = {}
-
-    async def fake_upload(storage_path: str, content: bytes, *, content_type: str) -> None:
-        fake_files[storage_path] = content
-
-    async def fake_download(storage_path: str) -> bytes:
-        if storage_path not in fake_files:
-            raise storage_client.StorageError("الملف غير موجود بالتخزين الوهمي")
-        return fake_files[storage_path]
-
-    async def fake_delete(storage_path: str) -> None:
-        fake_files.pop(storage_path, None)
-
-    monkeypatch.setattr(storage_client, "upload_object", fake_upload)
-    monkeypatch.setattr(storage_client, "download_object", fake_download)
-    monkeypatch.setattr(storage_client, "delete_object", fake_delete)
 
 
 DOCUMENT_TEST_CONTENT = b"sample document content for tests"

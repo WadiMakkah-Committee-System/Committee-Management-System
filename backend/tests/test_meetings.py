@@ -187,8 +187,9 @@ async def test_chair_can_create_meeting(
             "committee_id": ctx["committee_id"],
             "title": "الاجتماع الأول",
             "description": "وصف",
-            "meeting_type": "عادي",
+            "mode": "remote",
             "scheduled_at": "2026-09-15T10:00:00Z",
+            "scheduled_end_at": "2026-09-15T11:00:00Z",
             "participant_ids": [ctx["chair_id"], ctx["member_id"]],
             "agenda_items": [{"title": "بند 1", "sort_order": 0}],
         },
@@ -212,7 +213,9 @@ async def test_non_chair_member_cannot_create_meeting(
         json={
             "committee_id": ctx["committee_id"],
             "title": "محاولة غير مصرح بها",
+            "mode": "remote",
             "scheduled_at": "2026-09-15T10:00:00Z",
+            "scheduled_end_at": "2026-09-15T11:00:00Z",
             "participant_ids": [ctx["member_id"]],
         },
         headers=ctx["member_headers"],
@@ -230,7 +233,9 @@ async def test_member_can_view_but_not_delete_meeting(
         json={
             "committee_id": ctx["committee_id"],
             "title": "اجتماع للعرض",
+            "mode": "remote",
             "scheduled_at": "2026-09-20T09:00:00Z",
+            "scheduled_end_at": "2026-09-20T10:00:00Z",
             "participant_ids": [ctx["chair_id"], ctx["member_id"]],
         },
         headers=ctx["chair_headers"],
@@ -257,7 +262,9 @@ async def test_outsider_cannot_view_meeting(
         json={
             "committee_id": ctx["committee_id"],
             "title": "اجتماع خاص",
+            "mode": "remote",
             "scheduled_at": "2026-09-22T09:00:00Z",
+            "scheduled_end_at": "2026-09-22T10:00:00Z",
             "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
@@ -279,7 +286,9 @@ async def test_chair_can_update_and_delete_meeting(
         json={
             "committee_id": ctx["committee_id"],
             "title": "عنوان قديم",
+            "mode": "remote",
             "scheduled_at": "2026-09-25T09:00:00Z",
+            "scheduled_end_at": "2026-09-25T10:00:00Z",
             "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
@@ -313,7 +322,9 @@ async def test_agenda_item_crud_by_chair(
         json={
             "committee_id": ctx["committee_id"],
             "title": "اجتماع بجدول أعمال",
+            "mode": "remote",
             "scheduled_at": "2026-09-28T09:00:00Z",
+            "scheduled_end_at": "2026-09-28T10:00:00Z",
             "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
@@ -340,3 +351,253 @@ async def test_agenda_item_crud_by_chair(
         f"/api/v1/meetings/agenda-items/{agenda_item_id}", headers=ctx["chair_headers"]
     )
     assert delete_item.status_code == 204
+
+
+# ============================== النوع/المكان (2026-09-01) ==============================
+
+
+async def test_onsite_meeting_requires_location(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+
+    missing_location = await client.post(
+        "/api/v1/meetings",
+        json={
+            "committee_id": ctx["committee_id"],
+            "title": "اجتماع حضوري بدون مكان",
+            "mode": "in_person",
+            "scheduled_at": "2026-09-15T10:00:00Z",
+            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "participant_ids": [ctx["chair_id"]],
+        },
+        headers=ctx["chair_headers"],
+    )
+    assert missing_location.status_code == 422, missing_location.text
+
+    with_location = await client.post(
+        "/api/v1/meetings",
+        json={
+            "committee_id": ctx["committee_id"],
+            "title": "اجتماع حضوري",
+            "mode": "in_person",
+            "location": "قاعة الاجتماعات الرئيسية",
+            "scheduled_at": "2026-09-15T10:00:00Z",
+            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "participant_ids": [ctx["chair_id"]],
+        },
+        headers=ctx["chair_headers"],
+    )
+    assert with_location.status_code == 201, with_location.text
+    assert with_location.json()["location"] == "قاعة الاجتماعات الرئيسية"
+
+
+async def test_remote_meeting_rejects_location(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+
+    response = await client.post(
+        "/api/v1/meetings",
+        json={
+            "committee_id": ctx["committee_id"],
+            "title": "اجتماع عن بُعد بمكان (خطأ)",
+            "mode": "remote",
+            "location": "لا يجوز",
+            "scheduled_at": "2026-09-15T10:00:00Z",
+            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "participant_ids": [ctx["chair_id"]],
+        },
+        headers=ctx["chair_headers"],
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_update_meeting_can_switch_type_and_clear_location(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """يتحقق من location_set/mode_set (meeting_service.update_meeting) — التبديل in_person → remote يمسح location فعليًا."""
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+
+    create = await client.post(
+        "/api/v1/meetings",
+        json={
+            "committee_id": ctx["committee_id"],
+            "title": "اجتماع حضوري قابل للتعديل",
+            "mode": "in_person",
+            "location": "الطابق الثاني",
+            "scheduled_at": "2026-09-15T10:00:00Z",
+            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "participant_ids": [ctx["chair_id"]],
+        },
+        headers=ctx["chair_headers"],
+    )
+    assert create.status_code == 201, create.text
+    meeting_id = create.json()["meeting_id"]
+
+    # تبديل النوع بدون إرسال location جديد — يجب أن يُرفض (لا يزال onsite ضمنيًا حتى تُرسَل location).
+    bad_switch = await client.patch(
+        f"/api/v1/meetings/{meeting_id}",
+        json={"mode": "remote"},
+        headers=ctx["chair_headers"],
+    )
+    assert bad_switch.status_code == 400, bad_switch.text
+
+    good_switch = await client.patch(
+        f"/api/v1/meetings/{meeting_id}",
+        json={"mode": "remote", "location": None},
+        headers=ctx["chair_headers"],
+    )
+    assert good_switch.status_code == 200, good_switch.text
+    assert good_switch.json()["mode"] == "remote"
+    assert good_switch.json()["location"] is None
+
+
+# ============================== حذف الاجتماع قبل موعده فقط (2026-09-01) ==============================
+
+
+async def test_cannot_delete_meeting_after_scheduled_time(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+
+    create = await client.post(
+        "/api/v1/meetings",
+        json={
+            "committee_id": ctx["committee_id"],
+            "title": "اجتماع انتهى وقته",
+            "mode": "remote",
+            "scheduled_at": "2020-01-01T09:00:00Z",
+            "scheduled_end_at": "2020-01-01T10:00:00Z",
+            "participant_ids": [ctx["chair_id"]],
+        },
+        headers=ctx["chair_headers"],
+    )
+    assert create.status_code == 201, create.text
+    meeting_id = create.json()["meeting_id"]
+
+    delete_attempt = await client.delete(
+        f"/api/v1/meetings/{meeting_id}", headers=ctx["chair_headers"]
+    )
+    assert delete_attempt.status_code == 409, delete_attempt.text
+
+
+# ============================== مرفقات الاجتماع (2026-09-01) ==============================
+
+
+async def _create_meeting_with_attachment_permissions(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> dict:
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+    await _grant_committee_role_permissions(
+        ["meetings.attachments.add", "meetings.attachments.view", "meetings.attachments.delete"],
+        slug="chair",
+    )
+    await _grant_committee_role_permissions(["meetings.attachments.view"], slug="member")
+
+    create = await client.post(
+        "/api/v1/meetings",
+        json={
+            "committee_id": ctx["committee_id"],
+            "title": "اجتماع بمرفقات",
+            "mode": "remote",
+            "scheduled_at": "2026-09-15T10:00:00Z",
+            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "participant_ids": [ctx["chair_id"], ctx["member_id"]],
+        },
+        headers=ctx["chair_headers"],
+    )
+    assert create.status_code == 201, create.text
+    ctx["meeting_id"] = create.json()["meeting_id"]
+    return ctx
+
+
+async def test_chair_can_upload_and_list_attachments(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    ctx = await _create_meeting_with_attachment_permissions(client, auth_headers, roles_by_name)
+    meeting_id = ctx["meeting_id"]
+
+    upload_presentation = await client.post(
+        f"/api/v1/meetings/{meeting_id}/attachments",
+        files={"file": ("slides.pdf", b"%PDF-1.4 fake content", "application/pdf")},
+        data={"link_role": "presentation"},
+        headers=ctx["chair_headers"],
+    )
+    assert upload_presentation.status_code == 201, upload_presentation.text
+    assert upload_presentation.json()["link_role"] == "presentation"
+
+    upload_attachment = await client.post(
+        f"/api/v1/meetings/{meeting_id}/attachments",
+        files={"file": ("notes.txt", b"some notes", "text/plain")},
+        data={"link_role": "attachment"},
+        headers=ctx["chair_headers"],
+    )
+    assert upload_attachment.status_code == 201, upload_attachment.text
+
+    listing = await client.get(
+        f"/api/v1/meetings/{meeting_id}/attachments", headers=ctx["member_headers"]
+    )
+    assert listing.status_code == 200, listing.text
+    roles = sorted(item["link_role"] for item in listing.json())
+    assert roles == ["attachment", "presentation"]
+
+    document_id = upload_attachment.json()["document_id"]
+    download = await client.get(
+        f"/api/v1/meetings/{meeting_id}/attachments/{document_id}/download",
+        headers=ctx["member_headers"],
+    )
+    assert download.status_code == 200
+    assert download.content == b"some notes"
+
+
+async def test_member_without_attachments_add_permission_is_forbidden(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    ctx = await _create_meeting_with_attachment_permissions(client, auth_headers, roles_by_name)
+    meeting_id = ctx["meeting_id"]
+
+    upload_attempt = await client.post(
+        f"/api/v1/meetings/{meeting_id}/attachments",
+        files={"file": ("x.txt", b"x", "text/plain")},
+        data={"link_role": "attachment"},
+        headers=ctx["member_headers"],
+    )
+    assert upload_attempt.status_code == 403, upload_attempt.text
+
+
+async def test_outsider_cannot_view_attachments(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    ctx = await _create_meeting_with_attachment_permissions(client, auth_headers, roles_by_name)
+    meeting_id = ctx["meeting_id"]
+
+    listing = await client.get(
+        f"/api/v1/meetings/{meeting_id}/attachments", headers=ctx["outsider_headers"]
+    )
+    assert listing.status_code == 403
+
+
+async def test_chair_can_delete_attachment(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    ctx = await _create_meeting_with_attachment_permissions(client, auth_headers, roles_by_name)
+    meeting_id = ctx["meeting_id"]
+
+    upload = await client.post(
+        f"/api/v1/meetings/{meeting_id}/attachments",
+        files={"file": ("to-delete.txt", b"bye", "text/plain")},
+        data={"link_role": "attachment"},
+        headers=ctx["chair_headers"],
+    )
+    document_id = upload.json()["document_id"]
+
+    delete = await client.delete(
+        f"/api/v1/meetings/{meeting_id}/attachments/{document_id}", headers=ctx["chair_headers"]
+    )
+    assert delete.status_code == 204
+
+    listing = await client.get(
+        f"/api/v1/meetings/{meeting_id}/attachments", headers=ctx["chair_headers"]
+    )
+    assert listing.json() == []

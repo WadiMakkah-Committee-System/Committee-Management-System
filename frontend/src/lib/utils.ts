@@ -108,6 +108,26 @@ export function cardToneClass(index: number): string {
   return CARD_TONE_CLASSES[index % CARD_TONE_CLASSES.length]
 }
 
+/**
+ * دوائر أيقونات بألوان الهوية (نفس ترتيب الألوان أعلاه) — بنفس نمط دوائر
+ * أيقونات StatCard المُثبت أصلًا بالتصميم (خلفية 15٪ + نص/أيقونة بلون كامل)،
+ * لإعطاء كل صف بقائمة الاجتماعات هوية لونية واضحة (طلب لاما 2026-09-05:
+ * "التقويم كله أبيض... يصير حياة" — امتد نفس المبدأ لقائمة الاجتماعات).
+ */
+const ICON_TONE_CLASSES = [
+  'bg-brand-primary/15 text-brand-primary',
+  'bg-brand-teal/15 text-brand-teal',
+  'bg-brand-purple/15 text-brand-purple',
+  'bg-brand-orange/15 text-brand-orange',
+  'bg-brand-dark-blue/15 text-brand-dark-blue',
+  'bg-brand-lime/15 text-brand-lime',
+] as const
+
+/** ترجع تدرّج لون دائرة أيقونة ثابت حسب الترتيب (تدوير على القائمة أعلاه). */
+export function iconToneClass(index: number): string {
+  return ICON_TONE_CLASSES[index % ICON_TONE_CLASSES.length]
+}
+
 /** يستخرج رسالة خطأ عربية واضحة من أي شكل استجابة خطأ محتمل من الـ API. */
 export function extractErrorMessage(error: unknown): string {
   const fallback = 'حدث خطأ غير متوقع، حاول مرة أخرى'
@@ -161,4 +181,40 @@ export function formatDateTime(value: string | null): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+/** الوقت فقط (بلا تاريخ) — يُستخدم بشارة الوقت بالعرض الزمني لصفحة الاجتماعات. */
+export function formatTime(value: string | null): string {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
+/** عنوان يوم كامل (اليوم، رقم اليوم، الشهر) — يُستخدم كفاصل مجموعات بالعرض الزمني (Timeline). */
+export function formatDayHeading(value: string): string {
+  return new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(value))
+}
+
+/** مفتاح تجميع باليوم (حسب التوقيت المحلي للمتصفح) — لتقسيم قائمة الاجتماعات إلى مجموعات يومية. */
+export function dayGroupKey(value: string): string {
+  return new Date(value).toDateString()
+}
+
+/** حجم ملف مقروء (كيلوبايت/ميجابايت...) — يُستخدم بمرفقات الاجتماعات/الوثائق. */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} بايت`
+  const units = ['كيلوبايت', 'ميجابايت', 'جيجابايت']
+  let value = bytes / 1024
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unitIndex]}`
 }
