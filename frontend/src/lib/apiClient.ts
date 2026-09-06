@@ -10,9 +10,16 @@ import type { TokenResponse } from '@/types'
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1'
 
+// ملاحظة (مراجعة لاما 2026-08-31): لا نضبط Content-Type ثابتًا هنا عمدًا —
+// axios يضبطه تلقائيًا بحسب نوع البيانات المرسَلة (application/json لكائن
+// JS عادي). لو ثبّتناه على application/json هنا كإعداد افتراضي للـ instance
+// كله، فسيبقى ملتصقًا حتى مع طلبات FormData (رفع الملفات في
+// api/documents.ts::uploadDocument) لأن axios لا يستبدل Content-Type
+// موجود مسبقًا تلقائيًا — فيضيع الـ boundary الصحيح لـ multipart/form-data
+// ويفشل الباك-إند بخطأ "Field required" على كل حقول الفورم (title/file)
+// رغم إنها مُرسَلة فعليًا. راجعي uploadDocument للتفاصيل.
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: { 'Content-Type': 'application/json' },
 })
 
 apiClient.interceptors.request.use((config) => {

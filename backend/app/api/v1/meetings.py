@@ -1,18 +1,24 @@
 """
 الهدف:
-راوتات REST لوحدة "إدارة الاجتماعات" (Phase 2). بدون أي تكامل مع
-Microsoft Teams/Graph API وبدون خدمات الذكاء الاصطناعي — راجعي رأس
-db/migrations/0018_meetings_schema.sql وapp/services/meeting_service.py
-لتفصيل القرار الموثّق.
+راوتات REST لوحدة "إدارة الاجتماعات" (Phase 2 + مرفقات الاجتماع). بدون
+أي تكامل فعلي مع Microsoft Teams/Graph API — راجعي رأس
+app/services/meeting_service.py لتفصيل القرار الموثّق.
 
 ملاحظة مهمة (لماذا لا تستخدم راوتات الإنشاء/التعديل/الحذف require_permission
 على مستوى الراوت، بخلاف committees.py): التفويض هنا يعتمد على اللجنة
 المحدَّدة بالطلب تحديدًا (Committee Role الخاص بعضوية actor في *تلك*
 اللجنة بالذات) وليس فقط على دوره العام — فلا يمكن فحصه بمعزل عن تحميل
-السجل نفسه أولًا. يُفرض بالكامل داخل meeting_service (دالة _require_access
-هناك)، بنفس منطق الوصول المزدوج (System Role scope أو Committee Role
-permission) المطبَّق في committee_service.get_committee — راجعي docstring
-meeting_service.py للتفصيل الكامل بعد تحديث 2026-09-01 ("أدوار اللجان").
+السجل نفسه أولًا. يُفرض بالكامل داخل meeting_service.
+
+ملاحظة تقنية: دوال meeting_service (create/update/delete_meeting،
+add/update/delete_agenda_item، add/delete_attachment) تُنفّذ commit/rollback
+داخليًا بنفسها الآن (بخلاف نمط committees.py الذي يترك الـcommit للراوت) —
+ضروري لأن add_attachment يستدعي document_service.create_document الذي
+يُنهي معاملته (transaction) الخاصة به بالكامل قبل أن يعود، فلا يمكن تأجيل
+الـcommit لهذا الجزء إلى الراوت. طُبِّق نفس النمط على بقية دوال الوحدة
+هنا للاتساق، بدل خلط الأسلوبين داخل نفس الملف. الاستثناء الوحيد:
+join_meeting/leave_meeting (تكامل Agora) — تُبقي الـcommit/rollback على
+مستوى الراوت عمدًا (راجعي تعليق القسم أدناه).
 """
 
 import uuid
@@ -33,10 +39,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import agora_client, storage_client
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
+from app.schemas.committee import CommitteeMemberUserOut
 from app.schemas.meeting import (
     MeetingAgendaItemCreate,
     MeetingAgendaItemOut,
     MeetingAgendaItemUpdate,
+    MeetingAttachmentKind,
     MeetingAttachmentOut,
     MeetingCreate,
     MeetingJoinOut,
@@ -44,38 +52,45 @@ from app.schemas.meeting import (
     MeetingUpdate,
 )
 from app.services import meeting_service, notification_service
+from app.services.document_service import DocumentValidationError
 from app.services.meeting_service import (
     AgendaItemNotFoundError,
-    MeetingAttachmentNotFoundError,
-    MeetingAttachmentUpload,
+    AttachmentNotFoundError,
     MeetingForbiddenError,
     MeetingInvalidStateError,
     MeetingNotFoundError,
+    MeetingValidationError,
 )
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
+_SERVICE_ERRORS = (
+    MeetingNotFoundError,
+    AgendaItemNotFoundError,
+    AttachmentNotFoundError,
+    MeetingForbiddenError,
+    MeetingInvalidStateError,
+    MeetingValidationError,
+    DocumentValidationError,
+    storage_client.StorageError,
+)
+
 
 def _handle_errors(exc: Exception) -> Exception:
-    """يترجم استثناءات طبقة الخدمة إلى استجابات HTTP مناسبة، مركزيًا (بنفس نمط committees.py)."""
-    if isinstance(exc, (MeetingNotFoundError, AgendaItemNotFoundError, MeetingAttachmentNotFoundError)):
+    """يترجم استثناءات طبقة الخدمة إلى استجابات HTTP مناسبة، مركزيًا."""
+    if isinstance(exc, (MeetingNotFoundError, AgendaItemNotFoundError, AttachmentNotFoundError)):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if isinstance(exc, MeetingForbiddenError):
         return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     if isinstance(exc, MeetingInvalidStateError):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
-    if isinstance(exc, ValueError):
+    if isinstance(exc, (MeetingValidationError, DocumentValidationError, ValueError)):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    raise exc
-
-
-def _storage_error_to_http(exc: storage_client.StorageError) -> HTTPException:
-    if isinstance(exc, storage_client.StorageNotConfiguredError):
+    if isinstance(exc, storage_client.StorageError):
         return HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="خدمة تخزين الملفات غير مُهيّأة بعد (راجع إعدادات SUPABASE_* بالبيئة)",
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="تعذّر رفع الملف، حاول مرة أخرى"
         )
-    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    raise exc
 
 
 def _agora_error_to_http(exc: agora_client.AgoraError) -> HTTPException:
@@ -107,11 +122,8 @@ async def create_meeting(
             scheduled_end_at=payload.scheduled_end_at,
             agenda_items=[item.model_dump() for item in payload.agenda_items],
         )
-        await db.commit()
-    except (MeetingNotFoundError, MeetingForbiddenError, ValueError) as exc:
-        await db.rollback()
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    await db.refresh(meeting)
     # إشعار بريدي لأعضاء اللجنة كـBackgroundTask (بعد commit الناجح) — لا
     # يُبطئ استجابة إنشاء الاجتماع، ولا يُفشلها لو تعذّر إرسال البريد
     # (راجعي core/email_client.py وservices/notification_service.py).
@@ -133,7 +145,7 @@ async def get_meeting(
 ) -> MeetingOut:
     try:
         meeting = await meeting_service.get_meeting(db, meeting_id, actor=current_user)
-    except (MeetingNotFoundError, MeetingForbiddenError) as exc:
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     return MeetingOut.model_validate(meeting)
 
@@ -159,18 +171,9 @@ async def update_meeting(
             location_set="location" in payload.model_fields_set,
             scheduled_at=payload.scheduled_at,
             scheduled_end_at=payload.scheduled_end_at,
-            participant_ids=payload.participant_ids,
         )
-        await db.commit()
-    except (
-        MeetingNotFoundError,
-        MeetingForbiddenError,
-        MeetingInvalidStateError,
-        ValueError,
-    ) as exc:
-        await db.rollback()
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    await db.refresh(meeting)
     # إشعار بريدي لأعضاء اللجنة فقط لو تغيّر أحد "الحقول المهمة" (راجعي
     # docstring meeting_service.update_meeting وnotification_service.py) —
     # قرار لاما 2026-09-06. notify_meeting_updated نفسها لا ترسل شيئًا لو
@@ -189,18 +192,20 @@ async def delete_meeting(
 ) -> None:
     try:
         meeting = await meeting_service.delete_meeting(db, actor=current_user, meeting_id=meeting_id)
-        await db.commit()
-    except (MeetingNotFoundError, MeetingForbiddenError, MeetingInvalidStateError) as exc:
-        await db.rollback()
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     # إشعار إلغاء لأعضاء اللجنة — meeting هنا لسه محمَّل بالكامل بالذاكرة
     # (committee/participants كلاهما lazy="selectin")، رغم إن db.commit()
-    # صار قبله مباشرة — expire_on_commit=False بـdb/session.py يضمن بقاء
-    # القيم المحمَّلة أصلًا صالحة بلا استعلام إضافي (راجعي notification_service.py).
+    # صار قبله مباشرة داخل meeting_service.delete_meeting —
+    # expire_on_commit=False بـdb/session.py يضمن بقاء القيم المحمَّلة أصلًا
+    # صالحة بلا استعلام إضافي (راجعي notification_service.py).
     background_tasks.add_task(notification_service.notify_meeting_cancelled, meeting)
 
 
 # ============================== الانضمام لاجتماع عن بعد (Agora) ==============================
+# join_meeting/leave_meeting تُبقي commit/rollback على مستوى الراوت عمدًا
+# (بخلاف بقية دوال الوحدة) — meeting_service.join_meeting يُصدر Token عبر
+# Agora قبل أي db.add، فلو فشل استدعاء Agora لا شيء التُزم أصلًا بعد.
 
 
 @router.post("/{meeting_id}/join", response_model=MeetingJoinOut)
@@ -264,11 +269,8 @@ async def add_agenda_item(
             description=payload.description,
             sort_order=payload.sort_order,
         )
-        await db.commit()
-    except (MeetingNotFoundError, MeetingForbiddenError) as exc:
-        await db.rollback()
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    await db.refresh(item)
     return MeetingAgendaItemOut.model_validate(item)
 
 
@@ -288,11 +290,8 @@ async def update_agenda_item(
             description=payload.description,
             sort_order=payload.sort_order,
         )
-        await db.commit()
-    except (AgendaItemNotFoundError, MeetingNotFoundError, MeetingForbiddenError) as exc:
-        await db.rollback()
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    await db.refresh(item)
     return MeetingAgendaItemOut.model_validate(item)
 
 
@@ -304,18 +303,21 @@ async def delete_agenda_item(
         await meeting_service.delete_agenda_item(
             db, actor=current_user, agenda_item_id=agenda_item_id
         )
-        await db.commit()
-    except (AgendaItemNotFoundError, MeetingNotFoundError, MeetingForbiddenError) as exc:
-        await db.rollback()
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
 
 
-# ============================== مرفقات الاجتماع ==============================
-# رفع الملف عبر multipart/form-data (UploadFile + Form) وليس JSON — بنفس
-# نمط POST /documents (راجعي api/v1/documents.py). بدون
-# dependencies=[Depends(require_permission(...))] هنا عمدًا — التفويض هنا
-# مزدوج (System Role scope أو Committee Role) ومرتبط باللجنة المحدَّدة،
-# فيُفرض بالكامل داخل meeting_service (نفس سبب بقية راوترات هذا الملف).
+def _attachment_out(document, kind: str, linked_at) -> MeetingAttachmentOut:
+    return MeetingAttachmentOut(
+        document_id=document.document_id,
+        kind=kind,
+        title=document.title,
+        file_name=document.file_name,
+        mime_type=document.mime_type,
+        file_size_bytes=document.file_size_bytes,
+        uploaded_by=CommitteeMemberUserOut.model_validate(document.uploader),
+        linked_at=linked_at,
+    )
 
 
 @router.post(
@@ -323,70 +325,51 @@ async def delete_agenda_item(
     response_model=MeetingAttachmentOut,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_meeting_attachment(
+async def upload_meeting_attachment(
     meeting_id: uuid.UUID,
     current_user: CurrentUser,
+    kind: MeetingAttachmentKind = Form(...),
     file: UploadFile = File(...),
-    link_role: str = Form(...),
+    title: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingAttachmentOut:
-    if link_role not in ("presentation", "attachment"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="link_role يجب أن يكون presentation أو attachment",
-        )
+    """
+    رفع مرفق (kind='attachment') أو عرض تقديمي (kind='presentation')
+    وربطه بالاجتماع مباشرة — multipart/form-data بنفس نمط
+    POST /documents (documents.py)، وليس JSON، لأن الملف الفعلي يمر عبر
+    الـBackend إلى Supabase Storage.
+    """
     content = await file.read()
     try:
-        document, link = await meeting_service.add_meeting_attachment(
+        document, linked_at = await meeting_service.add_attachment(
             db,
             actor=current_user,
             meeting_id=meeting_id,
-            upload=MeetingAttachmentUpload(
-                link_role=link_role,
-                file_name=file.filename or "unnamed",
-                mime_type=file.content_type or "application/octet-stream",
-                content=content,
-            ),
+            kind=kind,
+            title=title or file.filename or "بدون عنوان",
+            file_name=file.filename or "unnamed",
+            mime_type=file.content_type or "application/octet-stream",
+            content=content,
         )
-    except (MeetingNotFoundError, MeetingForbiddenError, ValueError) as exc:
-        await db.rollback()
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    except storage_client.StorageError as exc:
-        await db.rollback()
-        raise _storage_error_to_http(exc) from exc
-    return MeetingAttachmentOut(
-        document_id=document.document_id,
-        link_role=link.link_role,
-        file_name=document.file_name,
-        mime_type=document.mime_type,
-        file_size_bytes=document.file_size_bytes,
-        uploaded_by=document.uploader,
-        linked_at=link.linked_at,
-    )
+    return _attachment_out(document, kind, linked_at)
 
 
 @router.get("/{meeting_id}/attachments", response_model=list[MeetingAttachmentOut])
 async def list_meeting_attachments(
-    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+    meeting_id: uuid.UUID,
+    current_user: CurrentUser,
+    kind: MeetingAttachmentKind | None = None,
+    db: AsyncSession = Depends(get_db),
 ) -> list[MeetingAttachmentOut]:
     try:
-        rows = await meeting_service.list_meeting_attachments(
-            db, actor=current_user, meeting_id=meeting_id
+        rows = await meeting_service.list_attachments(
+            db, actor=current_user, meeting_id=meeting_id, kind=kind
         )
-    except (MeetingNotFoundError, MeetingForbiddenError) as exc:
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    return [
-        MeetingAttachmentOut(
-            document_id=document.document_id,
-            link_role=link.link_role,
-            file_name=document.file_name,
-            mime_type=document.mime_type,
-            file_size_bytes=document.file_size_bytes,
-            uploaded_by=document.uploader,
-            linked_at=link.linked_at,
-        )
-        for document, link in rows
-    ]
+    return [_attachment_out(document, k, linked_at) for document, k, linked_at in rows]
 
 
 @router.get("/{meeting_id}/attachments/{document_id}/download")
@@ -396,14 +379,19 @@ async def download_meeting_attachment(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
+    """
+    تنزيل محتوى المرفق مباشرة — مسار مخصص بوحدة الاجتماعات (وليس عبر
+    GET /documents/{document_id}/download العام) لأن ذلك المسار محمي
+    بصلاحية Role نظامية ثابتة (documents.download) لا يملكها عضو اللجنة
+    العادي غالبًا، بينما هنا يكفي أن يملك meetings.attachments.view على
+    نفس اللجنة (راجعي meeting_service.get_attachment_download).
+    """
     try:
-        document, content = await meeting_service.get_meeting_attachment_download(
+        document, content = await meeting_service.get_attachment_download(
             db, actor=current_user, meeting_id=meeting_id, document_id=document_id
         )
-    except (MeetingNotFoundError, MeetingForbiddenError, MeetingAttachmentNotFoundError) as exc:
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    except storage_client.StorageError as exc:
-        raise _storage_error_to_http(exc) from exc
     return Response(
         content=content,
         media_type=document.mime_type,
@@ -411,7 +399,9 @@ async def download_meeting_attachment(
     )
 
 
-@router.delete("/{meeting_id}/attachments/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{meeting_id}/attachments/{document_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_meeting_attachment(
     meeting_id: uuid.UUID,
     document_id: uuid.UUID,
@@ -419,9 +409,8 @@ async def delete_meeting_attachment(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     try:
-        await meeting_service.delete_meeting_attachment(
+        await meeting_service.delete_attachment(
             db, actor=current_user, meeting_id=meeting_id, document_id=document_id
         )
-    except (MeetingNotFoundError, MeetingForbiddenError, MeetingAttachmentNotFoundError) as exc:
-        await db.rollback()
+    except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc

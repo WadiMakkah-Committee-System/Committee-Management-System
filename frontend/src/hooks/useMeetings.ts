@@ -3,7 +3,7 @@ import * as meetingsApi from '@/api/meetings'
 import type {
   MeetingAgendaItemCreatePayload,
   MeetingAgendaItemUpdatePayload,
-  MeetingAttachmentLinkRole,
+  MeetingAttachmentKind,
   MeetingCreatePayload,
   MeetingUpdatePayload,
 } from '@/types'
@@ -121,10 +121,10 @@ export function useDeleteAgendaItem() {
 
 // ============================== مرفقات الاجتماع ==============================
 
-export function useMeetingAttachments(meetingId: string | undefined) {
+export function useMeetingAttachments(meetingId: string | undefined, kind?: MeetingAttachmentKind) {
   return useQuery({
-    queryKey: meetingsKeys.attachments(meetingId ?? ''),
-    queryFn: () => meetingsApi.fetchMeetingAttachments(meetingId as string),
+    queryKey: [...meetingsKeys.attachments(meetingId ?? ''), kind ?? 'all'] as const,
+    queryFn: () => meetingsApi.fetchMeetingAttachments(meetingId as string, kind),
     enabled: !!meetingId,
   })
 }
@@ -135,12 +135,14 @@ export function useUploadMeetingAttachment() {
     mutationFn: ({
       meetingId,
       file,
-      linkRole,
+      kind,
+      title,
     }: {
       meetingId: string
       file: File
-      linkRole: MeetingAttachmentLinkRole
-    }) => meetingsApi.uploadMeetingAttachment(meetingId, file, linkRole),
+      kind: MeetingAttachmentKind
+      title?: string
+    }) => meetingsApi.uploadMeetingAttachment(meetingId, file, kind, title),
     onSuccess: (_data, variables) =>
       queryClient.invalidateQueries({ queryKey: meetingsKeys.attachments(variables.meetingId) }),
   })
@@ -160,6 +162,10 @@ export function useDeleteMeetingAttachment() {
  * تحميل ملف مرفق فعليًا (وليس فتح رابط مباشر) — التنزيل يتطلب
  * Authorization Bearer بالـheader (نفس منطق تحميل الوثائق العامة)، فيمر
  * عبر axios (fetchMeetingAttachmentBlob) ثم يُنزَّل بـobject URL مؤقت.
+ * document_id هو نفسه معرّف الوثيقة بوحدة "إدارة الوثائق" — لكن التحميل
+ * يمر عبر مسار مخصص بوحدة الاجتماعات (وليس GET /documents مباشرة) لأن
+ * ذلك المسار العام يتطلب صلاحية documents.download المنفصلة التي لا
+ * يملكها عضو اللجنة العادي غالبًا (راجعي api/meetings.ts).
  */
 export function useDownloadMeetingAttachment() {
   return useMutation({

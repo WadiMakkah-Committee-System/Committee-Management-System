@@ -22,7 +22,7 @@ import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Avatar } from '@/components/ui/Avatar'
 import { DateField } from '@/components/ui/DateField'
-import type { Committee, Meeting, MeetingAttachmentLinkRole, MeetingMode } from '@/types'
+import type { Committee, Meeting, MeetingMode } from '@/types'
 
 const agendaItemSchema = z.object({
   title: z.string().min(2, 'عنوان البند يجب أن يكون حرفين على الأقل').max(255),
@@ -64,11 +64,6 @@ function buildSchema(isEdit: boolean) {
 
 type FormValues = z.infer<ReturnType<typeof buildSchema>>
 
-export interface StagedMeetingAttachment {
-  file: File
-  link_role: MeetingAttachmentLinkRole
-}
-
 export interface MeetingFormSubmitValues {
   committee_id: string
   title: string
@@ -78,11 +73,11 @@ export interface MeetingFormSubmitValues {
   scheduled_at: string
   /** غير موجود فقط لو تعديل اجتماع قديم بلا وقت نهاية تُرك فارغًا — يعني عدم تغييره. إلزامي دائمًا عند الإنشاء (يفرضه buildSchema أعلاه). */
   scheduled_end_at?: string
-  participant_ids: string[]
   /** تُستخدم فقط عند الإنشاء (راجعي isEdit أدناه) — تُتجاهل عند التعديل. */
   agenda_items: { title: string; description: string | null; sort_order: number }[]
-  /** تُرفع فعليًا بعد نجاح الإنشاء فقط (لا يوجد meeting_id قبل ذلك) — راجعي MeetingsPage.tsx. */
-  attachments: StagedMeetingAttachment[]
+  /** ملفات مؤجَّلة الرفع — تُرفع بعد نجاح الإنشاء فقط (تحتاج meeting_id، راجعي MeetingsPage.tsx). فارغة عند التعديل. */
+  presentationFile: File | null
+  attachmentFiles: File[]
 }
 
 interface MeetingFormModalProps {
@@ -95,6 +90,11 @@ interface MeetingFormModalProps {
   loading?: boolean
   serverError?: string | null
 }
+
+const MEETING_MODE_OPTIONS = [
+  { value: 'in_person', label: 'حضوري' },
+  { value: 'remote', label: 'عن بُعد' },
+]
 
 /** عنوان فرعي لتقسيم النموذج بصريًا — بنفس نمط CommitteeRequestFormModal::FormSection. */
 function FormSection({
@@ -129,11 +129,6 @@ function FormSection({
   )
 }
 
-const MEETING_MODE_OPTIONS = [
-  { value: 'in_person', label: 'حضوري' },
-  { value: 'remote', label: 'عن بُعد' },
-]
-
 /**
  * نموذج إنشاء/تعديل اجتماع — بنفس نمط CommitteeRequestFormModal.
  *
@@ -149,6 +144,9 @@ const MEETING_MODE_OPTIONS = [
  *   المنطق الذي كان مطبَّقًا سابقًا على جدول الأعمال وحده ("يُدار من صفحة
  *   تفاصيل الاجتماع مباشرة" عند التعديل)؛ صفحة التفاصيل فيها إدارة كاملة
  *   للأجندة والمرفقات بعد الإنشاء على أي حال.
+ *
+ * تحديث 2026-09-05 (قرار موثّق مع لاما): وقت النهاية إلزامي عند الإنشاء
+ * (meeting_end_time أعلاه) — راجعي buildSchema.
  */
 export function MeetingFormModal({
   open,
@@ -219,10 +217,6 @@ export function MeetingFormModal({
   }, [open, meeting, committees, reset])
 
   function toSubmitValues(values: FormValues): MeetingFormSubmitValues {
-    const attachments: StagedMeetingAttachment[] = [
-      ...(presentationFile ? [{ file: presentationFile, link_role: 'presentation' as const }] : []),
-      ...attachmentFiles.map((file) => ({ file, link_role: 'attachment' as const })),
-    ]
     return {
       committee_id: values.committee_id,
       title: values.title,
@@ -233,13 +227,13 @@ export function MeetingFormModal({
       scheduled_end_at: values.meeting_end_time
         ? new Date(`${values.meeting_date}T${values.meeting_end_time}`).toISOString()
         : undefined,
-      participant_ids: autoParticipants.map((u) => u.user_id),
       agenda_items: values.agenda_items.map((item, index) => ({
         title: item.title,
         description: item.description?.trim() || null,
         sort_order: index,
       })),
-      attachments,
+      presentationFile,
+      attachmentFiles,
     }
   }
 

@@ -328,6 +328,109 @@ export interface Committee {
 }
 
 /**
+ * أنواع وحدة "إدارة الوثائق" — مطابقة تمامًا لـ
+ * backend/app/schemas/document.py وbackend/app/models/document.py.
+ * الرفع نفسه (POST /documents) لا يمر بـ JSON بل multipart/form-data —
+ * لهذا لا يوجد DocumentCreatePayload هنا (يُبنى FormData مباشرة في
+ * DocumentFormModal)، بعكس DocumentUpdatePayload (تعديل Metadata فقط،
+ * JSON عادي — لا يوجد استبدال للملف نفسه في هذه المرحلة).
+ */
+export type DocumentCategoryScope = 'global' | 'department'
+
+export type DocumentStatus = 'active' | 'archived'
+
+/**
+ * "قسم" الوثيقة لعنصر التحكم المُقسَّم بأعلى صفحة "الوثائق" (الكل/عامة/
+ * إدارتي/لجاني/شورك معي) — مطابق تمامًا لـDocumentScopeFilter بالباك-إند
+ * (backend/app/services/document_service.py) — راجعي GET /documents?scope=.
+ */
+export type DocumentScopeFilter = 'public' | 'department' | 'committee' | 'shared'
+
+export interface DocumentCategory {
+  category_id: string
+  name: string
+  scope: DocumentCategoryScope
+  department_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DocumentCategoryCreatePayload {
+  name: string
+  scope: DocumentCategoryScope
+  department_id: string | null
+}
+
+export interface DocumentCategoryUpdatePayload {
+  name: string
+}
+
+export interface DocumentUploaderSummary {
+  user_id: string
+  first_name: string
+  middle_name: string
+  last_name: string
+}
+
+export interface DocumentVisibleDepartment {
+  dep_id: string
+  name: string
+}
+
+export interface DocumentVisibleCommittee {
+  committee_id: string
+  name: string
+  /** قادمة/جارية/منتهية — محسوبة بالباك-إند من start_date/end_date وقت الاستعلام. */
+  lifecycle_state: 'upcoming' | 'ongoing' | 'ended'
+}
+
+export interface DocumentVisibleUser {
+  user_id: string
+  first_name: string
+  middle_name: string
+  last_name: string
+}
+
+export interface Document {
+  document_id: string
+  title: string
+  description: string | null
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  category: DocumentCategory | null
+  status: DocumentStatus
+  is_public: boolean
+  uploader: DocumentUploaderSummary
+  visible_departments: DocumentVisibleDepartment[]
+  visible_committees: DocumentVisibleCommittee[]
+  visible_users: DocumentVisibleUser[]
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * الإدارات واللجان اللي يحق للمستخدم الحالي إتاحة وثيقة لها عند الرفع
+ * (مبدأ أقل صلاحية ممكنة) — راجعي GET /documents/publish-targets
+ * وbackend/app/services/document_service.py::get_publish_targets.
+ */
+export interface DocumentPublishTargets {
+  departments: DocumentVisibleDepartment[]
+  committees: DocumentVisibleCommittee[]
+}
+
+/** كل الحقول اختيارية: الحقل المتروك undefined لا يُرسَل ولا يُعدَّل. */
+export interface DocumentUpdatePayload {
+  title?: string
+  description?: string | null
+  category_id?: string | null
+  is_public?: boolean
+  department_ids?: string[]
+  committee_ids?: string[]
+  user_ids?: string[]
+}
+
+/**
  * سطر تعريفي خفيف — موظف من إدارة المستخدم الحالي عضو بلجنة رئيسها من
  * إدارة ثانية (أو بدون إدارة معروفة). مراجعة لاما 2026-08-30 (الجولة
  * الثالثة). عمدًا بدون بقية تفاصيل اللجنة — راجعي
@@ -343,30 +446,23 @@ export interface DepartmentMemberElsewhere {
 /**
  * أنواع وحدة "إدارة الاجتماعات" — مطابقة تمامًا لـ
  * backend/app/schemas/meeting.py وbackend/app/models/meeting.py.
- * بدون Teams/AI في هذا الـPhase — راجعي رأس db/migrations/0016 للقرار
- * الموثّق.
+ * بدون تكامل Teams فعلي بعد — mode='remote' يمهّد لتلك المرحلة فقط
+ * (الانضمام الفعلي للاجتماعات عن بعد يتم عبر Agora — راجعي
+ * MeetingJoinResponse أدناه، منفصل تمامًا عن تكامل Teams المؤجَّل).
  *
- * تحديث 2026-09-02 (مطابقة db/migrations/0020_meetings_mode_location.sql
- * المطبَّق فعليًا على قاعدة البيانات الحقيقية): نوع الاجتماع اختيار مقيَّد
- * بحقل mode (ENUM حقيقي remote/in_person)، بدل meeting_type القديم (نص حر
- * تم حذفه نهائيًا من قاعدة البيانات ذاتها بهذا الـmigration، لا يوجد أي صف
- * قديم يحمل قيمة أخرى). Meeting.mode لذلك `MeetingMode` غير قابل لـnull،
- * وليس `string | null` كما كان مخطَّطًا سابقًا. المرفقات (MeetingAttachment)
- * — أول استخدام فعلي لجدول document_links (راجعي رأس db/migrations/0021).
+ * تحديث 2026-09-01 (قرارات صاحبة المشروع):
+ * - meeting_type (نص حر) → mode (عن بعد/حضوري، ENUM حقيقي) + location.
+ * - لا يوجد حقل مشاركين بالإنشاء/التعديل — يُشتقّون تلقائيًا من عضوية
+ *   اللجنة بالكامل بطبقة الخدمة (Meeting.participants أدناه حقل قراءة
+ *   فقط بالنتيجة، وليس بالـPayload).
+ * - مرفقات الاجتماع (عرض تقديمي + مرفقات عامة) عبر document_links —
+ *   أنواعها بأسفل هذا القسم (MeetingAttachmentKind/MeetingAttachment).
+ *
+ * تحديث 2026-09-05 (قرار موثّق مع لاما): scheduled_end_at إلزامي عند
+ * الإنشاء — راجعي MeetingCreatePayload.
  */
 export type MeetingStatus = 'upcoming' | 'ongoing' | 'finished' | 'recorded'
 export type MeetingMode = 'remote' | 'in_person'
-export type MeetingAttachmentLinkRole = 'presentation' | 'attachment'
-
-export interface MeetingAttachment {
-  document_id: string
-  link_role: MeetingAttachmentLinkRole
-  file_name: string
-  mime_type: string
-  file_size_bytes: number
-  uploaded_by: CommitteeMemberUser
-  linked_at: string
-}
 
 export interface MeetingAgendaItem {
   agenda_item_id: string
@@ -422,7 +518,6 @@ export interface MeetingCreatePayload {
   scheduled_at: string
   /** إلزامي — لا يمكن إنشاء اجتماع بلا وقت نهاية معروف (قرار 2026-09-05). يجب أن يكون بعد scheduled_at. */
   scheduled_end_at: string
-  /** لا يوجد هنا — أعضاء اللجنة كلهم (+ الرئيس) يُضافون تلقائيًا من الباك اند عند الإنشاء. */
   agenda_items?: MeetingAgendaItemCreatePayload[]
 }
 
@@ -443,5 +538,68 @@ export interface MeetingUpdatePayload {
   location?: string | null
   scheduled_at?: string
   scheduled_end_at?: string
-  participant_ids?: string[]
+}
+
+/** قسما مرفقات الاجتماع — يقابلان linked_entity_type بجدول document_links بالباك-إند. */
+export type MeetingAttachmentKind = 'presentation' | 'attachment'
+
+export interface MeetingAttachment {
+  document_id: string
+  kind: MeetingAttachmentKind
+  title: string
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  uploaded_by: CommitteeMemberUser
+  linked_at: string
+}
+
+/**
+ * أنواع وحدة "إدارة القرارات" — القرارات المستقلة فقط (بدون قرارات
+ * مستخرجة من اجتماع بالذكاء الاصطناعي — تُبنى لاحقًا). مطابقة تمامًا
+ * لـbackend/app/schemas/decision.py وapp/models/decision.py. راجعي رأس
+ * db/migrations/0021_decisions_schema.sql لكل الاجتهادات الموثّقة.
+ */
+export type DecisionClassification = 'final' | 'voting'
+export type DecisionStatus = 'pending' | 'voting' | 'approved' | 'rejected'
+export type DecisionVoteChoice = 'approve' | 'reject'
+
+export interface DecisionVote {
+  voter: CommitteeMemberUser
+  choice: DecisionVoteChoice
+  voted_at: string
+}
+
+export interface Decision {
+  decision_id: string
+  committee_id: string
+  title: string
+  classification: DecisionClassification
+  status: DecisionStatus
+  start_date: string
+  end_date: string
+  voting_opened_at: string | null
+  voting_deadline: string | null
+  voting_closed_at: string | null
+  rejection_reason: string | null
+  creator: CommitteeMemberUser
+  assignees: CommitteeMemberUser[]
+  votes: DecisionVote[]
+  created_at: string
+  updated_at: string
+}
+
+export interface DecisionCreatePayload {
+  committee_id: string
+  title: string
+  classification: DecisionClassification
+  start_date: string
+  end_date: string
+}
+
+export interface DecisionUpdatePayload {
+  title?: string
+  classification?: DecisionClassification
+  start_date?: string
+  end_date?: string
 }

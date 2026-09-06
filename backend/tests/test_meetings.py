@@ -1,9 +1,11 @@
 """
 اختبارات وحدة "إدارة الاجتماعات" — Phase 2 (FR-MEET-001 → FR-MEET-005).
 
-تغطي: إنشاء اجتماع من رئيس اللجنة (نجاح)، رفض إنشاء اجتماع من عضو ليس
-رئيسًا (403)، عرض الاجتماع لعضو اللجنة، تعديل/حذف اجتماع من رئيس اللجنة،
-ورفض حذف الاجتماع من مستخدم خارج اللجنة تمامًا.
+تغطي: إنشاء اجتماع من رئيس اللجنة (نجاح، مشاركون تلقائيون = كل أعضاء
+اللجنة)، رفض إنشاء اجتماع من عضو ليس رئيسًا (403)، عرض الاجتماع لعضو
+اللجنة، تعديل/حذف اجتماع من رئيس اللجنة (قبل موعده)، رفض حذف اجتماع فات
+موعده، رفض حذف الاجتماع من مستخدم خارج اللجنة تمامًا، واجتماع حضوري
+يتطلب location.
 
 بدون Teams/AI — راجعي رأس meeting_service.py للقرار الموثّق.
 
@@ -12,6 +14,9 @@
 لا يملكان أي كود meetings.* افتراضيًا بعد الاعتماد — يُمنحان هنا صراحة عبر
 _grant_committee_role_permissions قبل اختبار أي إجراء، تمامًا كما ستفعله
 لاما فعليًا من شاشة "الأدوار والصلاحيات" قبل استخدام الوحدة في الإنتاج.
+
+تحديث 2026-09-05: scheduled_end_at إلزامي الآن بكل إنشاء اجتماع (راجعي
+schemas/meeting.py::MeetingCreate) — أُضيف لكل payload أدناه.
 """
 
 from httpx import AsyncClient
@@ -190,7 +195,6 @@ async def test_chair_can_create_meeting(
             "mode": "remote",
             "scheduled_at": "2026-09-15T10:00:00Z",
             "scheduled_end_at": "2026-09-15T11:00:00Z",
-            "participant_ids": [ctx["chair_id"], ctx["member_id"]],
             "agenda_items": [{"title": "بند 1", "sort_order": 0}],
         },
         headers=ctx["chair_headers"],
@@ -199,7 +203,7 @@ async def test_chair_can_create_meeting(
     body = response.json()
     assert body["title"] == "الاجتماع الأول"
     assert body["status"] == "upcoming"
-    assert len(body["participants"]) == 2
+    assert len(body["participants"]) == 2  # مشاركون تلقائيون: الرئيس + العضو
     assert len(body["agenda_items"]) == 1
 
 
@@ -216,7 +220,6 @@ async def test_non_chair_member_cannot_create_meeting(
             "mode": "remote",
             "scheduled_at": "2026-09-15T10:00:00Z",
             "scheduled_end_at": "2026-09-15T11:00:00Z",
-            "participant_ids": [ctx["member_id"]],
         },
         headers=ctx["member_headers"],
     )
@@ -236,7 +239,6 @@ async def test_member_can_view_but_not_delete_meeting(
             "mode": "remote",
             "scheduled_at": "2026-09-20T09:00:00Z",
             "scheduled_end_at": "2026-09-20T10:00:00Z",
-            "participant_ids": [ctx["chair_id"], ctx["member_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -265,7 +267,6 @@ async def test_outsider_cannot_view_meeting(
             "mode": "remote",
             "scheduled_at": "2026-09-22T09:00:00Z",
             "scheduled_end_at": "2026-09-22T10:00:00Z",
-            "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -289,7 +290,6 @@ async def test_chair_can_update_and_delete_meeting(
             "mode": "remote",
             "scheduled_at": "2026-09-25T09:00:00Z",
             "scheduled_end_at": "2026-09-25T10:00:00Z",
-            "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -325,7 +325,6 @@ async def test_agenda_item_crud_by_chair(
             "mode": "remote",
             "scheduled_at": "2026-09-28T09:00:00Z",
             "scheduled_end_at": "2026-09-28T10:00:00Z",
-            "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -369,7 +368,6 @@ async def test_onsite_meeting_requires_location(
             "mode": "in_person",
             "scheduled_at": "2026-09-15T10:00:00Z",
             "scheduled_end_at": "2026-09-15T11:00:00Z",
-            "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -384,7 +382,6 @@ async def test_onsite_meeting_requires_location(
             "location": "قاعة الاجتماعات الرئيسية",
             "scheduled_at": "2026-09-15T10:00:00Z",
             "scheduled_end_at": "2026-09-15T11:00:00Z",
-            "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -406,7 +403,6 @@ async def test_remote_meeting_rejects_location(
             "location": "لا يجوز",
             "scheduled_at": "2026-09-15T10:00:00Z",
             "scheduled_end_at": "2026-09-15T11:00:00Z",
-            "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -416,7 +412,7 @@ async def test_remote_meeting_rejects_location(
 async def test_update_meeting_can_switch_type_and_clear_location(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:
-    """يتحقق من location_set/mode_set (meeting_service.update_meeting) — التبديل in_person → remote يمسح location فعليًا."""
+    """يتحقق من location_set/mode_set (meeting_service.update_meeting) — التبديل in_person → remote يتطلب إرسال location=None صراحة."""
     ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
 
     create = await client.post(
@@ -428,14 +424,13 @@ async def test_update_meeting_can_switch_type_and_clear_location(
             "location": "الطابق الثاني",
             "scheduled_at": "2026-09-15T10:00:00Z",
             "scheduled_end_at": "2026-09-15T11:00:00Z",
-            "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
     assert create.status_code == 201, create.text
     meeting_id = create.json()["meeting_id"]
 
-    # تبديل النوع بدون إرسال location جديد — يجب أن يُرفض (لا يزال onsite ضمنيًا حتى تُرسَل location).
+    # تبديل النوع بدون إرسال location جديد — يجب أن يُرفض (location القديم لا يزال محفوظًا ولا يجوز لاجتماع عن بُعد).
     bad_switch = await client.patch(
         f"/api/v1/meetings/{meeting_id}",
         json={"mode": "remote"},
@@ -469,7 +464,6 @@ async def test_cannot_delete_meeting_after_scheduled_time(
             "mode": "remote",
             "scheduled_at": "2020-01-01T09:00:00Z",
             "scheduled_end_at": "2020-01-01T10:00:00Z",
-            "participant_ids": [ctx["chair_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -503,7 +497,6 @@ async def _create_meeting_with_attachment_permissions(
             "mode": "remote",
             "scheduled_at": "2026-09-15T10:00:00Z",
             "scheduled_end_at": "2026-09-15T11:00:00Z",
-            "participant_ids": [ctx["chair_id"], ctx["member_id"]],
         },
         headers=ctx["chair_headers"],
     )
@@ -521,16 +514,16 @@ async def test_chair_can_upload_and_list_attachments(
     upload_presentation = await client.post(
         f"/api/v1/meetings/{meeting_id}/attachments",
         files={"file": ("slides.pdf", b"%PDF-1.4 fake content", "application/pdf")},
-        data={"link_role": "presentation"},
+        data={"kind": "presentation"},
         headers=ctx["chair_headers"],
     )
     assert upload_presentation.status_code == 201, upload_presentation.text
-    assert upload_presentation.json()["link_role"] == "presentation"
+    assert upload_presentation.json()["kind"] == "presentation"
 
     upload_attachment = await client.post(
         f"/api/v1/meetings/{meeting_id}/attachments",
         files={"file": ("notes.txt", b"some notes", "text/plain")},
-        data={"link_role": "attachment"},
+        data={"kind": "attachment"},
         headers=ctx["chair_headers"],
     )
     assert upload_attachment.status_code == 201, upload_attachment.text
@@ -539,8 +532,8 @@ async def test_chair_can_upload_and_list_attachments(
         f"/api/v1/meetings/{meeting_id}/attachments", headers=ctx["member_headers"]
     )
     assert listing.status_code == 200, listing.text
-    roles = sorted(item["link_role"] for item in listing.json())
-    assert roles == ["attachment", "presentation"]
+    kinds = sorted(item["kind"] for item in listing.json())
+    assert kinds == ["attachment", "presentation"]
 
     document_id = upload_attachment.json()["document_id"]
     download = await client.get(
@@ -560,7 +553,7 @@ async def test_member_without_attachments_add_permission_is_forbidden(
     upload_attempt = await client.post(
         f"/api/v1/meetings/{meeting_id}/attachments",
         files={"file": ("x.txt", b"x", "text/plain")},
-        data={"link_role": "attachment"},
+        data={"kind": "attachment"},
         headers=ctx["member_headers"],
     )
     assert upload_attempt.status_code == 403, upload_attempt.text
@@ -587,7 +580,7 @@ async def test_chair_can_delete_attachment(
     upload = await client.post(
         f"/api/v1/meetings/{meeting_id}/attachments",
         files={"file": ("to-delete.txt", b"bye", "text/plain")},
-        data={"link_role": "attachment"},
+        data={"kind": "attachment"},
         headers=ctx["chair_headers"],
     )
     document_id = upload.json()["document_id"]

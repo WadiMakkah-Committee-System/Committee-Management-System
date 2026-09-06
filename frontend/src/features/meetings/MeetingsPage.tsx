@@ -35,7 +35,7 @@ import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
 import { MeetingCalendarView } from './MeetingCalendarView'
-import { cardToneClass, cn, dayGroupKey, extractErrorMessage, formatDayHeading, formatTime, iconToneClass } from '@/lib/utils'
+import { cardToneClass, cn, dayGroupKey, extractErrorMessage, formatDayHeading, formatTime, iconToneClass, scopeFor } from '@/lib/utils'
 import type { Meeting } from '@/types'
 
 /**
@@ -124,14 +124,27 @@ export function MeetingsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   /**
-   * اللجان التي يقدر المستخدم الحالي ينشئ لها اجتماعًا — رئيسها فقط
-   * (نفس القيد الهيكلي المفروض بالباك-إند: meeting_service._authorize_manage).
-   * سوبر أدمن يملك meetings.schedule بالكتالوج فعليًا (منح شامل تلقائي)،
-   * فيُتاح له إنشاء اجتماع لأي لجنة، حتى لو لم يكن رئيسها.
+   * اللجان التي يقدر المستخدم الحالي ينشئ لها اجتماعًا — رئيسها، أو أي
+   * لجنة إطلاقًا لو يملك meetings.schedule بنطاق 'all' فعليًا.
+   *
+   * تصحيح 2026-09-02 (بلاغ خطأ من صاحبة المشروع): كان هذا الفحص يعتمد
+   * على user.role?.is_super_admin مباشرة — يخالف مبدأ النظام الموثّق
+   * (لا تجاوز تلقائي للصلاحيات لسوبر أدمن، حتى بالفرونت — راجعي تعليق
+   * Role.is_super_admin بالباك-إند). النتيجة: زر "اجتماع جديد" وكل اللجان
+   * كانت تظهر لأي سوبر أدمن حتى لو سُحبت منه صلاحية meetings.schedule
+   * فعليًا من شاشة الأدوار والصلاحيات — الباك-إند كان يرفض الطلب بشكل
+   * صحيح (403)، لكن الواجهة كانت مضلِّلة (تعرض الزر رغم الرفض الحتمي).
+   * الفحص الآن عبر scopeFor() الحقيقي، بنفس مصدر الحقيقة الذي يستخدمه
+   * الباك-إند (permission_scopes)، بدل افتراض ثابت بالكود.
+   *
+   * ملاحظة: نطاق 'department' غير مُعالَج هنا خصيصًا (لا حقل dep_id على
+   * CommitteeMemberUser المصغّر بالفرونت للتحقق من تطابق إدارة الرئيس) —
+   * غير مؤثر عمليًا حاليًا لأن لا دور نظامي يملك meetings.schedule بنطاق
+   * department فعليًا بالكتالوج الحالي (فقط 'all' لسوبر أدمن، أو لا شيء).
    */
   const chairableCommittees = useMemo(() => {
     if (!committees || !user) return []
-    if (user.role?.is_super_admin) return committees
+    if (scopeFor(user, 'meetings.schedule') === 'all') return committees
     return committees.filter((c) => c.chair_user_id === user.user_id)
   }, [committees, user])
 
@@ -195,36 +208,60 @@ export function MeetingsPage() {
     }))
   }, [visible])
 
-  function handleCreate(values: MeetingFormSubmitValues) {
+  /**
+   * الإنشاء يحتاج خطوتين متتاليتين: 1) إنشاء الاجتماع نفسه (JSON)، ثم
+   * 2) رفع ملفات العرض التقديمي/المرفقات المؤجَّلة (multipart) — تحتاج
+   * meeting_id الفعلي الناتج من الخطوة الأولى. فشل الرفع لا يُلغي الاجتماع
+   * نفسه (أُنشئ بنجاح فعلًا) — يُعرض تحذيرًا فقط بدل استرجاع كامل.
+   */
+  async function handleCreate(values: MeetingFormSubmitValues) {
     setFormError(null)
-    // scheduled_end_at اختياري بنوع MeetingFormSubmitValues (يبقى undefined فقط
-    // عند تعديل اجتماع قديم بلا وقت نهاية — راجعي MeetingFormModal.tsx)، لكنه
-    // إلزامي دائمًا هنا لأن buildSchema(isEdit=false) بالنموذج يفرضه قبل نجاح
-    // onSubmit أصلًا — الـ non-null assertion هنا مطابقة لضمان النموذج، لا تحايل عليه.
-    createMutation.mutate({ ...values, scheduled_end_at: values.scheduled_end_at! }, {
-      onSuccess: async (created) => {
-        setFormOpen(false)
-        showToast('تم إنشاء الاجتماع بنجاح', 'success')
+    try {
+      const created = await createMutation.mutateAsync({
+        ...values,
+        // scheduled_end_at اختياري بنوع MeetingFormSubmitValues (يبقى undefined فقط
+        // عند تعديل اجتماع قديم بلا وقت نهاية — راجعي MeetingFormModal.tsx)، لكنه
+        // إلزامي دائمًا هنا لأن buildSchema(isEdit=false) بالنموذج يفرضه قبل نجاح
+        // onSubmit أصلًا — الـ non-null assertion هنا مطابقة لضمان النموذج، لا تحايل عليه.
+        scheduled_end_at: values.scheduled_end_at!,
+      })
 
-        // رفع المرفقات المرحَّلة (Staged) الآن بعد توفر meeting_id فعليًا —
-        // راجعي رأس MeetingFormModal.tsx. تسلسليًا (وليس Promise.all) حتى
-        // لا يفشل رفع كل الملفات معًا لو رفض الباك-إند واحدًا منها (حجم مثلًا).
-        for (const staged of values.attachments) {
-          try {
-            await uploadAttachmentMutation.mutateAsync({
-              meetingId: created.meeting_id,
-              file: staged.file,
-              linkRole: staged.link_role,
-            })
-          } catch (err) {
-            showToast(`تعذّر رفع "${staged.file.name}": ${extractErrorMessage(err)}`, 'error')
-          }
+      const uploads: Promise<unknown>[] = []
+      if (values.presentationFile) {
+        uploads.push(
+          uploadAttachmentMutation.mutateAsync({
+            meetingId: created.meeting_id,
+            file: values.presentationFile,
+            kind: 'presentation',
+          }),
+        )
+      }
+      for (const file of values.attachmentFiles) {
+        uploads.push(
+          uploadAttachmentMutation.mutateAsync({
+            meetingId: created.meeting_id,
+            file,
+            kind: 'attachment',
+          }),
+        )
+      }
+
+      setFormOpen(false)
+      if (uploads.length > 0) {
+        const results = await Promise.allSettled(uploads)
+        const failed = results.filter((r) => r.status === 'rejected').length
+        if (failed > 0) {
+          showToast(`تم إنشاء الاجتماع، لكن تعذّر رفع ${failed} من المرفقات`, 'error')
+        } else {
+          showToast('تم إنشاء الاجتماع ورفع المرفقات بنجاح', 'success')
         }
-
-        navigate(`/meetings/${created.meeting_id}`)
-      },
-      onError: (err) => setFormError(extractErrorMessage(err)),
-    })
+      } else {
+        showToast('تم إنشاء الاجتماع بنجاح', 'success')
+      }
+      navigate(`/meetings/${created.meeting_id}`)
+    } catch (err) {
+      setFormError(extractErrorMessage(err))
+    }
   }
 
   /**
@@ -558,7 +595,7 @@ export function MeetingsPage() {
         onClose={() => setFormOpen(false)}
         committees={chairableCommittees}
         onSubmit={handleCreate}
-        loading={createMutation.isPending}
+        loading={createMutation.isPending || uploadAttachmentMutation.isPending}
         serverError={formError}
       />
 

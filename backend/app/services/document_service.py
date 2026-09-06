@@ -31,6 +31,7 @@ app.core.storage_client، هذه الوحدة تخزّن البيانات الو
 
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,24 +67,84 @@ async def _user_committee_ids(db: AsyncSession, user_id: uuid.UUID) -> set[uuid.
 
 
 async def can_view_document(db: AsyncSession, *, current_user: User, document: Document) -> bool:
-    if current_user.is_super_admin:
-        return True
+    """
+    قرار منتج (طلب صريح من المستخدمة 2026-09-02): تجاوز super_admin
+    التلقائي لفحص الرؤية يبقى فقط للفئتين "الروتينيتين/التنظيميتين" —
+    عامة (is_public) وإدارة محددة (أي إدارة، وليس إدارته فقط) — لأن
+    الإدارات بيانات تنظيمية عادة. أمّا اللجان فقد تحمل أحيانًا مسائل أكثر
+    حساسية، ومشاركة وثيقة مع مستخدمين محددين تحديدًا تعني أنها ليست
+    موجَّهة لسوبر أدمن تحديدًا — فكلا الفئتين (لجنة/مستخدمون محددون)
+    تُفحص لسوبر أدمن بنفس القاعدة المطبَّقة على أي مستخدم آخر (عضوية
+    فعلية باللجنة، أو كونه أحد المستخدمين المحددين أنفسهم) بدل تجاوز
+    شامل تلقائي. الرافع دائمًا يرى وثيقته (بصرف النظر عن نطاقها).
+    """
     if document.is_public:
         return True
     if document.uploaded_by == current_user.user_id:
         return True
-    if current_user.dep_id is not None and any(
-        d.dep_id == current_user.dep_id for d in document.visible_departments
-    ):
-        return True
     if any(u.user_id == current_user.user_id for u in document.visible_users):
         return True
+    if document.visible_departments:
+        if current_user.is_super_admin:
+            return True
+        if current_user.dep_id is not None and any(
+            d.dep_id == current_user.dep_id for d in document.visible_departments
+        ):
+            return True
     if document.visible_committees:
         visible_committee_ids = {c.committee_id for c in document.visible_committees}
         user_committee_ids = await _user_committee_ids(db, current_user.user_id)
         if visible_committee_ids & user_committee_ids:
             return True
     return False
+
+
+async def get_publish_targets(
+    db: AsyncSession, *, current_user: User
+) -> tuple[list[Department], list[Committee]]:
+    """
+    الإدارات واللجان اللي يحق فعليًا لـcurrent_user إتاحة وثيقة لها عند
+    الرفع/التعديل (مبدأ أقل صلاحية ممكنة) — راجعي docstring
+    DocumentPublishTargetsOut بـ app/schemas/document.py. لا علاقة لها
+    بفحص "رؤية" وثيقة موجودة أصلًا (can_view_document أعلاه) — هذه فقط
+    لتضييق خيارات المستخدم وقت الرفع/التعديل بدل عرض قوائم الإدارات/اللجان
+    الكاملة له.
+
+    النطاق (documents.upload/update، أوسعهما عبر scope_for — بنفس منطق
+    committee_service) هو ما يحدد الاتساع:
+    - 'all' (أو super_admin): كل الإدارات وكل اللجان (غير المحذوفة).
+    - 'department': إدارته فقط (إن وُجدت) + اللجان اللي هو عضو فيها.
+    - 'own' أو بلا نطاق مسجَّل إطلاقًا: بلا إدارات (لا يقدر يشارك إدارة
+      كاملة بوثيقة)، فقط اللجان اللي هو عضو فيها.
+    """
+    scope = current_user.scope_for("documents.upload", "documents.update")
+
+    if current_user.is_super_admin or scope == "all":
+        department_result = await db.execute(
+            select(Department).where(Department.deleted_at.is_(None)).order_by(Department.name)
+        )
+        committee_result = await db.execute(
+            select(Committee).where(Committee.deleted_at.is_(None)).order_by(Committee.name)
+        )
+        return list(department_result.scalars().all()), list(committee_result.scalars().all())
+
+    departments: list[Department] = []
+    if scope == "department" and current_user.dep_id is not None:
+        department = await db.get(Department, current_user.dep_id)
+        if department is not None and not department.is_deleted:
+            departments = [department]
+
+    committee_ids = await _user_committee_ids(db, current_user.user_id)
+    committees: list[Committee] = []
+    if committee_ids:
+        committee_result = await db.execute(
+            select(Committee)
+            .where(Committee.committee_id.in_(committee_ids), Committee.deleted_at.is_(None))
+            .order_by(Committee.name)
+        )
+        committees = list(committee_result.scalars().all())
+
+    return departments, committees
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +355,27 @@ async def _resolve_visibility(
     return departments, committees, users
 
 
+DocumentScopeFilter = Literal["public", "department", "committee", "shared"]
+
+
+def _matches_scope_filter(document: Document, *, scope: DocumentScopeFilter) -> bool:
+    """
+    فلترة "قسم" الوثيقة لعنصر التحكم المُقسَّم (segmented filter) بأعلى
+    صفحة الوثائق (الكل/عامة/إدارتي/لجاني/شورك معي) — تُطبَّق بعد فحص
+    الرؤية (can_view_document) لا بدلًا عنه، فهي مجرد تصنيف عرضي لوثائق
+    ظهرت للمستخدم أصلًا، وليست فحص صلاحية إضافي.
+    """
+    if scope == "public":
+        return document.is_public
+    if scope == "department":
+        return bool(document.visible_departments)
+    if scope == "committee":
+        return bool(document.visible_committees)
+    if scope == "shared":
+        return bool(document.visible_users)
+    return True
+
+
 async def list_documents(
     db: AsyncSession,
     *,
@@ -301,6 +383,8 @@ async def list_documents(
     q: str | None = None,
     category_id: uuid.UUID | None = None,
     can_search_content: bool = False,
+    scope: DocumentScopeFilter | None = None,
+    committee_id: uuid.UUID | None = None,
 ) -> list[Document]:
     stmt = select(Document).where(Document.deleted_at.is_(None)).options(*_DOCUMENT_LOAD_OPTIONS)
     if category_id is not None:
@@ -319,9 +403,17 @@ async def list_documents(
     result = await db.execute(stmt.order_by(Document.created_at.desc()))
     documents = list(result.scalars().all())
 
-    if current_user.is_super_admin:
-        return documents
-    return [doc for doc in documents if await can_view_document(db, current_user=current_user, document=doc)]
+    visible = [doc for doc in documents if await can_view_document(db, current_user=current_user, document=doc)]
+
+    if scope is not None:
+        visible = [doc for doc in visible if _matches_scope_filter(doc, scope=scope)]
+    if committee_id is not None:
+        visible = [
+            doc
+            for doc in visible
+            if any(c.committee_id == committee_id for c in doc.visible_committees)
+        ]
+    return visible
 
 
 async def get_document(
@@ -339,6 +431,52 @@ async def get_document(
     if not await can_view_document(db, current_user=current_user, document=document):
         return None
     return document
+
+
+def _assert_public_category_consistency(
+    *, category: DocumentCategory | None, is_public: bool
+) -> None:
+    """
+    قرار منتج (طلب صريح من المستخدمة 2026-08-31، تشديد لا تحذير فقط):
+    الوثيقة اللي تصنيفها خاص بإدارة معينة (scope == "department") ما
+    يجوز تصير "عامة" (is_public=True) — لأن هذا يكسر منطق العزل نفسه:
+    التصنيف محصور بإدارة، لكن الوثيقة نفسها تصير مرئية للجميع، وهذا
+    تناقض يفتح ثغرة رؤية غير مقصودة بدل غلطة تشغيلية بسيطة يكفيها تحذير.
+    التصنيفات العامة (scope == "global") أو عدم اختيار تصنيف أصلًا
+    (category=None) لا قيد عليها.
+    """
+    if category is not None and category.scope == "department" and is_public:
+        raise DocumentValidationError(
+            "لا يمكن جعل الوثيقة عامة (متاحة للجميع) وتصنيفها في نفس الوقت "
+            "خاص بإدارة معينة — إمّا اختاري تصنيفًا عامًا، أو ألغي خيار "
+            '"إتاحة الوثيقة للجميع"'
+        )
+
+
+def _assert_single_visibility_category(
+    *,
+    is_public: bool,
+    department_ids: list[uuid.UUID],
+    committee_ids: list[uuid.UUID],
+    user_ids: list[uuid.UUID],
+) -> None:
+    """
+    قرار منتج (طلب صريح من المستخدمة 2026-09-02): نطاق رؤية الوثيقة فئة
+    واحدة حصرية — إمّا عامة، أو إدارة/إدارات محددة، أو لجنة/لجان محددة، أو
+    مستخدم/مستخدمون محددون — لا يجوز الجمع بين أكثر من فئة معًا (مثال:
+    عامة + إدارة، أو إدارة + لجنة). الواجهة (DocumentFormModal) تفرض هذا
+    عبر اختيار "نطاق الوثيقة" الحصري (تبويب واحد نشط في كل لحظة)، لكن هذا
+    الفحص هو الحارس الفعلي على مستوى الباك-إند — أي طلب مباشر للـAPI
+    (بدون المرور بالواجهة) قد يحاول إرسال أكثر من فئة معًا.
+    """
+    active_categories = sum(
+        [bool(is_public), bool(department_ids), bool(committee_ids), bool(user_ids)]
+    )
+    if active_categories > 1:
+        raise DocumentValidationError(
+            "نطاق رؤية الوثيقة يجب أن يكون فئة واحدة فقط — عامة، أو إدارة، "
+            "أو لجنة، أو مستخدمون محددون — وليس أكثر من فئة في نفس الوقت"
+        )
 
 
 async def create_document(
@@ -374,6 +512,14 @@ async def create_document(
         ):
             raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
 
+    _assert_public_category_consistency(category=category, is_public=is_public)
+    _assert_single_visibility_category(
+        is_public=is_public,
+        department_ids=department_ids,
+        committee_ids=committee_ids,
+        user_ids=user_ids,
+    )
+
     departments, committees, users = await _resolve_visibility(
         db, department_ids=department_ids, committee_ids=committee_ids, user_ids=user_ids
     )
@@ -395,7 +541,13 @@ async def create_document(
     db.add(document)
     await db.flush()  # لتوليد document_id قبل بناء storage_path
 
-    storage_path = f"{document.document_id}/{file_name}"
+    # قرار موثّق (إصلاح خلل 2026-09-02): مفتاح الكائن بـSupabase Storage
+    # هو معرّف الوثيقة (UUID) وحده — وليس الاسم الأصلي للملف كما كان
+    # سابقًا (f"{document_id}/{file_name}") — لأن Supabase Storage يرفض
+    # مفاتيح تحتوي أحرفًا عربية أو مسافات (خطأ InvalidKey)، والاسم الأصلي
+    # لا يزال محفوظًا ببيانات الوثيقة الوصفية (file_name) ويُستخدم فقط
+    # للعرض ورأس Content-Disposition عند التحميل، لا كجزء من مسار التخزين.
+    storage_path = str(document.document_id)
     document.storage_path = storage_path
 
     try:
@@ -445,38 +597,65 @@ async def update_document(
 
     changes: dict[str, object] = {}
 
+    # نحسم أولًا "الحالة النهائية الفعلية" للتصنيف والعمومية قبل أي تعديل
+    # فعلي على الكائن — لأن التعديل جزئي (PATCH): أي حقل لم يُرسَل يبقى على
+    # قيمته الحالية بالوثيقة، فلازم نقارن التصنيف/العمومية الناتجين معًا
+    # (وليس فقط الحقل المُرسَل بمفرده) قبل تطبيق فحص التناقض.
+    resolved_category: DocumentCategory | None
+    if category_explicitly_set:
+        if category_id is not None:
+            resolved_category = await get_category(db, category_id)
+            if resolved_category is None:
+                raise DocumentValidationError("التصنيف المحدد غير موجود")
+            if (
+                resolved_category.scope == "department"
+                and not actor.is_super_admin
+                and resolved_category.department_id != actor.dep_id
+            ):
+                raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
+        else:
+            resolved_category = None
+    else:
+        resolved_category = document.category
+
+    resolved_is_public = is_public if is_public is not None else document.is_public
+    _assert_public_category_consistency(category=resolved_category, is_public=resolved_is_public)
+
+    # نفس منطق "الحالة النهائية الفعلية" أعلاه، مطبَّق على قوائم الرؤية
+    # الثلاث لفحص "فئة واحدة حصرية" (راجعي _assert_single_visibility_category)
+    # قبل أي تعديل فعلي — أي قائمة لم تُرسَل بالطلب تبقى على قيمتها الحالية.
+    resolved_department_ids = (
+        department_ids if department_ids is not None else [d.dep_id for d in document.visible_departments]
+    )
+    resolved_committee_ids = (
+        committee_ids if committee_ids is not None else [c.committee_id for c in document.visible_committees]
+    )
+    resolved_user_ids = (
+        user_ids if user_ids is not None else [u.user_id for u in document.visible_users]
+    )
+    _assert_single_visibility_category(
+        is_public=resolved_is_public,
+        department_ids=resolved_department_ids,
+        committee_ids=resolved_committee_ids,
+        user_ids=resolved_user_ids,
+    )
+
     if title is not None:
         changes["title"] = {"before": document.title, "after": title}
         document.title = title
     if description is not None:
         document.description = description
     if category_explicitly_set:
-        if category_id is not None:
-            category = await get_category(db, category_id)
-            if category is None:
-                raise DocumentValidationError("التصنيف المحدد غير موجود")
-            if (
-                category.scope == "department"
-                and not actor.is_super_admin
-                and category.department_id != actor.dep_id
-            ):
-                raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
-            document.category_id = category.category_id
-        else:
-            document.category_id = None
+        document.category_id = resolved_category.category_id if resolved_category else None
     if is_public is not None:
         document.is_public = is_public
 
     if department_ids is not None or committee_ids is not None or user_ids is not None:
         departments, committees, users = await _resolve_visibility(
             db,
-            department_ids=department_ids if department_ids is not None else [
-                d.dep_id for d in document.visible_departments
-            ],
-            committee_ids=committee_ids if committee_ids is not None else [
-                c.committee_id for c in document.visible_committees
-            ],
-            user_ids=user_ids if user_ids is not None else [u.user_id for u in document.visible_users],
+            department_ids=resolved_department_ids,
+            committee_ids=resolved_committee_ids,
+            user_ids=resolved_user_ids,
         )
         if department_ids is not None:
             document.visible_departments = departments

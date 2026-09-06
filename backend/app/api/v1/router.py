@@ -9,6 +9,7 @@ from app.api.v1 import (
     audit_logs,
     auth,
     committees,
+    decisions,
     departments,
     documents,
     job_titles,
@@ -30,3 +31,4 @@ api_router.include_router(committees.committees_router)
 api_router.include_router(documents.router)
 api_router.include_router(documents.categories_router)
 api_router.include_router(meetings.router)
+api_router.include_router(decisions.router)

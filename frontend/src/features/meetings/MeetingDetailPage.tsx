@@ -46,8 +46,8 @@ import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
 import { MeetingRoom } from './MeetingRoom'
-import { cn, extractErrorMessage, formatDateTime, formatFileSize } from '@/lib/utils'
-import type { MeetingAttachment, MeetingAttachmentLinkRole } from '@/types'
+import { cn, extractErrorMessage, formatDateTime, formatFileSize, scopeFor } from '@/lib/utils'
+import type { MeetingAttachment, MeetingAttachmentKind } from '@/types'
 
 /**
  * تفاصيل اجتماع واحد + إدارة جدول أعماله ومرفقاته. إجراءات التعديل/الحذف/
@@ -155,8 +155,15 @@ export function MeetingDetailPage() {
   const presentationInputRef = useRef<HTMLInputElement>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
 
+  /**
+   * تصحيح 2026-09-02 — نفس إصلاح MeetingsPage.tsx.chairableCommittees:
+   * لا تجاوز ثابت لسوبر أدمن — الفحص عبر meetings.update/meetings.delete
+   * الفعليتين (يكفي امتلاك إحداهما بنطاق 'all' لعرض إجراءات الإدارة هنا؛
+   * الفحص الدقيق لكل إجراء على حدة يبقى مسؤولية الباك-إند كالمعتاد).
+   */
   const canManage =
-    !!user?.role?.is_super_admin || (committee && committee.chair_user_id === user?.user_id)
+    scopeFor(user, 'meetings.update', 'meetings.delete') === 'all' ||
+    (committee && committee.chair_user_id === user?.user_id)
 
   const canDeleteMeeting = !!meeting && new Date(meeting.scheduled_at).getTime() > Date.now()
 
@@ -226,7 +233,6 @@ export function MeetingDetailPage() {
           location: values.location,
           scheduled_at: values.scheduled_at,
           scheduled_end_at: values.scheduled_end_at,
-          participant_ids: values.participant_ids,
         },
       },
       {
@@ -287,12 +293,12 @@ export function MeetingDetailPage() {
     )
   }
 
-  function handleUploadAttachment(files: FileList | null, linkRole: MeetingAttachmentLinkRole) {
+  function handleUploadAttachment(files: FileList | null, kind: MeetingAttachmentKind) {
     if (!meetingId || !files || files.length === 0) return
     setAttachmentError(null)
     Array.from(files).forEach((file) => {
       uploadAttachmentMutation.mutate(
-        { meetingId, file, linkRole },
+        { meetingId, file, kind },
         { onError: (err) => setAttachmentError(extractErrorMessage(err)) },
       )
     })
@@ -306,8 +312,8 @@ export function MeetingDetailPage() {
     )
   }
 
-  const presentationAttachments = (attachments ?? []).filter((a) => a.link_role === 'presentation')
-  const generalAttachments = (attachments ?? []).filter((a) => a.link_role === 'attachment')
+  const presentationAttachments = (attachments ?? []).filter((a) => a.kind === 'presentation')
+  const generalAttachments = (attachments ?? []).filter((a) => a.kind === 'attachment')
 
   return (
     <div className="flex flex-col gap-6">
@@ -366,7 +372,7 @@ export function MeetingDetailPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           {
             icon: <CalendarClock size={20} />,
@@ -374,6 +380,19 @@ export function MeetingDetailPage() {
             value: formatDateTime(meeting.scheduled_at),
             label: 'موعد الاجتماع',
           },
+          meeting.mode === 'in_person'
+            ? {
+                icon: <MapPin size={20} />,
+                tone: 'bg-brand-orange/10 text-brand-orange',
+                value: meeting.location ?? '—',
+                label: 'مكان الاجتماع (حضوري)',
+              }
+            : {
+                icon: <Video size={20} />,
+                tone: 'bg-brand-teal/10 text-brand-teal',
+                value: 'عن بُعد',
+                label: 'نوع الاجتماع',
+              },
           {
             icon: <UsersIcon size={20} />,
             tone: 'bg-brand-purple/10 text-brand-purple',

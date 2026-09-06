@@ -16,9 +16,10 @@ import {
   CalendarClock,
   Video,
   Archive,
+  Vote,
 } from 'lucide-react'
 import { cn, roleLabel } from '@/lib/utils'
-import type { CommitteeRequestStatus, CommitteeRoleSlug, MeetingStatus, RoleSummary, SystemRoleName, UserStatus } from '@/types'
+import type { CommitteeRequestStatus, CommitteeRoleSlug, DecisionStatus, MeetingStatus, RoleSummary, SystemRoleName, UserStatus } from '@/types'
 
 type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
@@ -145,6 +146,23 @@ const MEETING_STATUS_META: Record<MeetingStatus, { label: string; tone: BadgeTon
 
 export function MeetingStatusBadge({ status }: { status: MeetingStatus }) {
   const meta = MEETING_STATUS_META[status]
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  )
+}
+
+/** تسميات وألوان حالات القرار — تطابق DecisionStatus (راجعي types/index.ts). */
+const DECISION_STATUS_META: Record<DecisionStatus, { label: string; tone: BadgeTone; icon: ReactNode }> = {
+  pending: { label: 'بانتظار الاعتماد', tone: 'neutral', icon: <Clock3 size={13} /> },
+  voting: { label: 'قيد التصويت', tone: 'info', icon: <Vote size={13} /> },
+  approved: { label: 'معتمَد', tone: 'success', icon: <CheckCircle2 size={13} /> },
+  rejected: { label: 'مرفوض', tone: 'danger', icon: <XCircle size={13} /> },
+}
+
+export function DecisionStatusBadge({ status }: { status: DecisionStatus }) {
+  const meta = DECISION_STATUS_META[status]
   return (
     <Badge tone={meta.tone} icon={meta.icon}>
       {meta.label}

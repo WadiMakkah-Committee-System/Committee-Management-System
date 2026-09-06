@@ -19,7 +19,9 @@
   (content_text) أو العنوان/الوصف فقط.
 """
 
+import os
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +35,10 @@ from app.schemas.document import (
     DocumentCategoryOut,
     DocumentCategoryUpdate,
     DocumentOut,
+    DocumentPublishTargetsOut,
     DocumentUpdate,
+    DocumentVisibleCommitteeOut,
+    DocumentVisibleDepartmentOut,
 )
 from app.services import document_service
 
@@ -62,6 +67,29 @@ def _require_category_permission(current_user: User, *, scope: str, action: str)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="ليست لديك صلاحية للقيام بهذا الإجراء"
         )
+
+
+def _content_disposition(file_name: str) -> str:
+    """
+    إصلاح خلل حقيقي (اكتشفته المستخدمة 2026-09-03 أثناء التجربة الفعلية،
+    ليس مرتبطًا بإصلاح مفتاح التخزين السابق): رأس HTTP لا يقبل إلا أحرفًا
+    Latin-1، فأي اسم ملف عربي (وهو الحال الغالب هنا) كان يفجّر
+    UnicodeEncodeError عند التحميل ويوقف الطلب بالكامل — يعني التحميل ما
+    كان يشتغل إطلاقًا لأي ملف باسم عربي من الأساس. الحل القياسي (RFC 5987):
+    filename عادي كـfallback آمن (Latin-1) لمتصفحات قديمة جدًا، إلى جانب
+    filename* بترميز UTF-8 percent-encoded يحمل الاسم العربي الفعلي —
+    كل المتصفحات الحديثة تقرأ filename* وتتجاهل filename الاحتياطي.
+    """
+    # الامتداد (.pdf، .docx...) شبه دائمًا Latin-1 حتى لو بقية الاسم عربي —
+    # نستخدمه مع اسم عام لبديل قابل للقراءة بدل ترك الاسم فارغًا بالكامل
+    # لمن لا يدعم filename* (نادر جدًا اليوم). os.path.splitext (وليس
+    # rpartition) لأنه يرجع ('اسم', '') بلا نقطة لو ما فيه امتداد أصلًا —
+    # rpartition كان راح يحط الاسم الكامل غلط بمكان الامتداد بهالحالة.
+    _, ext = os.path.splitext(file_name)
+    ascii_ext = ext.encode("ascii", errors="ignore").decode("ascii").strip()
+    ascii_fallback = f"document{ascii_ext}" if ascii_ext else "download"
+    encoded = quote(file_name)
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
 
 
 def _storage_error_to_http(exc: storage_client.StorageError) -> HTTPException:
@@ -162,6 +190,8 @@ async def list_documents(
     current_user: CurrentUser,
     q: str | None = None,
     category_id: uuid.UUID | None = None,
+    scope: document_service.DocumentScopeFilter | None = None,
+    committee_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentOut]:
     can_search_content = current_user.role.is_super_admin or (
@@ -173,6 +203,8 @@ async def list_documents(
         q=q,
         category_id=category_id,
         can_search_content=can_search_content,
+        scope=scope,
+        committee_id=committee_id,
     )
     return [DocumentOut.model_validate(d) for d in documents]
 
@@ -216,6 +248,35 @@ async def upload_document(
     except storage_client.StorageError as exc:
         raise _storage_error_to_http(exc) from exc
     return DocumentOut.model_validate(document)
+
+
+@router.get(
+    "/publish-targets",
+    response_model=DocumentPublishTargetsOut,
+    dependencies=[Depends(require_permission("documents.upload", "documents.update"))],
+)
+async def get_document_publish_targets(
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> DocumentPublishTargetsOut:
+    """
+    الإدارات واللجان اللي يحق للمستخدم الحالي إتاحة وثيقة لها (مبدأ أقل
+    صلاحية ممكنة) — يستخدمها الفرونت-إند عند فتح فورم رفع/تعديل وثيقة
+    بدل قوائم الإدارات/اللجان الكاملة. لازم تُعرَّف قبل GET
+    /{document_id} (وليس بعده) وإلا FastAPI بيحاول يفسّر "publish-targets"
+    كـ document_id فيفشل بخطأ تحقق UUID.
+
+    الصلاحية: documents.upload أو documents.update (أيّهما كافٍ) — لأن
+    الفورم نفسه (DocumentFormModal) يستخدم هذه القائمة في وضعي الرفع
+    والتعديل معًاٌ وDocumentDetailPage.tsx يستدعيها حتى لو كان المستخدم
+    يملك صلاحية التعديل فقط بلا صلاحية الرفع.
+    """
+    departments, committees = await document_service.get_publish_targets(
+        db, current_user=current_user
+    )
+    return DocumentPublishTargetsOut(
+        departments=[DocumentVisibleDepartmentOut.model_validate(d) for d in departments],
+        committees=[DocumentVisibleCommitteeOut.model_validate(c) for c in committees],
+    )
 
 
 @router.get(
@@ -300,5 +361,5 @@ async def download_document(
     return Response(
         content=content,
         media_type=document.mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{document.file_name}"'},
+        headers={"Content-Disposition": _content_disposition(document.file_name)},
     )

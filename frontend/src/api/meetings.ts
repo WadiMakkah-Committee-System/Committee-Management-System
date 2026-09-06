@@ -5,7 +5,7 @@ import type {
   MeetingAgendaItemCreatePayload,
   MeetingAgendaItemUpdatePayload,
   MeetingAttachment,
-  MeetingAttachmentLinkRole,
+  MeetingAttachmentKind,
   MeetingCreatePayload,
   MeetingJoinResponse,
   MeetingUpdatePayload,
@@ -13,10 +13,8 @@ import type {
 
 /**
  * وحدة "إدارة الاجتماعات" — تقابل app/api/v1/meetings.py بالباك-إند.
- * بدون Teams/AI في هذا الـPhase (راجعي رأس meeting_service.py بالباك-إند
- * للقرار الموثّق). التفويض هنا هيكلي (رئيس اللجنة)، وليس صلاحية عامة —
- * راجعي hooks/useMeetings.ts وMeetingsPage.tsx لتفصيل كيفية تحديد ذلك
- * بالواجهة.
+ * التفويض هيكلي (دور اللجنة/النظام)، وليس صلاحية عامة ثابتة — راجعي
+ * hooks/useMeetings.ts وMeetingsPage.tsx لتفصيل كيفية تحديد ذلك بالواجهة.
  */
 
 export async function fetchMeetings(): Promise<Meeting[]> {
@@ -96,33 +94,46 @@ export async function deleteAgendaItem(agendaItemId: string): Promise<void> {
 /**
  * مرفقات الاجتماع — أول استخدام فعلي لـdocument_links بالباك-إند (راجعي
  * رأس db/migrations/0021). الرفع multipart/form-data (وليس JSON)، بنفس
- * منطق POST /documents — لا تُضيفي header['Content-Type'] يدويًا هنا:
- * axios (v1) يكتشف FormData تلقائيًا ويزيل Content-Type الافتراضي
- * (application/json من apiClient.ts) ليضبط المتصفح الـboundary الصحيح.
- * التحميل عبر fetchMeetingAttachmentBlob (وليس <a href> مباشرة) لأن
- * التنزيل يتطلب Authorization Bearer بالـheader — راجعي useMeetings.ts.
+ * منطق POST /documents. التحميل عبر fetchMeetingAttachmentBlob (وليس
+ * <a href> مباشرة) لأن التنزيل يتطلب Authorization Bearer بالـheader —
+ * راجعي useMeetings.ts. التحميل يمر عبر مسار مخصص بوحدة الاجتماعات
+ * GET /meetings/{meetingId}/attachments/{documentId}/download (وليس
+ * GET /documents/{documentId}/download العام) لأن ذلك المسار محمي
+ * بصلاحية Role نظامية ثابتة (documents.download) لا يملكها عضو اللجنة
+ * العادي غالبًا، بينما هنا يكفي meetings.attachments.view.
  */
-export async function fetchMeetingAttachments(meetingId: string): Promise<MeetingAttachment[]> {
-  const { data } = await apiClient.get<MeetingAttachment[]>(`/meetings/${meetingId}/attachments`)
+export async function fetchMeetingAttachments(
+  meetingId: string,
+  kind?: MeetingAttachmentKind,
+): Promise<MeetingAttachment[]> {
+  const { data } = await apiClient.get<MeetingAttachment[]>(`/meetings/${meetingId}/attachments`, {
+    params: kind ? { kind } : undefined,
+  })
   return data
 }
 
 export async function uploadMeetingAttachment(
   meetingId: string,
   file: File,
-  linkRole: MeetingAttachmentLinkRole,
+  kind: MeetingAttachmentKind,
+  title?: string,
 ): Promise<MeetingAttachment> {
-  const formData = new FormData()
-  formData.append('file', file)
-  formData.append('link_role', linkRole)
+  const form = new FormData()
+  form.append('file', file)
+  form.append('kind', kind)
+  if (title) form.append('title', title)
   const { data } = await apiClient.post<MeetingAttachment>(
     `/meetings/${meetingId}/attachments`,
-    formData,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
   )
   return data
 }
 
-export async function deleteMeetingAttachment(meetingId: string, documentId: string): Promise<void> {
+export async function deleteMeetingAttachment(
+  meetingId: string,
+  documentId: string,
+): Promise<void> {
   await apiClient.delete(`/meetings/${meetingId}/attachments/${documentId}`)
 }
 
@@ -130,11 +141,11 @@ export async function fetchMeetingAttachmentBlob(
   meetingId: string,
   documentId: string,
 ): Promise<{ blob: Blob; fileName: string }> {
-  const response = await apiClient.get(`/meetings/${meetingId}/attachments/${documentId}/download`, {
-    responseType: 'blob',
-  })
+  const response = await apiClient.get(
+    `/meetings/${meetingId}/attachments/${documentId}/download`,
+    { responseType: 'blob' },
+  )
   const disposition = String(response.headers['content-disposition'] ?? '')
   const match = /filename="?([^"]+)"?/.exec(disposition)
   return { blob: response.data as Blob, fileName: match?.[1] ?? 'attachment' }
 }
-
