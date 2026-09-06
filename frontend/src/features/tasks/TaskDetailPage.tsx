@@ -31,6 +31,7 @@ import { Modal } from '@/components/ui/Modal'
 import { TaskStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { TaskFormModal, type TaskFormSubmitValues } from './TaskFormModal'
+import { TaskPipeline } from './TaskPipeline'
 import { cn, extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
 import type { TaskStatus } from '@/types'
 
@@ -228,6 +229,8 @@ export function TaskDetailPage() {
           />
         )}
       </div>
+
+      <TaskPipeline status={task.status} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {[

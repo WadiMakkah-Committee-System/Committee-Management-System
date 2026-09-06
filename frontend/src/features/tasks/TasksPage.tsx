@@ -1,9 +1,20 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { CheckCircle2, Eye, ListChecks, ListTodo, Plus, PlayCircle, Trash2 } from 'lucide-react'
+import {
+  CheckCircle2,
+  Eye,
+  ListChecks,
+  ListTodo,
+  PauseCircle,
+  Pencil,
+  Plus,
+  PlayCircle,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react'
 import { useCommittees } from '@/hooks/useCommittees'
-import { useCreateTask, useDeleteTask, useTasks } from '@/hooks/useTasks'
+import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -12,18 +23,45 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { CardSkeleton } from '@/components/ui/Skeleton'
 import { StatCard } from '@/components/ui/StatCard'
-import { TaskStatusBadge } from '@/components/ui/StatusBadge'
+import { TASK_STATUS_META } from '@/components/ui/StatusBadge'
+import { ActionMenu } from '@/components/ui/ActionMenu'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { TaskFormModal, type TaskFormSubmitValues } from './TaskFormModal'
-import { cardToneClass, extractErrorMessage, formatDate } from '@/lib/utils'
-import type { Task } from '@/types'
+import { extractErrorMessage, formatDate } from '@/lib/utils'
+import type { Task, TaskStatus } from '@/types'
+
+/** أيقونة أكبر لكل حالة (شارة الحالة الصغيرة بـ StatusBadge.tsx بحجم 13px فقط، غير قابلة لإعادة التحجيم). */
+const TASK_STATUS_ICON: Record<TaskStatus, LucideIcon> = {
+  todo: ListTodo,
+  in_progress: PlayCircle,
+  on_hold: PauseCircle,
+  completed: CheckCircle2,
+}
+
+/** نص الحالة الملوّن أسفل عنوان البطاقة — Tailwind يحتاج أسماء classes حرفية (لا يدعم `text-${tone}` الديناميكي). */
+const TASK_STATUS_TEXT_CLASS: Record<TaskStatus, string> = {
+  todo: 'text-neutral',
+  in_progress: 'text-info',
+  on_hold: 'text-warning',
+  completed: 'text-success',
+}
 
 /**
  * قائمة المهام — إنشاء مباشر من واجهة المهام فقط (بدون مهام مستخرجة من
  * اجتماع بالذكاء الاصطناعي — تُبنى لاحقًا). رئيس اللجنة يشوف كل مهام
  * لجانه، العضو العادي يشوف مهامه المسندة له فقط (يُحسم بالكامل بالباك-إند
  * — راجعي رأس task_service.list_tasks لعدم تكرار منطق النطاق هنا).
+ *
+ * تصميم البطاقات (بطلب صريح من Lujain، على غرار بطاقات "الأدوار
+ * والصلاحيات"): خلفية البطاقة كاملة بتدرّج لون الحالة + أيقونة الحالة
+ * بمربّع ملوّن بالزاوية، بدل خط علوي رفيع أو تلوين عشوائي (cardToneClass
+ * القديم). قائمة "⋮" (ActionMenu) تظهر فقط لمن يملك صلاحية إدارة المهمة
+ * فعليًا (رئيسة اللجنة الفعلية لتلك اللجنة تحديدًا، أو سوبر أدمن) — نفس
+ * منطق chairableCommittees أدناه المستخدم أصلًا لإنشاء المهام، لأن
+ * create/update/delete غير مقيَّدة بالكائن نفسه بالباك-إند وتُمنح فعليًا
+ * لدور الرئيس فقط (راجعي رأس task_service.py). العضو المكلَّف بمهمة
+ * بلجنة لا يرأسها يشوف بطاقة للعرض فقط، بدون القائمة.
  */
 export function TasksPage() {
   const navigate = useNavigate()
@@ -31,12 +69,15 @@ export function TasksPage() {
   const { data: tasks, isLoading, isError, refetch } = useTasks()
   const { data: committees } = useCommittees()
   const createMutation = useCreateTask()
+  const updateMutation = useUpdateTask()
   const deleteMutation = useDeleteTask()
   const { showToast } = useToast()
 
   const [search, setSearch] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [editTarget, setEditTarget] = useState<Task | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
@@ -47,6 +88,11 @@ export function TasksPage() {
   }, [committees, user])
 
   const canCreateAnyTask = chairableCommittees.length > 0
+
+  const manageableCommitteeIds = useMemo(
+    () => new Set(chairableCommittees.map((c) => c.committee_id)),
+    [chairableCommittees],
+  )
 
   const filtered = useMemo(() => {
     if (!tasks) return []
@@ -75,6 +121,24 @@ export function TasksPage() {
       },
       onError: (err) => setFormError(extractErrorMessage(err)),
     })
+  }
+
+  function handleUpdate(values: TaskFormSubmitValues) {
+    if (!editTarget) return
+    setEditError(null)
+    updateMutation.mutate(
+      {
+        taskId: editTarget.task_id,
+        payload: { title: values.title, start_date: values.start_date, end_date: values.end_date },
+      },
+      {
+        onSuccess: () => {
+          setEditTarget(null)
+          showToast('تم حفظ التعديلات', 'success')
+        },
+        onError: (err) => setEditError(extractErrorMessage(err)),
+      },
+    )
   }
 
   function handleDeleteConfirm() {
@@ -163,53 +227,78 @@ export function TasksPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((task, i) => (
-            <motion.div
-              key={task.task_id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
-            >
-              <Card className={cardToneClass(i)}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-brand-primary/10 text-brand-primary">
-                    <ListChecks size={18} />
-                  </div>
-                  <TaskStatusBadge status={task.status} />
-                </div>
-                <h3 className="mt-3 text-sm font-semibold text-text-primary">{task.title}</h3>
-                <p className="mt-1 text-xs text-text-secondary">
-                  المسؤول: {task.assignee.first_name} {task.assignee.last_name}
-                </p>
-                <p className="mt-3 text-xs text-text-secondary">
-                  التنفيذ: {formatDate(task.start_date)} — {formatDate(task.end_date)}
-                </p>
+          {filtered.map((task, i) => {
+            const meta = TASK_STATUS_META[task.status]
+            const StatusIcon = TASK_STATUS_ICON[task.status]
+            const canManageTask = manageableCommitteeIds.has(task.committee_id)
+            const isCompleted = task.status === 'completed'
 
-                <div className="mt-3 flex items-center gap-1 border-t border-border-default pt-3">
-                  <button
-                    onClick={() => navigate(`/tasks/${task.task_id}`)}
-                    className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-brand-primary"
-                    aria-label="تفاصيل المهمة"
-                    title="تفاصيل المهمة"
-                  >
-                    <Eye size={16} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      setDeleteError(null)
-                      setDeleteTarget(task)
-                    }}
-                    disabled={task.status === 'completed'}
-                    className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-danger-bg hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-text-muted"
-                    aria-label="حذف المهمة"
-                    title={task.status === 'completed' ? 'لا يمكن حذف مهمة مكتملة' : 'حذف المهمة'}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </Card>
-            </motion.div>
-          ))}
+            return (
+              <motion.div
+                key={task.task_id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
+              >
+                <Card
+                  interactive
+                  onClick={() => navigate(`/tasks/${task.task_id}`)}
+                  style={{ backgroundColor: `var(--status-${meta.tone}-bg)` }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-white"
+                      style={{ backgroundColor: `var(--status-${meta.tone}-main)` }}
+                    >
+                      <StatusIcon size={17} />
+                    </div>
+                    {canManageTask && (
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <ActionMenu
+                          items={[
+                            {
+                              label: 'عرض التفاصيل',
+                              icon: <Eye size={14} />,
+                              onClick: () => navigate(`/tasks/${task.task_id}`),
+                            },
+                            {
+                              label: 'تعديل',
+                              icon: <Pencil size={14} />,
+                              disabled: isCompleted,
+                              onClick: () => {
+                                setEditError(null)
+                                setEditTarget(task)
+                              },
+                            },
+                            {
+                              label: 'حذف',
+                              icon: <Trash2 size={14} />,
+                              tone: 'danger',
+                              disabled: isCompleted,
+                              onClick: () => {
+                                setDeleteError(null)
+                                setDeleteTarget(task)
+                              },
+                            },
+                          ]}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <h3 className="mt-3 text-sm font-semibold text-text-primary">{task.title}</h3>
+                  <p className={`mt-0.5 text-xs font-semibold ${TASK_STATUS_TEXT_CLASS[task.status]}`}>
+                    {meta.label}
+                  </p>
+                  <p className="mt-3 text-xs text-text-secondary">
+                    المسؤول: {task.assignee.first_name} {task.assignee.last_name}
+                  </p>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    التنفيذ: {formatDate(task.start_date)} — {formatDate(task.end_date)}
+                  </p>
+                </Card>
+              </motion.div>
+            )
+          })}
         </div>
       )}
 
@@ -220,6 +309,18 @@ export function TasksPage() {
         onSubmit={handleCreate}
         loading={createMutation.isPending}
         serverError={formError}
+      />
+
+      <TaskFormModal
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        committees={
+          editTarget ? chairableCommittees.filter((c) => c.committee_id === editTarget.committee_id) : []
+        }
+        task={editTarget}
+        onSubmit={handleUpdate}
+        loading={updateMutation.isPending}
+        serverError={editError}
       />
 
       <ConfirmDialog
