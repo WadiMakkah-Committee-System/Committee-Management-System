@@ -10,6 +10,7 @@ import {
   Repeat,
   Trash2,
   UserCheck,
+  UserPlus,
 } from 'lucide-react'
 import {
   useDeleteTask,
@@ -32,7 +33,7 @@ import { TaskStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { TaskFormModal, type TaskFormSubmitValues } from './TaskFormModal'
 import { TaskPipeline } from './TaskPipeline'
-import { cn, extractErrorMessage, formatDate, formatDateTime } from '@/lib/utils'
+import { cn, extractErrorMessage, formatDate, formatDateTime, getInitials } from '@/lib/utils'
 import type { TaskStatus } from '@/types'
 
 const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
@@ -315,39 +316,44 @@ export function TaskDetailPage() {
         {task.assignment_history.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-text-muted">لا توجد أي عمليات إسناد بعد</p>
         ) : (
-          <ul>
+          <div className="flex flex-col gap-2 p-3">
             {[...task.assignment_history]
               .sort((a, b) => new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime())
               .map((entry, i) => (
-                <motion.li
+                <motion.div
                   key={entry.history_id}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-                  className="flex flex-col gap-1.5 border-b border-border-default px-4 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between"
+                  className="flex items-center gap-3 rounded-sm border border-info-border/25 bg-info-bg px-3.5 py-3"
                 >
-                  <div className="flex items-center gap-2 text-sm">
-                    <Avatar firstName={entry.to_user.first_name} lastName={entry.to_user.last_name} size={24} />
-                    <span className="text-text-primary">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-info text-white">
+                    {entry.from_user ? <UserCheck size={16} /> : <UserPlus size={16} />}
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <p className="text-sm text-text-primary">
                       {entry.from_user ? (
                         <>
-                          إسناد من <span className="font-medium">{entry.from_user.first_name} {entry.from_user.last_name}</span>{' '}
-                          إلى <span className="font-medium">{entry.to_user.first_name} {entry.to_user.last_name}</span>
+                          إسناد من <span className="font-semibold">{entry.from_user.first_name} {entry.from_user.last_name}</span>{' '}
+                          إلى <span className="font-semibold">{entry.to_user.first_name} {entry.to_user.last_name}</span>
                         </>
                       ) : (
                         <>
                           الإسناد الأول إلى{' '}
-                          <span className="font-medium">{entry.to_user.first_name} {entry.to_user.last_name}</span>
+                          <span className="font-semibold">{entry.to_user.first_name} {entry.to_user.last_name}</span>
                         </>
                       )}
-                    </span>
+                    </p>
+                    <p className="text-xs font-medium text-info/75">
+                      بواسطة {entry.changer.first_name} {entry.changer.last_name} · {formatDateTime(entry.changed_at)}
+                    </p>
                   </div>
-                  <span className="text-xs text-text-muted">
-                    بواسطة {entry.changer.first_name} {entry.changer.last_name} — {formatDateTime(entry.changed_at)}
-                  </span>
-                </motion.li>
+                  <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border-2 border-bg-surface bg-info text-[10px] font-bold text-white">
+                    {getInitials(entry.to_user.first_name, entry.to_user.last_name)}
+                  </div>
+                </motion.div>
               ))}
-          </ul>
+          </div>
         )}
       </Card>
 
