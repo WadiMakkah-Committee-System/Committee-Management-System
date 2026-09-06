@@ -173,7 +173,7 @@ export function DecisionStatusBadge({ status }: { status: DecisionStatus }) {
 }
 
 /** تسميات وألوان حالات المهمة — تطابق TaskStatus (راجعي types/index.ts). */
-const TASK_STATUS_META: Record<TaskStatus, { label: string; tone: BadgeTone; icon: ReactNode }> = {
+export const TASK_STATUS_META: Record<TaskStatus, { label: string; tone: BadgeTone; icon: ReactNode }> = {
   todo: { label: 'لم تبدأ', tone: 'neutral', icon: <ListTodo size={13} /> },
   in_progress: { label: 'قيد التنفيذ', tone: 'info', icon: <PlayCircle size={13} /> },
   on_hold: { label: 'معلّقة', tone: 'warning', icon: <PauseCircle size={13} /> },

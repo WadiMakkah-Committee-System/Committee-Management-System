@@ -48,6 +48,20 @@ const SCOPE_GROUPS: ScopeGroup[] = [
       all: 'كل المستخدمين',
     },
   },
+  {
+    // بطلب صريح من Lujain 2026-09-06: دور "أدمن" يشوف مهام لجان إدارته
+    // فقط (department)، لا كل لجان النظام — الباك-إند (task_service.
+    // _system_scope_allows) يدعم 'department' فعليًا (مقارنة actor.dep_id
+    // بقسم رئيس اللجنة)، لكن ما كان له منتقي نطاق بهذه الواجهة قبل الآن
+    // (كان يُثبَّت 'all' دائمًا لأي صلاحية غير مذكورة بـSCOPE_GROUPS).
+    key: 'tasks_view',
+    codes: ['tasks.view', 'tasks.view_details'],
+    options: ['department', 'all'],
+    labels: {
+      department: 'مهام لجان إدارتي فقط',
+      all: 'مهام كل لجان النظام',
+    },
+  },
 ]
 
 const CODE_TO_GROUP: Map<string, ScopeGroup> = new Map(
