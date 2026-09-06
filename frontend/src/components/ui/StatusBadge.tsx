@@ -17,9 +17,11 @@ import {
   Video,
   Archive,
   Vote,
+  PlayCircle,
+  ListTodo,
 } from 'lucide-react'
 import { cn, roleLabel } from '@/lib/utils'
-import type { CommitteeRequestStatus, CommitteeRoleSlug, DecisionStatus, MeetingStatus, RoleSummary, SystemRoleName, UserStatus } from '@/types'
+import type { CommitteeRequestStatus, CommitteeRoleSlug, DecisionStatus, MeetingStatus, RoleSummary, SystemRoleName, TaskStatus, UserStatus } from '@/types'
 
 type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
@@ -163,6 +165,23 @@ const DECISION_STATUS_META: Record<DecisionStatus, { label: string; tone: BadgeT
 
 export function DecisionStatusBadge({ status }: { status: DecisionStatus }) {
   const meta = DECISION_STATUS_META[status]
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  )
+}
+
+/** تسميات وألوان حالات المهمة — تطابق TaskStatus (راجعي types/index.ts). */
+const TASK_STATUS_META: Record<TaskStatus, { label: string; tone: BadgeTone; icon: ReactNode }> = {
+  todo: { label: 'لم تبدأ', tone: 'neutral', icon: <ListTodo size={13} /> },
+  in_progress: { label: 'قيد التنفيذ', tone: 'info', icon: <PlayCircle size={13} /> },
+  on_hold: { label: 'معلّقة', tone: 'warning', icon: <PauseCircle size={13} /> },
+  completed: { label: 'مكتملة', tone: 'success', icon: <CheckCircle2 size={13} /> },
+}
+
+export function TaskStatusBadge({ status }: { status: TaskStatus }) {
+  const meta = TASK_STATUS_META[status]
   return (
     <Badge tone={meta.tone} icon={meta.icon}>
       {meta.label}

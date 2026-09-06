@@ -70,7 +70,7 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   { label: 'الاجتماعات', icon: CalendarDays, path: '/meetings', requiredPermission: ['meetings.view'] },
-  { label: 'المهام', icon: ListChecks, comingSoon: true },
+  { label: 'المهام', icon: ListChecks, path: '/tasks', requiredPermission: ['tasks.view'] },
   { label: 'القرارات', icon: Gavel, path: '/decisions', requiredPermission: ['decisions.view'] },
   {
     // كانت "الوثائق" قائمة قابلة للتوسّع بعنصرين فرعيين (كل الوثائق /
@@ -139,6 +139,10 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
     // نفس المبدأ لوحدة "القرارات" — راجعي نفس الملاحظة أعلاه.
     if (user?.has_any_committee_membership && !base.includes('decisions.view')) {
       base = [...base, 'decisions.view']
+    }
+    // نفس المبدأ لوحدة "المهام" — راجعي نفس الملاحظة أعلاه.
+    if (user?.has_any_committee_membership && !base.includes('tasks.view')) {
+      base = [...base, 'tasks.view']
     }
     return base
   }, [user])
