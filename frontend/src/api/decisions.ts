@@ -2,8 +2,8 @@ import { apiClient } from '@/lib/apiClient'
 import type {
   Decision,
   DecisionCreatePayload,
+  DecisionOpenVotingPayload,
   DecisionUpdatePayload,
-  DecisionVoteChoice,
 } from '@/types'
 
 /**
@@ -40,21 +40,19 @@ export async function deleteDecision(decisionId: string): Promise<void> {
   await apiClient.delete(`/decisions/${decisionId}`)
 }
 
+/** الخيارات (options) تُكتب من رئيسة اللجنة بالكامل — راجعي DecisionOpenVotingPayload بـtypes/index.ts. */
 export async function openVoting(
   decisionId: string,
-  votingDeadline?: string | null,
+  payload: DecisionOpenVotingPayload,
 ): Promise<Decision> {
-  const { data } = await apiClient.post<Decision>(`/decisions/${decisionId}/open-voting`, {
-    voting_deadline: votingDeadline ?? null,
-  })
+  const { data } = await apiClient.post<Decision>(`/decisions/${decisionId}/open-voting`, payload)
   return data
 }
 
-export async function castVote(
-  decisionId: string,
-  choice: DecisionVoteChoice,
-): Promise<Decision> {
-  const { data } = await apiClient.post<Decision>(`/decisions/${decisionId}/vote`, { choice })
+export async function castVote(decisionId: string, optionId: string): Promise<Decision> {
+  const { data } = await apiClient.post<Decision>(`/decisions/${decisionId}/vote`, {
+    option_id: optionId,
+  })
   return data
 }
 
