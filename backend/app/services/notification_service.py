@@ -531,6 +531,25 @@ async def notify_decision_approved(decision: Decision, *, actor_user_id: uuid.UU
     )
 
 
+async def notify_decision_rejected(decision: Decision) -> None:
+    """
+    رفض تلقائي لعدم تحقق الأغلبية (decision_service._maybe_close_voting) →
+    إشعار كل أعضاء اللجنة. بدون actor_user_id (بخلاف باقي دوال decision.*
+    أعلاه) عمدًا: هذا حدث آلي بحت لا يُطلقه أي مستخدم بفعل مباشر (يحدث
+    كسليًا عند أي تفاعل يصادف انتهاء موعد التصويت أو اكتمال تصويت الجميع
+    — راجعي docstring decision_service.py)، فلا يوجد "فاعل" منطقي يُستثنى
+    من الإشعار.
+    """
+    await _notify_many(
+        [u.user_id for u in decision.assignees],
+        event_type="decision_rejected",
+        title=f"تم رفض القرار: {decision.title}",
+        body=decision.rejection_reason or f"ضمن لجنة {decision.committee.name}.",
+        related_entity_type="decision",
+        related_entity_id=decision.decision_id,
+    )
+
+
 # =====================================================================
 # استعلامات المستخدم على إشعاراته — يستخدمها راوت app/api/v1/notifications.py
 # مباشرة بجلسة الطلب العادية (get_db)، بخلاف كل ما سبق أعلاه (يفتح جلسته
