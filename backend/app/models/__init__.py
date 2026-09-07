@@ -17,6 +17,7 @@ from app.models.decision import (
 from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.meeting import Meeting, MeetingAgendaItem, MeetingMode, MeetingStatus
+from app.models.notification import Notification
 from app.models.password_reset_token import PasswordResetToken
 from app.models.role import Permission, Role
 from app.models.task import Task, TaskAssignmentHistory, TaskStatus
@@ -39,6 +40,7 @@ __all__ = [
     "MeetingAgendaItem",
     "MeetingMode",
     "MeetingStatus",
+    "Notification",
     "PasswordResetToken",
     "Permission",
     "Role",

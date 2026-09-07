@@ -83,7 +83,7 @@ const NAV_ITEMS: NavItem[] = [
     requiredPermission: ['documents.view', 'documents.search'],
   },
   { label: 'البحث الذكي', icon: Sparkles, comingSoon: true },
-  { label: 'الإشعارات', icon: Bell, comingSoon: true },
+  { label: 'الإشعارات', icon: Bell, path: '/notifications' },
   { label: 'التقارير', icon: BarChart3, comingSoon: true },
 ]
 

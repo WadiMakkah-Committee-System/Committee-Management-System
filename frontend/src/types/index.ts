@@ -656,3 +656,34 @@ export interface TaskStatusUpdatePayload {
 export interface TaskReassignPayload {
   assignee_user_id: string
 }
+
+/**
+ * أنواع وحدة "الإشعارات" داخل النظام — مطابقة تمامًا لـ
+ * backend/app/schemas/notification.py وapp/models/notification.py. راجعي
+ * رأس db/migrations/0027_notifications_schema.sql لكل الاجتهادات
+ * الموثّقة (event_type نصي حر، related_entity_type/id بدون FK فعلي).
+ */
+export type NotificationEntityType = 'task' | 'committee_request' | 'committee' | 'decision' | 'meeting'
+
+export interface Notification {
+  notification_id: string
+  event_type: string
+  title: string
+  body: string | null
+  related_entity_type: NotificationEntityType | null
+  related_entity_id: string | null
+  is_read: boolean
+  read_at: string | null
+  created_at: string
+}
+
+export interface NotificationPage {
+  items: Notification[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface UnreadCount {
+  unread_count: number
+}

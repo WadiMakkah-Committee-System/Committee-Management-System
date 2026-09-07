@@ -218,3 +218,43 @@ export function formatFileSize(bytes: number): string {
   }
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unitIndex]}`
 }
+
+/**
+ * وقت نسبي مختصر ("قبل 4 دقائق"، "أمس، 4:12 م") — يُستخدم بجرس الإشعارات
+ * والقائمة المنسدلة (عرض مضغوط)؛ صفحة الإشعارات الكاملة تستخدم
+ * formatDateTime/formatDayHeading أعلاه للتجميع الكامل بدل هذه.
+ */
+export function formatRelativeTime(value: string): string {
+  const date = new Date(value)
+  const diffMs = Date.now() - date.getTime()
+  const diffMin = Math.round(diffMs / 60000)
+
+  if (diffMin < 1) return 'الآن'
+  if (diffMin < 60) return `قبل ${diffMin} ${diffMin === 1 ? 'دقيقة' : 'دقائق'}`
+
+  const diffHours = Math.round(diffMin / 60)
+  if (diffHours < 24) return `قبل ${diffHours} ${diffHours === 1 ? 'ساعة' : 'ساعات'}`
+
+  const diffDays = Math.round(diffHours / 24)
+  if (diffDays === 1) return `أمس، ${formatTime(value)}`
+  if (diffDays < 7) return `قبل ${diffDays} أيام`
+
+  return formatDate(value)
+}
+
+/**
+ * مفتاح تجميع الإشعارات بصفحة "الإشعارات" الكاملة (اليوم/أمس/الأسبوع
+ * الماضي/أقدم) — بخلاف dayGroupKey أعلاه (تجميع بنفس اليوم فقط، تُستخدم
+ * بالعرض الزمني للاجتماعات)، هذه تُرجع تسمية نطاق زمني نسبي جاهزة للعرض.
+ */
+export function relativeDayGroupLabel(value: string): string {
+  const date = new Date(value)
+  const now = new Date()
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const diffDays = Math.round((startOfDay(now) - startOfDay(date)) / 86400000)
+
+  if (diffDays <= 0) return 'اليوم'
+  if (diffDays === 1) return 'أمس'
+  if (diffDays < 7) return 'الأسبوع الماضي'
+  return 'أقدم'
+}

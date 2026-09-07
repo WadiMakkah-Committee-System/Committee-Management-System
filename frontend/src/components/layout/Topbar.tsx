@@ -6,6 +6,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useMutation } from '@tanstack/react-query'
 import * as authApi from '@/api/auth'
 import { Avatar } from '@/components/ui/Avatar'
+import { NotificationBell } from './NotificationBell'
 import { ThemeToggle } from './ThemeToggle'
 import { roleLabel } from '@/lib/utils'
 
@@ -48,6 +49,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       <div className="hidden lg:block" />
 
       <div className="flex items-center gap-2">
+        <NotificationBell />
         <ThemeToggle />
         <div className="relative" ref={menuRef}>
           <button
