@@ -125,11 +125,16 @@ async def open_voting(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
+    """
+    خيارات التصويت (options) تُكتب هنا من رئيسة اللجنة صراحة (قرار
+    2026-09-07) — راجعي docstring decision_service.open_voting.
+    """
     try:
         decision = await decision_service.open_voting(
             db,
             actor=current_user,
             decision_id=decision_id,
+            options=[opt.model_dump() for opt in payload.options],
             voting_deadline=payload.voting_deadline,
         )
     except _SERVICE_ERRORS as exc:
@@ -146,7 +151,7 @@ async def cast_vote(
 ) -> DecisionOut:
     try:
         decision = await decision_service.cast_vote(
-            db, actor=current_user, decision_id=decision_id, choice=payload.choice
+            db, actor=current_user, decision_id=decision_id, option_id=payload.option_id
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
