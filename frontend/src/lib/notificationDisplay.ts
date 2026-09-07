@@ -48,6 +48,7 @@ const EVENT_TONE: Record<string, NotificationTone> = {
   decision_created: 'info',
   decision_voting_opened: 'info',
   decision_approved: 'success',
+  decision_rejected: 'danger',
   meeting_created: 'info',
   meeting_updated: 'info',
   meeting_cancelled: 'danger',
