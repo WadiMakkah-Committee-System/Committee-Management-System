@@ -40,3 +40,14 @@ ALTER TABLE decision_votes DROP COLUMN choice;
 ALTER TABLE decision_votes ALTER COLUMN option_id SET NOT NULL;
 
 DROP TYPE decision_vote_choice;
+
+-- إصلاح 2026-09-07 (بلاغ أمني من لاما أثناء مراجعة منفصلة): نُسي تفعيل
+-- RLS هنا سهوًا وقت إنشاء الجدول أعلاه — بخلاف بقية جداول القرارات
+-- (decisions/decision_assignees/decision_votes، راجعي رأس
+-- 0021_decisions_schema.sql) التي فُعِّلت من البداية. طُبِّق التفعيل
+-- مباشرة على القاعدة الحية أولًا عبر Supabase MCP فور اكتشافه، ثم نُسخ
+-- هنا (نفس نمط 0020/0022/0023 — راجعي رأس 0020 لسبب هذا النمط). لا
+-- Policies بعد (بانتظار مراجعة سياسات الوصول الكاملة) — غير مؤثر
+-- وظيفيًا لأن الباك-إند يتصل بقاعدة البيانات مباشرة (ليس عبر مفتاح
+-- anon/PostgREST)، فهذا فقط يُغلق تنبيه "RLS Disabled" بمشروع Supabase.
+ALTER TABLE decision_vote_options ENABLE ROW LEVEL SECURITY;
