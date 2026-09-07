@@ -559,14 +559,32 @@ export interface MeetingAttachment {
  * مستخرجة من اجتماع بالذكاء الاصطناعي — تُبنى لاحقًا). مطابقة تمامًا
  * لـbackend/app/schemas/decision.py وapp/models/decision.py. راجعي رأس
  * db/migrations/0021_decisions_schema.sql لكل الاجتهادات الموثّقة.
+ *
+ * تحديث 2026-09-07 (قرار صريح: "الي يحدد بيانات التصويت رئيس اللجنة بس
+ * والأعضاء يقررون"): خيارات التصويت لم تعد ثابتة (موافق/غير موافق) —
+ * رئيسة اللجنة تكتبها بنفسها عند فتح التصويت (DecisionVoteOptionInput)،
+ * والعضو يصوّت لـoption_id محدَّد بدل قيمة ثابتة. راجعي رأس
+ * db/migrations/0025_decision_vote_options.sql للتفصيل الكامل.
  */
 export type DecisionClassification = 'final' | 'voting'
 export type DecisionStatus = 'pending' | 'voting' | 'approved' | 'rejected'
-export type DecisionVoteChoice = 'approve' | 'reject'
+
+export interface DecisionVoteOption {
+  option_id: string
+  label: string
+  is_approving: boolean
+  sort_order: number
+}
+
+/** خيار تصويت تكتبه رئيسة اللجنة عند فتح التصويت — راجعي DecisionOpenVotingPayload. */
+export interface DecisionVoteOptionInput {
+  label: string
+  is_approving: boolean
+}
 
 export interface DecisionVote {
   voter: CommitteeMemberUser
-  choice: DecisionVoteChoice
+  option: DecisionVoteOption
   voted_at: string
 }
 
@@ -584,6 +602,7 @@ export interface Decision {
   rejection_reason: string | null
   creator: CommitteeMemberUser
   assignees: CommitteeMemberUser[]
+  vote_options: DecisionVoteOption[]
   votes: DecisionVote[]
   created_at: string
   updated_at: string
@@ -602,6 +621,12 @@ export interface DecisionUpdatePayload {
   classification?: DecisionClassification
   start_date?: string
   end_date?: string
+}
+
+/** فتح التصويت — options إلزامية (خياران على الأقل)، تكتبها رئيسة اللجنة بالكامل. */
+export interface DecisionOpenVotingPayload {
+  options: DecisionVoteOptionInput[]
+  voting_deadline?: string | null
 }
 
 /**
