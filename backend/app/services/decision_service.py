@@ -40,6 +40,14 @@ open_voting يستقبلها الآن من رئيسة اللجنة نفسها (�
 مباشر للقاعدة الثنائية القديمة). لو ولا خيار معلَّم (استطلاع رأي بحت)،
 لا رفض تلقائي إطلاقًا — القرار يبقى بحالة 'voting' بعد الإغلاق بانتظار
 اعتماد يدوي من رئيسة اللجنة بناءً على تقديرها الشخصي للنتائج المعروضة.
+
+تحديث 2026-09-07 (طلب صاحبة المشروع: إشعار عند رفض القرار تلقائيًا):
+get_decision وcast_vote يُرجعان الآن (Decision, just_rejected: bool) بدل
+Decision وحدها — just_rejected=True فقط إذا هذا الاستدعاء تحديدًا هو
+الذي تسبَّب بالإغلاق الكسلي المؤدي للرفض (وليس قرارًا رُفض من قبل أصلًا)،
+لتُطلِق طبقة الـAPI notification_service.notify_decision_rejected مرة
+واحدة بالضبط عند وقوعه فعليًا — لا تكرار عبر استدعاءات لاحقة تصادف نفس
+القرار وهو أصلًا مرفوض. راجعي docstring كل دالة للتفصيل.
 """
 
 import uuid
@@ -274,17 +282,26 @@ async def create_decision(
     )
 
 
-async def get_decision(db: AsyncSession, decision_id: uuid.UUID, *, actor: User) -> Decision:
+async def get_decision(
+    db: AsyncSession, decision_id: uuid.UUID, *, actor: User
+) -> tuple[Decision, bool]:
+    """
+    يُرجع (القرار، just_rejected) — just_rejected=True فقط إذا تسبَّب هذا
+    الاستدعاء تحديدًا (إغلاق كسلي بموعد التصويت) برفض القرار الآن (وليس
+    قرارًا كان مرفوضًا أصلًا من قبل) — تستخدمه طبقة الـAPI لإطلاق
+    notify_decision_rejected مرة واحدة بالضبط عند حدوثه فعليًا.
+    """
     decision = await _load_decision(db, decision_id)
     committee = await _load_committee(db, decision.committee_id)
     await _require_access(
         db, actor, committee, "decisions.view", "ليست لديك صلاحية لعرض هذا القرار"
     )
     changed = _maybe_close_voting(decision, committee)
+    just_rejected = changed and decision.status == DecisionStatus.rejected
     if changed:
         await db.commit()
         await db.refresh(decision)
-    return await _redact_votes_if_unauthorized(db, actor, committee, decision)
+    return await _redact_votes_if_unauthorized(db, actor, committee, decision), just_rejected
 
 
 async def list_decisions(db: AsyncSession, *, actor: User) -> list[Decision]:
@@ -466,10 +483,13 @@ async def open_voting(
 
 async def cast_vote(
     db: AsyncSession, *, actor: User, decision_id: uuid.UUID, option_id: uuid.UUID
-) -> Decision:
+) -> tuple[Decision, bool]:
     """
     FR-010: تصويت عضو اللجنة (بمن فيه رئيسها) لخيار محدَّد من خيارات هذا
-    القرار تحديدًا — قابل للتغيير طالما التصويت مفتوحًا.
+    القرار تحديدًا — قابل للتغيير طالما التصويت مفتوحًا. يُرجع (القرار،
+    just_rejected) — راجعي docstring get_decision لتفصيل معنى just_rejected
+    ولماذا (غالبًا هذا التصويت هو آخر صوت أكمل مشاركة الجميع، فيغلق
+    التصويت ويرفض القرار في نفس هذا الاستدعاء تحديدًا).
     """
     decision = await _load_decision(db, decision_id)
     committee = await _load_committee(db, decision.committee_id)
@@ -496,11 +516,13 @@ async def cast_vote(
         await db.flush()
         await db.refresh(decision, attribute_names=["votes"])
 
-    _maybe_close_voting(decision, committee)
+    just_closed = _maybe_close_voting(decision, committee)
+    just_rejected = just_closed and decision.status == DecisionStatus.rejected
     await db.commit()
-    return await _redact_votes_if_unauthorized(
+    final_decision = await _redact_votes_if_unauthorized(
         db, actor, committee, await _load_decision(db, decision.decision_id)
     )
+    return final_decision, just_rejected
 
 
 async def approve_decision(db: AsyncSession, *, actor: User, decision_id: uuid.UUID) -> Decision:
