@@ -14,6 +14,7 @@ from app.api.v1 import (
     documents,
     job_titles,
     meetings,
+    notifications,
     roles,
     tasks,
     users,
@@ -34,3 +35,4 @@ api_router.include_router(documents.categories_router)
 api_router.include_router(meetings.router)
 api_router.include_router(decisions.router)
 api_router.include_router(tasks.router)
+api_router.include_router(notifications.router)

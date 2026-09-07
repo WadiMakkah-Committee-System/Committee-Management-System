@@ -6,7 +6,7 @@ app/services/decision_service.py للتفويض والاجتهادات المو�
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
@@ -18,7 +18,7 @@ from app.schemas.decision import (
     DecisionUpdate,
     DecisionVoteCast,
 )
-from app.services import decision_service
+from app.services import decision_service, notification_service
 from app.services.decision_service import (
     DecisionForbiddenError,
     DecisionInvalidStateError,
@@ -50,7 +50,10 @@ def _handle_errors(exc: Exception) -> Exception:
 
 @router.post("", response_model=DecisionOut, status_code=status.HTTP_201_CREATED)
 async def create_decision(
-    payload: DecisionCreate, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+    payload: DecisionCreate,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
     try:
         decision = await decision_service.create_decision(
@@ -64,6 +67,9 @@ async def create_decision(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    background_tasks.add_task(
+        notification_service.notify_decision_created, decision, actor_user_id=current_user.user_id
+    )
     return DecisionOut.model_validate(decision)
 
 
@@ -122,6 +128,7 @@ async def delete_decision(
 async def open_voting(
     decision_id: uuid.UUID,
     payload: DecisionOpenVoting,
+    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
@@ -139,6 +146,11 @@ async def open_voting(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    background_tasks.add_task(
+        notification_service.notify_decision_voting_opened,
+        decision,
+        actor_user_id=current_user.user_id,
+    )
     return DecisionOut.model_validate(decision)
 
 
@@ -160,7 +172,10 @@ async def cast_vote(
 
 @router.post("/{decision_id}/approve", response_model=DecisionOut)
 async def approve_decision(
-    decision_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+    decision_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
     try:
         decision = await decision_service.approve_decision(
@@ -168,4 +183,7 @@ async def approve_decision(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    background_tasks.add_task(
+        notification_service.notify_decision_approved, decision, actor_user_id=current_user.user_id
+    )
     return DecisionOut.model_validate(decision)
