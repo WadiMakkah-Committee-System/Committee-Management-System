@@ -83,12 +83,19 @@ async def list_decisions(
 
 @router.get("/{decision_id}", response_model=DecisionOut)
 async def get_decision(
-    decision_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+    decision_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
     try:
-        decision = await decision_service.get_decision(db, decision_id, actor=current_user)
+        decision, just_rejected = await decision_service.get_decision(
+            db, decision_id, actor=current_user
+        )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    if just_rejected:
+        background_tasks.add_task(notification_service.notify_decision_rejected, decision)
     return DecisionOut.model_validate(decision)
 
 
@@ -158,15 +165,18 @@ async def open_voting(
 async def cast_vote(
     decision_id: uuid.UUID,
     payload: DecisionVoteCast,
+    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
     try:
-        decision = await decision_service.cast_vote(
+        decision, just_rejected = await decision_service.cast_vote(
             db, actor=current_user, decision_id=decision_id, option_id=payload.option_id
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    if just_rejected:
+        background_tasks.add_task(notification_service.notify_decision_rejected, decision)
     return DecisionOut.model_validate(decision)
 
 
