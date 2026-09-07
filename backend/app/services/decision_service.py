@@ -21,9 +21,18 @@ decisions.vote.view_result / decisions.approve.
 تحديث 2026-09-02 (بعد تجربة فعلية من صاحبة المشروع): المنفذون (assignees)
 لم يعودوا يُختارون يدويًا عند الإنشاء/التعديل — كل أعضاء اللجنة (بمن فيهم
 رئيسها) يُضافون تلقائيًا، بنفس مبدأ مشاركي الاجتماع تمامًا (راجعي
-meeting_service._all_committee_members). هذا تراجع عن التصميم الأول
-(اختيار يدوي مقيَّد بعضوية اللجنة) — القيد نفسه (لا يمكن إسناد قرار لغير
-عضو باللجنة) أصبح تلقائيًا بحكم الاشتقاق، لا حاجة للتحقق منه صراحة.
+meeting_service._all_committee_members).
+
+تحديث 2026-09-07 (قرار صريح: "الي يحدد بيانات التصويت رئيس اللجنة بس
+والأعضاء يقررون"): خيارات التصويت لم تعد ثابتة (موافق/غير موافق) —
+open_voting يستقبلها الآن من رئيسة اللجنة نفسها (كل خيار له label حر
+و is_approving صريح)، وcast_vote يصوّت لـoption_id محدَّد بدل قيمة enum
+ثابتة. راجعي رأس db/migrations/0025_decision_vote_options.sql لتفصيل
+كيف تبقى الأغلبية التلقائية تعمل: لو فيه خيار واحد على الأقل is_approving
+=true، الأغلبية = مجموع أصوات كل الخيارات المعلَّمة مقابل الإجمالي (تعميم
+مباشر للقاعدة الثنائية القديمة). لو ولا خيار معلَّم (استطلاع رأي بحت)،
+لا رفض تلقائي إطلاقًا — القرار يبقى بحالة 'voting' بعد الإغلاق بانتظار
+اعتماد يدوي من رئيسة اللجنة بناءً على تقديرها الشخصي للنتائج المعروضة.
 """
 
 import uuid
@@ -39,7 +48,7 @@ from app.models.decision import (
     DecisionClassification,
     DecisionStatus,
     DecisionVote,
-    DecisionVoteChoice,
+    DecisionVoteOption,
 )
 from app.models.role import Permission, RolePermission
 from app.models.user import User
@@ -62,7 +71,7 @@ class DecisionValidationError(Exception):
     """خطأ تحقق من بيانات العمل — تُترجَم إلى 400."""
 
 
-_REJECTION_REASON_NO_MAJORITY = "لم تتحقق نسبة الأغلبية المطلوبة (الموافقون لا يتجاوزون 50% من الأصوات المسجّلة)"
+_REJECTION_REASON_NO_MAJORITY = "لم تتحقق نسبة الأغلبية المطلوبة (الخيارات المعلَّمة كموافقة لا تتجاوز 50% من الأصوات المسجّلة)"
 
 
 # ============================== تحقق الصلاحية ==============================
@@ -154,8 +163,14 @@ def _maybe_close_voting(decision: Decision, committee: Committee) -> bool:
     يُستدعى عند أي تفاعل مع قرار بحالة 'voting' — راجعي docstring الملف
     بخصوص التقييم الكسلي (Lazy) لعدم وجود Scheduler. يغلق التصويت إذا صوّت
     كل من يحق له التصويت، أو إذا حلّ voting_deadline (إن كان محدَّدًا) —
-    أيهما أسبق (يحل تعارض FR-011 مقابل FR-012، راجعي ملاحظة migration (2)).
-    يُرجع True إن غيّر شيئًا فعليًا (يحتاج المستدعي commit عندها).
+    أيهما أسبق (يحل تعارض FR-011 مقابل FR-012، راجعي ملاحظة migration
+    0021 (2)). يُرجع True إن غيّر شيئًا فعليًا (يحتاج المستدعي commit عندها).
+
+    حساب الأغلبية مع خيارات حرة (راجعي رأس الملف وrأس migration 0025):
+    - فيه خيار is_approving=true واحد على الأقل → المجموع مقابل الإجمالي،
+      تعميم للقاعدة الثنائية القديمة (موافق/غير موافق) وليست قاعدة جديدة.
+    - ولا خيار معلَّم إطلاقًا → استطلاع رأي بحت، لا رفض تلقائي (يبقى
+      'voting' بانتظار اعتماد يدوي بتقدير رئيسة اللجنة الشخصي).
     """
     if decision.status != DecisionStatus.voting or decision.voting_closed_at is not None:
         return False
@@ -170,15 +185,20 @@ def _maybe_close_voting(decision: Decision, committee: Committee) -> bool:
         return False
 
     decision.voting_closed_at = datetime.now(UTC)
-    total = len(votes_by_user)
-    approve_count = sum(1 for v in votes_by_user.values() if v.choice.value == "approve")
-    majority_achieved = total > 0 and (approve_count / total) > 0.5
 
-    if not majority_achieved:
-        decision.status = DecisionStatus.rejected
-        decision.rejection_reason = _REJECTION_REASON_NO_MAJORITY
-    # وإلا: يبقى status == 'voting' مع voting_closed_at محدَّدًا — بانتظار
-    # اعتماد رئيس اللجنة اليدوي الصريح (FR-013)، وليس اعتمادًا تلقائيًا.
+    has_approving_option = any(opt.is_approving for opt in decision.vote_options)
+    if has_approving_option:
+        total = len(votes_by_user)
+        approve_count = sum(1 for v in votes_by_user.values() if v.option.is_approving)
+        majority_achieved = total > 0 and (approve_count / total) > 0.5
+        if not majority_achieved:
+            decision.status = DecisionStatus.rejected
+            decision.rejection_reason = _REJECTION_REASON_NO_MAJORITY
+        # وإلا: يبقى status == 'voting' مع voting_closed_at محدَّدًا — بانتظار
+        # اعتماد رئيس اللجنة اليدوي الصريح (FR-013)، وليس اعتمادًا تلقائيًا.
+    # وإلا (استطلاع رأي بحت بلا أي خيار "موافقة"): لا شيء آخر يُفعل هنا —
+    # يبقى 'voting' مع voting_closed_at محدَّدًا فقط، بانتظار قرار رئيسة
+    # اللجنة اليدوي بالكامل (لا خوارزمية تحسم بدلًا عنها).
     return True
 
 
@@ -356,9 +376,19 @@ async def delete_decision(db: AsyncSession, *, actor: User, decision_id: uuid.UU
 
 
 async def open_voting(
-    db: AsyncSession, *, actor: User, decision_id: uuid.UUID, voting_deadline: datetime | None
+    db: AsyncSession,
+    *,
+    actor: User,
+    decision_id: uuid.UUID,
+    options: list[dict],
+    voting_deadline: datetime | None,
 ) -> Decision:
-    """FR-009: طرح القرار للتصويت — فقط لقرار classification='voting' بحالة pending."""
+    """
+    FR-009: طرح القرار للتصويت — فقط لقرار classification='voting' بحالة
+    pending. الخيارات (options) تحدّدها رئيسة اللجنة هنا بالكامل (قرار
+    صريح 2026-09-07) — كل عنصر {"label": نص حر, "is_approving": bool}.
+    يُتحقَّق من عدم تكرار label بين الخيارات (منعًا لالتباس عند التصويت).
+    """
     decision = await _load_decision(db, decision_id)
     committee = await _load_committee(db, decision.committee_id)
     await _require_access(
@@ -370,9 +400,21 @@ async def open_voting(
     if decision.status != DecisionStatus.pending:
         raise DecisionInvalidStateError("لا يمكن طرح القرار للتصويت من حالته الحالية")
 
+    labels = [opt["label"].strip() for opt in options]
+    if len(labels) != len(set(labels)):
+        raise DecisionValidationError("لا يمكن تكرار نفس نص الخيار أكثر من مرة")
+
     decision.status = DecisionStatus.voting
     decision.voting_opened_at = datetime.now(UTC)
     decision.voting_deadline = voting_deadline
+    decision.vote_options = [
+        DecisionVoteOption(
+            label=opt["label"].strip(),
+            is_approving=opt.get("is_approving", False),
+            sort_order=index,
+        )
+        for index, opt in enumerate(options)
+    ]
 
     await audit_service.log_action(
         db,
@@ -380,16 +422,19 @@ async def open_voting(
         action_type="update",
         target_type="decision",
         target_id=decision.decision_id,
-        metadata={"action": "open_voting"},
+        metadata={"action": "open_voting", "options": labels},
     )
     await db.commit()
     return await _load_decision(db, decision.decision_id)
 
 
 async def cast_vote(
-    db: AsyncSession, *, actor: User, decision_id: uuid.UUID, choice: DecisionVoteChoice
+    db: AsyncSession, *, actor: User, decision_id: uuid.UUID, option_id: uuid.UUID
 ) -> Decision:
-    """FR-010: تصويت عضو اللجنة (بمن فيه رئيسها) — قابل للتغيير طالما التصويت مفتوحًا."""
+    """
+    FR-010: تصويت عضو اللجنة (بمن فيه رئيسها) لخيار محدَّد من خيارات هذا
+    القرار تحديدًا — قابل للتغيير طالما التصويت مفتوحًا.
+    """
     decision = await _load_decision(db, decision_id)
     committee = await _load_committee(db, decision.committee_id)
     await _require_access(
@@ -403,12 +448,15 @@ async def cast_vote(
     if decision.status != DecisionStatus.voting or decision.voting_closed_at is not None:
         raise DecisionInvalidStateError("التصويت على هذا القرار مغلق حاليًا")
 
+    if not any(opt.option_id == option_id for opt in decision.vote_options):
+        raise DecisionValidationError("هذا الخيار غير موجود ضمن خيارات هذا القرار")
+
     existing = next((v for v in decision.votes if v.user_id == actor.user_id), None)
     if existing is not None:
-        existing.choice = choice
+        existing.option_id = option_id
         existing.voted_at = datetime.now(UTC)
     else:
-        db.add(DecisionVote(decision_id=decision_id, user_id=actor.user_id, choice=choice))
+        db.add(DecisionVote(decision_id=decision_id, user_id=actor.user_id, option_id=option_id))
         await db.flush()
         await db.refresh(decision, attribute_names=["votes"])
 
@@ -419,9 +467,10 @@ async def cast_vote(
 
 async def approve_decision(db: AsyncSession, *, actor: User, decision_id: uuid.UUID) -> Decision:
     """
-    FR-007 (نهائي) / FR-013 (تصويت بعد تحقق الأغلبية) — الفعل الوحيد الذي
-    يُحوّل القرار فعليًا إلى 'approved'؛ حتى مع تحقق الأغلبية، لا اعتماد
-    تلقائي بدون هذا الاستدعاء الصريح من رئيس اللجنة (أو من يملك الصلاحية).
+    FR-007 (نهائي) / FR-013 (تصويت بعد تحقق الأغلبية، أو استطلاع رأي بحت
+    بلا خيار موافقة معلَّم — راجعي docstring الملف) — الفعل الوحيد الذي
+    يُحوّل القرار فعليًا إلى 'approved'؛ لا اعتماد تلقائي أبدًا بدون هذا
+    الاستدعاء الصريح من رئيس اللجنة (أو من يملك الصلاحية).
     """
     decision = await _load_decision(db, decision_id)
     committee = await _load_committee(db, decision.committee_id)
