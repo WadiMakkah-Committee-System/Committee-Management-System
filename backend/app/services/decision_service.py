@@ -28,6 +28,13 @@ meeting_service._all_committee_members).
 open_voting يستقبلها الآن من رئيسة اللجنة نفسها (كل خيار له label حر
 و is_approving صريح)، وcast_vote يصوّت لـoption_id محدَّد بدل قيمة enum
 ثابتة. راجعي رأس db/migrations/0025_decision_vote_options.sql لتفصيل
+
+تصحيح 2026-09-07 (بلاغ خطأ من صاحبة المشروع: "عضو اللجنة ليه يمديه يشوف
+نتيجة التصويت؟! غلط ما أعطيته الصلاحية"): decisions.view لم يكن يُفرَّق
+سابقًا عن decisions.vote.view_result — أي عضو يقدر يشوف القرار كان يشوف
+تفصيل تصويت الجميع تلقائيًا، رغم أن الكود موجود بالكتالوج منفصلًا منذ
+0006 ولم يُفحص فعليًا بأي مكان. صُحِّح الآن عبر _redact_votes_if_unauthorized
+(راجعي docstring الدالة) — يُطبَّق في كل نقطة إرجاع Decision بالملف.
 كيف تبقى الأغلبية التلقائية تعمل: لو فيه خيار واحد على الأقل is_approving
 =true، الأغلبية = مجموع أصوات كل الخيارات المعلَّمة مقابل الإجمالي (تعميم
 مباشر للقاعدة الثنائية القديمة). لو ولا خيار معلَّم (استطلاع رأي بحت)،
@@ -155,6 +162,27 @@ def _all_committee_members(committee: Committee) -> list[User]:
     return list(members.values())
 
 
+async def _redact_votes_if_unauthorized(
+    db: AsyncSession, actor: User, committee: Committee, decision: Decision
+) -> Decision:
+    """
+    خصوصية نتيجة التصويت (بلاغ خطأ 2026-09-07: "عضو اللجنة ليه يمديه يشوف
+    نتيجة التصويت؟! غلط ما أعطيته الصلاحية"): decisions.view تسمح برؤية
+    القرار نفسه (وخيارات التصويت المتاحة، ضرورية لمجرد التصويت)، لكنها
+    لا تعني تلقائيًا حق رؤية *نتيجة* التصويت (تفصيلها في تصويتات الجميع)
+    — تلك محكومة حصرًا بكود decisions.vote.view_result المنفصل أصلًا
+    بالكتالوج (0006)، ولم يكن يُفحص فعليًا بأي مكان قبل هذا الإصلاح.
+
+    من لا يملك الكود: يبقى يشوف صوته الشخصي فقط (يحتاجه ليعرف هل صوّت
+    وعلى أي خيار)، وتُحذف بقية الأصوات من الاستجابة (تحرير عرض غير
+    محفوظ — لا db.commit()/flush() بعد هذا الاستدعاء، فلا يمس القاعدة).
+    """
+    if await _has_access(db, actor, committee, "decisions.vote.view_result"):
+        return decision
+    decision.votes = [v for v in decision.votes if v.user_id == actor.user_id]
+    return decision
+
+
 # ============================== إغلاق التصويت (كسلي) ==============================
 
 
@@ -241,7 +269,9 @@ async def create_decision(
         target_id=decision.decision_id,
     )
     await db.commit()
-    return await _load_decision(db, decision.decision_id)
+    return await _redact_votes_if_unauthorized(
+        db, actor, committee, await _load_decision(db, decision.decision_id)
+    )
 
 
 async def get_decision(db: AsyncSession, decision_id: uuid.UUID, *, actor: User) -> Decision:
@@ -254,7 +284,7 @@ async def get_decision(db: AsyncSession, decision_id: uuid.UUID, *, actor: User)
     if changed:
         await db.commit()
         await db.refresh(decision)
-    return decision
+    return await _redact_votes_if_unauthorized(db, actor, committee, decision)
 
 
 async def list_decisions(db: AsyncSession, *, actor: User) -> list[Decision]:
@@ -287,14 +317,16 @@ async def list_decisions(db: AsyncSession, *, actor: User) -> list[Decision]:
     decisions = list(result.scalars().unique().all())
 
     changed = False
+    redacted: list[Decision] = []
     for decision in decisions:
         committee = await _load_committee(db, decision.committee_id)
         if _maybe_close_voting(decision, committee):
             changed = True
+        redacted.append(await _redact_votes_if_unauthorized(db, actor, committee, decision))
     if changed:
         await db.commit()
 
-    return decisions
+    return redacted
 
 
 async def update_decision(
@@ -344,7 +376,9 @@ async def update_decision(
         target_id=decision.decision_id,
     )
     await db.commit()
-    return await _load_decision(db, decision.decision_id)
+    return await _redact_votes_if_unauthorized(
+        db, actor, committee, await _load_decision(db, decision.decision_id)
+    )
 
 
 async def delete_decision(db: AsyncSession, *, actor: User, decision_id: uuid.UUID) -> None:
@@ -425,7 +459,9 @@ async def open_voting(
         metadata={"action": "open_voting", "options": labels},
     )
     await db.commit()
-    return await _load_decision(db, decision.decision_id)
+    return await _redact_votes_if_unauthorized(
+        db, actor, committee, await _load_decision(db, decision.decision_id)
+    )
 
 
 async def cast_vote(
@@ -462,7 +498,9 @@ async def cast_vote(
 
     _maybe_close_voting(decision, committee)
     await db.commit()
-    return await _load_decision(db, decision.decision_id)
+    return await _redact_votes_if_unauthorized(
+        db, actor, committee, await _load_decision(db, decision.decision_id)
+    )
 
 
 async def approve_decision(db: AsyncSession, *, actor: User, decision_id: uuid.UUID) -> Decision:
@@ -499,4 +537,6 @@ async def approve_decision(db: AsyncSession, *, actor: User, decision_id: uuid.U
         metadata={"action": "approve"},
     )
     await db.commit()
-    return await _load_decision(db, decision.decision_id)
+    return await _redact_votes_if_unauthorized(
+        db, actor, committee, await _load_decision(db, decision.decision_id)
+    )
