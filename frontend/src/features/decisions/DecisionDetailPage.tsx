@@ -7,8 +7,7 @@ import {
   CheckCircle2,
   Gavel,
   Pencil,
-  ThumbsDown,
-  ThumbsUp,
+  Plus,
   Trash2,
   UserCheck,
   Vote,
@@ -36,11 +35,19 @@ import { DecisionStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { DecisionFormModal, type DecisionFormSubmitValues } from './DecisionFormModal'
 import { cn, extractErrorMessage, formatDate, formatDateTime, scopeFor } from '@/lib/utils'
+import type { DecisionVoteOptionInput } from '@/types'
 
 /**
  * تفاصيل قرار واحد + التصويت والاعتماد. راجعي رأس decision_service.py
  * بالباك-إند للاجتهادات الموثّقة (إغلاق التصويت الكسلي، منع التعديل بعد
  * فتح التصويت، الاعتماد فعل صريح دائمًا حتى بعد تحقق الأغلبية).
+ *
+ * تحديث 2026-09-07 (قرار صريح: "الي يحدد بيانات التصويت رئيس اللجنة بس
+ * والأعضاء يقررون"): خيارات التصويت لم تعد ثابتة (موافق/غير موافق) —
+ * رئيسة اللجنة تكتبها بنفسها عند فتح التصويت (قسم "طرح للتصويت" أدناه)،
+ * والأعضاء يصوّتون لأحد هذه الخيارات المحدَّدة. الافتراضي المعروض عند
+ * فتح النموذج هو موافق/غير موافق (الحالة الأكثر شيوعًا)، وقابل للتعديل
+ * أو الاستبدال بالكامل بأي خيارات أخرى قبل الإرسال.
  */
 export function DecisionDetailPage() {
   const { decisionId } = useParams<{ decisionId: string }>()
@@ -62,6 +69,11 @@ export function DecisionDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [votingDeadline, setVotingDeadline] = useState('')
+  const [optionInputs, setOptionInputs] = useState<DecisionVoteOptionInput[]>([
+    { label: 'موافق', is_approving: true },
+    { label: 'غير موافق', is_approving: false },
+  ])
+  const [optionsError, setOptionsError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   /**
@@ -144,13 +156,41 @@ export function DecisionDetailPage() {
     })
   }
 
+  function updateOption(index: number, patch: Partial<DecisionVoteOptionInput>) {
+    setOptionInputs((prev) => prev.map((opt, i) => (i === index ? { ...opt, ...patch } : opt)))
+  }
+
+  function addOption() {
+    setOptionInputs((prev) => [...prev, { label: '', is_approving: false }])
+  }
+
+  function removeOption(index: number) {
+    setOptionInputs((prev) => prev.filter((_, i) => i !== index))
+  }
+
   function handleOpenVoting() {
     if (!decisionId) return
+    setOptionsError(null)
     setActionError(null)
+
+    const cleaned = optionInputs.map((o) => ({ ...o, label: o.label.trim() })).filter((o) => o.label)
+    if (cleaned.length < 2) {
+      setOptionsError('أدخلي خيارين على الأقل')
+      return
+    }
+    const labels = cleaned.map((o) => o.label)
+    if (new Set(labels).size !== labels.length) {
+      setOptionsError('لا يمكن تكرار نفس نص الخيار')
+      return
+    }
+
     openVotingMutation.mutate(
       {
         decisionId,
-        votingDeadline: votingDeadline ? new Date(votingDeadline).toISOString() : null,
+        payload: {
+          options: cleaned,
+          voting_deadline: votingDeadline ? new Date(votingDeadline).toISOString() : null,
+        },
       },
       {
         onSuccess: () => showToast('تم طرح القرار للتصويت', 'success'),
@@ -159,11 +199,11 @@ export function DecisionDetailPage() {
     )
   }
 
-  function handleVote(choice: 'approve' | 'reject') {
+  function handleVote(optionId: string) {
     if (!decisionId) return
     setActionError(null)
     castVoteMutation.mutate(
-      { decisionId, choice },
+      { decisionId, optionId },
       {
         onSuccess: () => showToast('تم تسجيل تصويتك', 'success'),
         onError: (err) => setActionError(extractErrorMessage(err)),
@@ -180,8 +220,11 @@ export function DecisionDetailPage() {
     })
   }
 
-  const approveCount = decision.votes.filter((v) => v.choice === 'approve').length
-  const rejectCount = decision.votes.filter((v) => v.choice === 'reject').length
+  const voteCountsByOption = new Map<string, number>()
+  for (const v of decision.votes) {
+    voteCountsByOption.set(v.option.option_id, (voteCountsByOption.get(v.option.option_id) ?? 0) + 1)
+  }
+  const totalVoters = (committee?.members.length ?? 0) + (committee?.chair ? 1 : 0)
 
   return (
     <div className="flex flex-col gap-6">
@@ -277,7 +320,7 @@ export function DecisionDetailPage() {
         </Card>
       )}
 
-      {/* التصويت — يظهر فقط لقرار خاضع للتصويت */}
+      {/* التصويت — يظهر فقط لقرار خاضع للتصويت وبعد فتحه فعليًا */}
       {decision.classification === 'voting' && decision.status !== 'pending' && (
         <Card className="p-0">
           <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
@@ -293,38 +336,34 @@ export function DecisionDetailPage() {
           </div>
 
           <div className="flex flex-col gap-4 p-4">
-            <div className="flex items-center gap-4 text-sm">
-              <span className="flex items-center gap-1.5 text-success">
-                <ThumbsUp size={14} /> {approveCount} موافق
-              </span>
-              <span className="flex items-center gap-1.5 text-danger">
-                <ThumbsDown size={14} /> {rejectCount} غير موافق
-              </span>
-              <span className="text-text-muted">
-                من أصل {(committee?.members.length ?? 0) + (committee?.chair ? 1 : 0)} مصوّتين
-              </span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              {decision.vote_options.map((opt) => (
+                <span
+                  key={opt.option_id}
+                  className={cn(
+                    'flex items-center gap-1.5',
+                    opt.is_approving ? 'text-success' : 'text-text-secondary',
+                  )}
+                >
+                  {opt.label}: {voteCountsByOption.get(opt.option_id) ?? 0}
+                </span>
+              ))}
+              <span className="text-text-muted">من أصل {totalVoters} مصوّتين</span>
             </div>
 
             {canVoteNow && (
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant={myVote?.choice === 'approve' ? 'primary' : 'secondary'}
-                  icon={<ThumbsUp size={14} />}
-                  onClick={() => handleVote('approve')}
-                  loading={castVoteMutation.isPending}
-                >
-                  موافق
-                </Button>
-                <Button
-                  size="sm"
-                  variant={myVote?.choice === 'reject' ? 'danger' : 'secondary'}
-                  icon={<ThumbsDown size={14} />}
-                  onClick={() => handleVote('reject')}
-                  loading={castVoteMutation.isPending}
-                >
-                  غير موافق
-                </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {decision.vote_options.map((opt) => (
+                  <Button
+                    key={opt.option_id}
+                    size="sm"
+                    variant={myVote?.option.option_id === opt.option_id ? 'primary' : 'secondary'}
+                    onClick={() => handleVote(opt.option_id)}
+                    loading={castVoteMutation.isPending}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
                 {myVote && <span className="text-xs text-text-muted">يمكنك تغيير تصويتك قبل إغلاق التصويت</span>}
               </div>
             )}
@@ -336,8 +375,8 @@ export function DecisionDetailPage() {
                     <Avatar firstName={v.voter.first_name} lastName={v.voter.last_name} size={24} />
                     {v.voter.first_name} {v.voter.last_name}
                   </span>
-                  <span className={v.choice === 'approve' ? 'text-success' : 'text-danger'}>
-                    {v.choice === 'approve' ? 'موافق' : 'غير موافق'}
+                  <span className={v.option.is_approving ? 'text-success' : 'text-text-secondary'}>
+                    {v.option.label}
                   </span>
                 </li>
               ))}
@@ -350,9 +389,54 @@ export function DecisionDetailPage() {
         <Card>
           <h2 className="text-sm font-semibold text-text-primary">طرح القرار للتصويت</h2>
           <p className="mt-1 text-xs text-text-muted">
+            حدّدي خيارات التصويت بنفسك (موافق/غير موافق افتراضيًا، ويمكنك تعديلها أو إضافة خيارات أخرى).
+            علّمي "تُحسب موافقة" على أي خيار يُعتبر تأييدًا للقرار — تُستخدم لحساب الأغلبية تلقائيًا.
+          </p>
+
+          <div className="mt-3 flex flex-col gap-2">
+            {optionInputs.map((opt, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <Input
+                  placeholder={`الخيار ${index + 1}`}
+                  value={opt.label}
+                  onChange={(e) => updateOption(index, { label: e.target.value })}
+                  className="flex-1"
+                />
+                <label className="flex shrink-0 items-center gap-1.5 text-xs text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={opt.is_approving}
+                    onChange={(e) => updateOption(index, { is_approving: e.target.checked })}
+                    className="h-4 w-4 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
+                  />
+                  تُحسب موافقة
+                </label>
+                {optionInputs.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => removeOption(index)}
+                    className="shrink-0 rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+                    aria-label="حذف الخيار"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addOption}
+              className="flex w-fit items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-brand-primary transition-colors hover:bg-brand-primary/10"
+            >
+              <Plus size={13} /> إضافة خيار
+            </button>
+            {optionsError && <p className="text-xs font-medium text-danger">{optionsError}</p>}
+          </div>
+
+          <p className="mt-4 text-xs text-text-muted">
             موعد انتهاء اختياري — بدونه يُغلق التصويت فقط عند اكتمال تصويت جميع الأعضاء.
           </p>
-          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-end">
             <Input
               type="datetime-local"
               label="موعد انتهاء التصويت (اختياري)"
@@ -378,7 +462,7 @@ export function DecisionDetailPage() {
               <h2 className="text-sm font-semibold text-text-primary">اعتماد القرار</h2>
               <p className="mt-1 text-xs text-text-muted">
                 {canApproveAfterVote
-                  ? 'تحقّقت الأغلبية المطلوبة — الاعتماد يبقى بحاجة تأكيدك الصريح'
+                  ? 'التصويت انتهى — الاعتماد يبقى بحاجة تأكيدك الصريح بناءً على النتائج'
                   : 'قرار نهائي — الاعتماد يرسل إشعارًا مباشرًا للمنفذين'}
               </p>
             </div>
