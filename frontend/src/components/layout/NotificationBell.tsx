@@ -9,6 +9,7 @@ import {
   useUnreadCount,
 } from '@/hooks/useNotifications'
 import { notificationIcon, notificationLinkPath, notificationToneBorderClass } from '@/lib/notificationDisplay'
+import { useToast } from '@/components/ui/Toast'
 import { cn, formatRelativeTime } from '@/lib/utils'
 import type { Notification } from '@/types'
 
@@ -19,16 +20,41 @@ const DROPDOWN_PREVIEW_LIMIT = 6
  * النسخة الثالثة من التصميم المقترح): بدون تدرّجات أو دوائر ملوّنة، شارة
  * نقطة بسيطة فقط عند وجود غير مقروء، وقائمة منسدلة بنمط "صندوق بريد"
  * (عنوان الإشعار غير المقروء Bold، خط جانبي رفيع بلون نوع الحدث).
+ *
+ * تحديث 2026-09-07 (طلب صاحبة المشروع: "لما يجي إشعار جديد ينهز الجرس
+ * وتجيني رسالة 'إشعارات جديدة'"): useUnreadCount أصلًا يستطلع كل 30
+ * ثانية (راجعي useNotifications.ts) — نقارن هنا كل قراءة بالقراءة
+ * السابقة؛ لو زاد العدد (وليس أول تحميل للصفحة، ولا نقصانًا بعد
+ * "تعليم الكل كمقروء")، نشغّل اهتزاز قصير على الجرس (framer-motion) +
+ * توست "إشعارات جديدة". لا صوت — لم يُطلَب صراحة، ونتجنّب تشغيل صوت
+ * تلقائي بدون إذن المستخدم (قيود المتصفحات أصلًا تمنعه غالبًا بدون
+ * تفاعل مسبق من المستخدم بالصفحة).
  */
 export function NotificationBell() {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const { showToast } = useToast()
 
   const { data: unreadCount } = useUnreadCount()
   const { data: page } = useNotifications(false, DROPDOWN_PREVIEW_LIMIT)
   const markRead = useMarkNotificationRead()
   const markAllRead = useMarkAllNotificationsRead()
+
+  const previousUnreadCount = useRef<number | null>(null)
+  const [shake, setShake] = useState(false)
+
+  useEffect(() => {
+    if (unreadCount === undefined) return
+    const previous = previousUnreadCount.current
+    // previous === null يعني أول قراءة (تحميل الصفحة) — لا نهزّ الجرس
+    // عندها، فقط عند زيادة فعلية عن قراءة سابقة أثناء بقاء المستخدم بالصفحة.
+    if (previous !== null && unreadCount > previous) {
+      setShake(true)
+      showToast('إشعارات جديدة', 'info')
+    }
+    previousUnreadCount.current = unreadCount
+  }, [unreadCount, showToast])
 
   useEffect(() => {
     if (!open) return
@@ -48,16 +74,19 @@ export function NotificationBell() {
 
   return (
     <div className="relative" ref={ref}>
-      <button
+      <motion.button
         onClick={() => setOpen((o) => !o)}
         aria-label="الإشعارات"
+        animate={shake ? { rotate: [0, -14, 12, -10, 8, -4, 0] } : { rotate: 0 }}
+        transition={{ duration: 0.55, ease: 'easeInOut' }}
+        onAnimationComplete={() => setShake(false)}
         className="relative flex h-9 w-9 items-center justify-center rounded-sm text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
       >
         <Bell size={18} />
         {!!unreadCount && (
           <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full border-2 border-bg-surface bg-danger" />
         )}
-      </button>
+      </motion.button>
 
       <AnimatePresence>
         {open && (
