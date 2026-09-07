@@ -20,7 +20,7 @@
 
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, WebSocketException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,16 +34,19 @@ from app.services import user_service
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 
-async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> User:
+async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
     """
     استخراج المستخدم الحالي من Access Token، مع طبقات تحقق متعددة:
     1) صحة توقيع/صلاحية JWT نفسه.
     2) أن الجلسة (session_id) ما زالت موجودة في Redis (لم تُبطَل بتسجيل
        خروج، ولم تنتهِ بسبب الخمول).
     3) أن الحساب ما زال موجودًا (غير محذوف) ونشطًا (غير موقوف) في القاعدة.
+
+    مستخرَجة كدالة مشتركة (بدل تكرارها) لأن راوتات WebSocket
+    (meeting_live_socket) لا تقدر تمرّر Authorization Header عاديًا —
+    متصفحات JS لا تدعم رؤوسًا مخصصة على اتصال WebSocket أصلًا — فتمرّر
+    التوكن كـQuery Param بدل ذلك (راجعي get_current_user_ws أدناه)، لكن
+    بنفس منطق التحقق هذا بالضبط بلا تكرار.
     """
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -82,7 +85,33 @@ async def get_current_user(
     return user
 
 
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    return await _resolve_user_from_token(token, db)
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_current_user_ws(
+    token: Annotated[str, Query()],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    """مكافئ get_current_user لراوتات WebSocket — التوكن يصل كـQuery Param
+    (?token=...، راجعي التعليق أعلى _resolve_user_from_token). أي
+    HTTPException من التحقق تُحوَّل لـWebSocketException برمز 1008
+    (Policy Violation) بدل استجابة HTTP عادية — FastAPI يُغلق الاتصال
+    تلقائيًا بهذا الرمز قبل قبوله (accept)، فلا داعي لراوت meeting_live_socket
+    نفسه يتحقق من الخطأ يدويًا."""
+    try:
+        return await _resolve_user_from_token(token, db)
+    except HTTPException as exc:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc.detail)) from exc
+
+
+CurrentUserWS = Annotated[User, Depends(get_current_user_ws)]
 
 
 def require_permission(*required_codes: str):

@@ -86,6 +86,9 @@ class MeetingDraft(Base):
     decisions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     action_items: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     key_points: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    recommendations: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    open_items: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    compliance_notes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     generated_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False

@@ -41,6 +41,7 @@ from app.models.decision import (
     DecisionVote,
     DecisionVoteChoice,
 )
+from app.models.meeting import Meeting
 from app.models.role import Permission, RolePermission
 from app.models.user import User
 from app.services import audit_service, committee_service
@@ -194,15 +195,27 @@ async def create_decision(
     classification: DecisionClassification,
     start_date: date,
     end_date: date,
+    meeting_id: uuid.UUID | None = None,
 ) -> Decision:
-    """FR-001 (إصدار مباشر) + FR-005 (تسجيل البيانات) + FR-006 (التصنيف)."""
+    """FR-001 (إصدار مباشر) + FR-005 (تسجيل البيانات) + FR-006 (التصنيف).
+
+    meeting_id (جديد، راجعي 0026_meeting_realtime.sql): لو أُرسل من لوحة
+    "القرارات" داخل غرفة الاجتماع — يُتحقَّق أنه ينتمي لنفس اللجنة قبل
+    الربط (منع ربط قرار لجنة بموعد اجتماع لجنة أخرى بالخطأ)."""
     committee = await _load_committee(db, committee_id)
     await _require_access(
         db, actor, committee, "decisions.create", "ليست لديك صلاحية إنشاء قرار لهذه اللجنة"
     )
 
+    if meeting_id is not None:
+        meeting_result = await db.execute(select(Meeting).where(Meeting.meeting_id == meeting_id))
+        meeting = meeting_result.scalar_one_or_none()
+        if meeting is None or meeting.is_deleted or meeting.committee_id != committee_id:
+            raise DecisionValidationError("الاجتماع المحدَّد لا ينتمي لنفس اللجنة")
+
     decision = Decision(
         committee_id=committee_id,
+        meeting_id=meeting_id,
         title=title,
         classification=classification,
         start_date=start_date,
@@ -237,12 +250,19 @@ async def get_decision(db: AsyncSession, decision_id: uuid.UUID, *, actor: User)
     return decision
 
 
-async def list_decisions(db: AsyncSession, *, actor: User) -> list[Decision]:
-    """نفس منطق الوصول المزدوج بوحدة الاجتماعات (System Role scope أو Committee Role permission)."""
+async def list_decisions(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID | None = None
+) -> list[Decision]:
+    """نفس منطق الوصول المزدوج بوحدة الاجتماعات (System Role scope أو Committee
+    Role permission). meeting_id (جديد): تفلتر لقرارات اجتماع واحد بالذات —
+    تستخدمها لوحة "القرارات" داخل غرفة الاجتماع (بخلاف شاشة "إدارة القرارات"
+    العامة اللي تستدعيها بلا meeting_id)."""
     scope = actor.scope_for("decisions.view")
     stmt = select(Decision).where(Decision.deleted_at.is_(None)).order_by(
         Decision.created_at.desc()
     )
+    if meeting_id is not None:
+        stmt = stmt.where(Decision.meeting_id == meeting_id)
 
     if scope == "all":
         pass

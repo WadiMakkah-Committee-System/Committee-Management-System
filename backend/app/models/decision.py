@@ -82,6 +82,11 @@ class Decision(Base):
     committee_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("committees.committee_id"), nullable=False
     )
+    # الاجتماع المصدر (اختياري) — راجعي رأس db/migrations/0026_meeting_realtime.sql.
+    # NULL للقرارات المستقلة الصادرة من شاشة "إدارة القرارات" العامة.
+    meeting_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.meeting_id", ondelete="SET NULL"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
 
     classification: Mapped[DecisionClassification] = mapped_column(
@@ -116,6 +121,7 @@ class Decision(Base):
     )
 
     committee: Mapped["Committee"] = relationship(lazy="selectin")  # noqa: F821
+    meeting: Mapped["Meeting | None"] = relationship(lazy="selectin")  # noqa: F821
     creator: Mapped["User"] = relationship(foreign_keys=[created_by], lazy="selectin")  # noqa: F821
     assignees: Mapped[list["User"]] = relationship(  # noqa: F821
         secondary=decision_assignees, lazy="selectin"

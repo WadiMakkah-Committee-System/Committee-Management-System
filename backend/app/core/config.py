@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     # app.core.gemini_client فقط. GEMINI_MODEL قابل للتغيير بدون تعديل
     # الكود (أسماء نماذج Gemini تتحدّث بمرور الوقت).
       GEMINI_API_KEY: str = ""
-      GEMINI_MODEL: str = "gemini-2.5-flash"
+      GEMINI_MODEL: str = "gemini-3.6-flash"
 
     # --- عام ---
       ENVIRONMENT: str = "development"

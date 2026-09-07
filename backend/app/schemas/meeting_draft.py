@@ -47,6 +47,21 @@ class ActionItemDraftItem(BaseModel):
     due_date: str | None = None
 
 
+class RecommendationDraftItem(BaseModel):
+    text: str
+    proposed_by: str | None = None
+
+
+class OpenItemDraftItem(BaseModel):
+    text: str
+    raised_by: str | None = None
+
+
+class ComplianceNoteDraftItem(BaseModel):
+    text: str
+    severity: str | None = None
+
+
 MeetingDraftStatusOut = Literal["pending", "processing", "completed", "failed"]
 
 
@@ -63,6 +78,9 @@ class MeetingDraftOut(BaseModel):
     decisions: list[DecisionDraftItem] | None
     action_items: list[ActionItemDraftItem] | None
     key_points: list[str] | None
+    recommendations: list[RecommendationDraftItem] | None
+    open_items: list[OpenItemDraftItem] | None
+    compliance_notes: list[ComplianceNoteDraftItem] | None
 
     generated_by: CommitteeMemberUserOut
     generated_at: datetime | None

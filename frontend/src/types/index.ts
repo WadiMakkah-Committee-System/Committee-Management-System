@@ -555,6 +555,118 @@ export interface MeetingAttachment {
 }
 
 /**
+ * محادثة الاجتماع + القناة اللحظية (WebSocket) — راجعي رأس
+ * db/migrations/0026_meeting_realtime.sql وhooks/useMeetingRealtime.ts
+ * للتصميم الكامل (قرار موثّق مع لاما 2026-09-06: WebSocket حقيقي بدل
+ * Polling لهذه القناة تحديدًا).
+ */
+export interface MeetingChatMessage {
+  message_id: string
+  meeting_id: string
+  body: string
+  sender: CommitteeMemberUser
+  created_at: string
+}
+
+/** أحداث البث القادمة عبر WebSocket من meeting_live_socket بالباك-إند — كلها عابرة (غير مخزَّنة) عدا chat.message. */
+export type MeetingRealtimeEvent =
+  | { type: 'chat.message'; message: MeetingChatMessage }
+  | { type: 'hand.raised'; user_id: string; full_name: string }
+  | { type: 'hand.lowered'; user_id: string }
+  | { type: 'agenda.discussing'; agenda_item_id: string; title: string }
+  | { type: 'presence.joined'; user_id: string; full_name: string }
+  | { type: 'presence.left'; user_id: string; full_name: string }
+
+/**
+ * التسجيل الصوتي + المسودة بالذكاء الاصطناعي (Gemini) — راجعي رأس
+ * db/migrations/0025_meeting_recordings_and_drafts.sql وapp/schemas/
+ * meeting_draft.py بالباك-إند. يتطلبان meetings.record_audio /
+ * meetings.draft.summarize / meetings.draft.view — لذلك RecordingPanel.tsx
+ * يتعامل مع 403 كحالة "لا صلاحية" عادية، لا كخطأ.
+ */
+export type MeetingDraftStatus = 'pending' | 'processing' | 'completed' | 'failed'
+
+export interface MeetingRecording {
+  recording_id: string
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  duration_seconds: number | null
+  recorded_by: CommitteeMemberUser
+  recorded_at: string
+}
+
+export interface MeetingDraftTranscriptSegment {
+  speaker: string
+  start_time: string
+  text: string
+}
+
+export interface MeetingDraftDecisionItem {
+  text: string
+  proposed_by: string | null
+  approved: boolean | null
+}
+
+export interface MeetingDraftActionItem {
+  text: string
+  assignee: string | null
+  due_date: string | null
+}
+
+export interface MeetingDraftRecommendationItem {
+  text: string
+  proposed_by: string | null
+}
+
+export interface MeetingDraftOpenItem {
+  text: string
+  raised_by: string | null
+}
+
+export type MeetingDraftComplianceSeverity = 'مرتفع' | 'متوسط' | 'منخفض'
+
+export interface MeetingDraftComplianceNote {
+  text: string
+  severity: MeetingDraftComplianceSeverity | string | null
+}
+
+export type MeetingExtractedItemSource = 'ai' | 'manual'
+export type MeetingExtractedItemStatus = 'pending' | 'assigned_task' | 'assigned_decision'
+
+export interface MeetingExtractedItem {
+  item_id: string
+  meeting_id: string
+  text: string
+  source: MeetingExtractedItemSource
+  status: MeetingExtractedItemStatus
+  linked_task_id: string | null
+  linked_decision_id: string | null
+  created_by: CommitteeMemberUser
+  created_at: string
+  updated_at: string
+}
+
+export interface MeetingDraft {
+  draft_id: string
+  meeting_id: string
+  status: MeetingDraftStatus
+  error_message: string | null
+  full_transcript: MeetingDraftTranscriptSegment[] | null
+  summary: string | null
+  decisions: MeetingDraftDecisionItem[] | null
+  action_items: MeetingDraftActionItem[] | null
+  key_points: string[] | null
+  recommendations: MeetingDraftRecommendationItem[] | null
+  open_items: MeetingDraftOpenItem[] | null
+  compliance_notes: MeetingDraftComplianceNote[] | null
+  generated_by: CommitteeMemberUser
+  generated_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
  * أنواع وحدة "إدارة القرارات" — القرارات المستقلة فقط (بدون قرارات
  * مستخرجة من اجتماع بالذكاء الاصطناعي — تُبنى لاحقًا). مطابقة تمامًا
  * لـbackend/app/schemas/decision.py وapp/models/decision.py. راجعي رأس
@@ -573,6 +685,8 @@ export interface DecisionVote {
 export interface Decision {
   decision_id: string
   committee_id: string
+  /** الاجتماع المصدر — فقط للقرارات المُنشأة من داخل غرفة الاجتماع (لوحة "القرارات"). null للقرارات المستقلة. */
+  meeting_id: string | null
   title: string
   classification: DecisionClassification
   status: DecisionStatus
@@ -591,6 +705,8 @@ export interface Decision {
 
 export interface DecisionCreatePayload {
   committee_id: string
+  /** مُرسَل فقط عند الإنشاء من لوحة "القرارات" داخل غرفة الاجتماع — راجعي DecisionsPanel.tsx. */
+  meeting_id?: string | null
   title: string
   classification: DecisionClassification
   start_date: string

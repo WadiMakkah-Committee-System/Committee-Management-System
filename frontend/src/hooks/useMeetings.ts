@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as meetingsApi from '@/api/meetings'
+import { fetchMeetingChatMessages } from '@/api/meetingChat'
+import * as meetingRecordingApi from '@/api/meetingRecording'
+import * as meetingExtractedItemsApi from '@/api/meetingExtractedItems'
+import type {
+  AssignAsDecisionPayload,
+  AssignAsTaskPayload,
+} from '@/api/meetingExtractedItems'
 import type {
   MeetingAgendaItemCreatePayload,
   MeetingAgendaItemUpdatePayload,
@@ -12,17 +19,44 @@ export const meetingsKeys = {
   all: ['meetings'] as const,
   detail: (meetingId: string) => ['meetings', meetingId] as const,
   attachments: (meetingId: string) => ['meetings', meetingId, 'attachments'] as const,
+  chatHistory: (meetingId: string) => ['meetings', meetingId, 'chat-history'] as const,
+}
+
+/** تحميل تاريخ المحادثة مرة واحدة عند فتح لوحة "المحادثة" — الرسائل
+ * الجديدة تصل بعدها عبر useMeetingRealtime (WebSocket)، لا Polling على
+ * هذا الاستعلام (بلا refetchInterval عمدًا). */
+export function useMeetingChatHistory(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: meetingsKeys.chatHistory(meetingId ?? ''),
+    queryFn: () => fetchMeetingChatMessages(meetingId as string),
+    enabled: !!meetingId,
+    staleTime: Infinity,
+  })
 }
 
 export function useMeetings() {
   return useQuery({ queryKey: meetingsKeys.all, queryFn: meetingsApi.fetchMeetings })
 }
 
-export function useMeetingDetail(meetingId: string | undefined) {
+/**
+ * تعديل لاما 2026-09-06: إضافة refetchIntervalMs اختياري — تستخدمه غرفة
+ * الاجتماع (MeetingRoom.tsx) فقط لاكتشاف انتهاء وقت الاجتماع
+ * (status → finished بالباك-إند، تحويل كسول بلا Scheduler منفصل — راجعي
+ * meeting_service.py::_maybe_transition_status) أثناء بقاء الغرفة مفتوحة،
+ * بلا Polling على بقية استدعاءات هذا الـHook بالتطبيق (مثل
+ * MeetingDetailPage.tsx التي تستدعيه بلا Options — كل استدعاء لهذا
+ * الـHook هو Observer مستقل بخياراته الخاصة رغم مشاركة نفس queryKey/الـ
+ * Cache، فلا يتأثر أي استدعاء آخر بهذا الخيار).
+ */
+export function useMeetingDetail(
+  meetingId: string | undefined,
+  options?: { refetchIntervalMs?: number },
+) {
   return useQuery({
     queryKey: meetingsKeys.detail(meetingId ?? ''),
     queryFn: () => meetingsApi.fetchMeeting(meetingId as string),
     enabled: !!meetingId,
+    refetchInterval: options?.refetchIntervalMs,
   })
 }
 
@@ -216,5 +250,156 @@ export function useOpenMeetingAttachment() {
         throw err
       }
     },
+  })
+}
+
+
+// ============================== التسجيل الصوتي + المسودة (AI) ==============================
+// راجعي رأس app/api/v1/meetings.py (قسم "التسجيل الصوتي + المسودة")
+// وapi/meetingRecording.ts. 403 (لا صلاحية meetings.record_audio/
+// draft.summarize/draft.view) و404 (لا تسجيل/مسودة بعد) حالتان طبيعيتان
+// هنا — RecordingPanel.tsx يعاملهما كحالة عرض عادية، لا خطأ يوقف الواجهة.
+
+export function useMeetingRecording(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: ['meetings', meetingId ?? '', 'recording'] as const,
+    queryFn: () => meetingRecordingApi.fetchMeetingRecording(meetingId as string),
+    enabled: !!meetingId,
+    retry: false,
+  })
+}
+
+export function useUploadMeetingRecording() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      meetingId,
+      file,
+      durationSeconds,
+    }: {
+      meetingId: string
+      file: File
+      durationSeconds?: number
+    }) => meetingRecordingApi.uploadMeetingRecording(meetingId, file, durationSeconds),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: ['meetings', variables.meetingId, 'recording'] }),
+  })
+}
+
+/**
+ * تنزيل ملف التسجيل الصوتي فعليًا (وليس فتح رابط) — نفس نمط
+ * useDownloadMeetingAttachment أعلاه بالضبط. تُستخدم بقسم "التسجيل
+ * والمسودة" بصفحة تفاصيل الاجتماع (MeetingDetailPage.tsx).
+ */
+export function useDownloadMeetingRecording() {
+  return useMutation({
+    mutationFn: async (meetingId: string) => {
+      const { blob, fileName } = await meetingRecordingApi.fetchMeetingRecordingBlob(meetingId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    },
+  })
+}
+
+export function useMeetingDraft(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: ['meetings', meetingId ?? '', 'draft'] as const,
+    queryFn: () => meetingRecordingApi.fetchMeetingDraft(meetingId as string),
+    enabled: !!meetingId,
+    retry: false,
+  })
+}
+
+export function useGenerateMeetingDraft() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (meetingId: string) => meetingRecordingApi.generateMeetingDraft(meetingId),
+    onSuccess: (_data, meetingId) =>
+      queryClient.invalidateQueries({ queryKey: ['meetings', meetingId, 'draft'] }),
+  })
+}
+
+// ============================== البنود المستخرجة من الاجتماع ==============================
+// راجعي رأس api/meetingExtractedItems.ts + app/services/meeting_service.py
+// (قسم "البنود المستخرجة من الاجتماع") للتصميم الكامل.
+
+function extractedItemsKey(meetingId: string) {
+  return ['meetings', meetingId, 'extracted-items'] as const
+}
+
+export function useMeetingExtractedItems(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: extractedItemsKey(meetingId ?? ''),
+    queryFn: () => meetingExtractedItemsApi.fetchMeetingExtractedItems(meetingId as string),
+    enabled: !!meetingId,
+  })
+}
+
+export function useExtractMeetingItems() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (meetingId: string) => meetingExtractedItemsApi.extractMeetingItems(meetingId),
+    onSuccess: (_data, meetingId) =>
+      queryClient.invalidateQueries({ queryKey: extractedItemsKey(meetingId) }),
+  })
+}
+
+export function useAddManualExtractedItem() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ meetingId, text }: { meetingId: string; text: string }) =>
+      meetingExtractedItemsApi.addManualExtractedItem(meetingId, text),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: extractedItemsKey(variables.meetingId) }),
+  })
+}
+
+export function useDeleteExtractedItem() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ meetingId, itemId }: { meetingId: string; itemId: string }) =>
+      meetingExtractedItemsApi.deleteExtractedItem(meetingId, itemId),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: extractedItemsKey(variables.meetingId) }),
+  })
+}
+
+export function useAssignExtractedItemAsTask() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      meetingId,
+      itemId,
+      payload,
+    }: {
+      meetingId: string
+      itemId: string
+      payload: AssignAsTaskPayload
+    }) => meetingExtractedItemsApi.assignExtractedItemAsTask(meetingId, itemId, payload),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: extractedItemsKey(variables.meetingId) }),
+  })
+}
+
+export function useAssignExtractedItemAsDecision() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      meetingId,
+      itemId,
+      payload,
+    }: {
+      meetingId: string
+      itemId: string
+      payload: AssignAsDecisionPayload
+    }) => meetingExtractedItemsApi.assignExtractedItemAsDecision(meetingId, itemId, payload),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: extractedItemsKey(variables.meetingId) }),
   })
 }

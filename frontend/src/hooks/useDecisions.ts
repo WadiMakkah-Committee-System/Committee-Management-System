@@ -4,11 +4,21 @@ import type { DecisionCreatePayload, DecisionUpdatePayload, DecisionVoteChoice }
 
 export const decisionsKeys = {
   all: ['decisions'] as const,
+  byMeeting: (meetingId: string) => ['decisions', 'meeting', meetingId] as const,
   detail: (decisionId: string) => ['decisions', decisionId] as const,
 }
 
 export function useDecisions() {
-  return useQuery({ queryKey: decisionsKeys.all, queryFn: decisionsApi.fetchDecisions })
+  return useQuery({ queryKey: decisionsKeys.all, queryFn: () => decisionsApi.fetchDecisions() })
+}
+
+/** قرارات اجتماع واحد فقط — تستخدمها لوحة "القرارات" داخل غرفة الاجتماع (DecisionsPanel). */
+export function useMeetingDecisions(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: decisionsKeys.byMeeting(meetingId ?? ''),
+    queryFn: () => decisionsApi.fetchDecisions(meetingId),
+    enabled: !!meetingId,
+  })
 }
 
 export function useDecisionDetail(decisionId: string | undefined) {
@@ -24,6 +34,7 @@ function invalidateDecisionQueries(
   decisionId?: string,
 ) {
   queryClient.invalidateQueries({ queryKey: decisionsKeys.all })
+  queryClient.invalidateQueries({ queryKey: ['decisions', 'meeting'] })
   if (decisionId) {
     queryClient.invalidateQueries({ queryKey: decisionsKeys.detail(decisionId) })
   }

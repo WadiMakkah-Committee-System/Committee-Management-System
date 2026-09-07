@@ -57,10 +57,12 @@ from app.models.meeting import (
     MeetingMode,
     MeetingStatus,
 )
+from app.models.decision import DecisionClassification
 from app.models.meeting_draft import MeetingDraft, MeetingDraftStatus, MeetingRecording
+from app.models.meeting_extracted_item import MeetingExtractedItem, MeetingExtractedItemStatus
 from app.models.role import Permission, RolePermission
 from app.models.user import User
-from app.services import audit_service, committee_service, document_service
+from app.services import audit_service, committee_service, decision_service, document_service, task_service
 
 # يقابل بالضبط MeetingAttachmentKind بـschemas/meeting.py.
 _ATTACHMENT_LINK_TYPE = {
@@ -812,6 +814,10 @@ class DraftNotFoundError(Exception):
     """لا توجد مسودة مولَّدة بعد لهذا الاجتماع — تُترجَم إلى 404."""
 
 
+class ExtractedItemNotFoundError(Exception):
+    """البند المستخرج غير موجود — تُترجَم إلى 404."""
+
+
 async def upload_recording(
     db: AsyncSession,
     *,
@@ -947,6 +953,9 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     draft.decisions = generated["decisions"]
     draft.action_items = generated["action_items"]
     draft.key_points = generated["key_points"]
+    draft.recommendations = generated["recommendations"]
+    draft.open_items = generated["open_items"]
+    draft.compliance_notes = generated["compliance_notes"]
     draft.status = MeetingDraftStatus.completed
     draft.error_message = None
     draft.generated_at = datetime.now(UTC)
@@ -968,3 +977,206 @@ async def get_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> 
     if draft is None:
         raise DraftNotFoundError("لا توجد مسودة مولَّدة لهذا الاجتماع بعد")
     return draft
+
+# ============================== البنود المستخرجة من الاجتماع ==============================
+# FR-TASK-005 إلى FR-TASK-012 + FR-DEC-001 إلى FR-DEC-004 (§4.2/§5.2 SRS،
+# UC2-UC9 بجدول حالات الاستخدام) — راجعي رأس app/models/meeting_extracted_item.py
+# للتصميم الكامل. شاشة ترياج واحدة بصفحة تفاصيل الاجتماع (قرار موثّق مع
+# صاحبة المشروع 2026-09-07 — SRS يذكرها تحت فصلي المهام والقرارات معًا
+# بدون فصل UI صريح، فاعتُمدت شاشة واحدة مشتركة تفاديًا لازدواج/تزامن
+# الحالة بين مرآتين منفصلتين).
+#
+# صلاحيات: الاستخراج/الإضافة اليدوية/الحذف تتطلب meetings.draft.summarize
+# (نفس صلاحية توليد المسودة — إجراء ذكاء اصطناعي/إداري على مستوى
+# الاجتماع، رئيس اللجنة فعليًا). "التعيين" كمهمة/قرار لا يتطلب صلاحية
+# إضافية هنا صراحة — يُفوَّض بالكامل لـtask_service.create_task/
+# decision_service.create_decision (كل منهما يتحقق من tasks.create/
+# decisions.create بنفسه، ويرجع السجل المُنشأ مباشرة) تفاديًا لازدواج
+# فحص الصلاحية أو إعادة استعلامه.
+
+
+async def _list_extracted_items_query(
+    db: AsyncSession, meeting_id: uuid.UUID
+) -> list[MeetingExtractedItem]:
+    result = await db.execute(
+        select(MeetingExtractedItem)
+        .where(MeetingExtractedItem.meeting_id == meeting_id)
+        .order_by(MeetingExtractedItem.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def list_extracted_items(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
+) -> list[MeetingExtractedItem]:
+    """يتطلب meetings.draft.view."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض بنود هذا الاجتماع"
+    )
+    return await _list_extracted_items_query(db, meeting_id)
+
+
+async def extract_meeting_items(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
+) -> list[MeetingExtractedItem]:
+    """FR-TASK-005/UC2: يستخرج بنودًا جديدة من ملخص المسودة المولَّدة
+    بالذكاء الاصطناعي (شرط أن تكون مكتملة). كل استدعاء يضيف دفعة جديدة
+    بدون حذف/دمج مع البنود السابقة — لا يوجد شرط Idempotency موثّق بـSRS؛
+    رئيس اللجنة يحذف يدويًا أي بند مكرر (FR-TASK-009)."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.draft.summarize",
+        "ليست لديك صلاحية استخراج بنود من مسودة هذا الاجتماع",
+    )
+
+    result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
+    draft = result.scalar_one_or_none()
+    if draft is None or draft.status != MeetingDraftStatus.completed or not draft.summary:
+        raise MeetingValidationError(
+            "يلزم توليد ملخص الاجتماع بالذكاء الاصطناعي أولًا قبل استخراج البنود"
+        )
+
+    texts = await gemini_client.extract_meeting_items(summary=draft.summary)
+    for text in texts:
+        db.add(
+            MeetingExtractedItem(
+                meeting_id=meeting_id,
+                text=text,
+                source="ai",
+                status=MeetingExtractedItemStatus.pending,
+                created_by=actor.user_id,
+            )
+        )
+    await db.commit()
+    return await _list_extracted_items_query(db, meeting_id)
+
+
+async def add_manual_extracted_item(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, text: str
+) -> MeetingExtractedItem:
+    """FR-TASK-007/UC4: إضافة بند يدوي لقائمة البنود المعروضة."""
+    meeting = await _load_meeting(db, meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.draft.summarize",
+        "ليست لديك صلاحية إضافة بند لهذا الاجتماع",
+    )
+    item = MeetingExtractedItem(
+        meeting_id=meeting_id,
+        text=text,
+        source="manual",
+        status=MeetingExtractedItemStatus.pending,
+        created_by=actor.user_id,
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+async def _load_extracted_item(db: AsyncSession, item_id: uuid.UUID) -> MeetingExtractedItem:
+    result = await db.execute(
+        select(MeetingExtractedItem).where(MeetingExtractedItem.item_id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise ExtractedItemNotFoundError("البند المستخرج غير موجود")
+    return item
+
+
+async def delete_extracted_item(db: AsyncSession, *, actor: User, item_id: uuid.UUID) -> None:
+    """FR-TASK-009/UC6: يزيل البند نهائيًا بدون تحويله لمهمة أو قرار —
+    متاح فقط طالما البند لم يُعيَّن بعد (pending)."""
+    item = await _load_extracted_item(db, item_id)
+    meeting = await _load_meeting(db, item.meeting_id)
+    committee = await _load_committee(db, meeting.committee_id)
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.draft.summarize",
+        "ليست لديك صلاحية حذف بنود هذا الاجتماع",
+    )
+    if item.status != MeetingExtractedItemStatus.pending:
+        raise MeetingValidationError("لا يمكن حذف بند تم تحويله بالفعل إلى مهمة أو قرار")
+    await db.delete(item)
+    await db.commit()
+
+
+async def assign_extracted_item_as_task(
+    db: AsyncSession,
+    *,
+    actor: User,
+    item_id: uuid.UUID,
+    title: str | None,
+    start_date,
+    end_date,
+    assignee_user_id: uuid.UUID,
+) -> MeetingExtractedItem:
+    """FR-TASK-010/011/UC7/UC8: يحوّل البند إلى مهمة حقيقية عبر
+    task_service.create_task (يتحقق من tasks.create والعضوية بنفسه، ويرجع
+    المهمة المُنشأة مباشرة)، ثم يربط البند بها."""
+    item = await _load_extracted_item(db, item_id)
+    if item.status != MeetingExtractedItemStatus.pending:
+        raise MeetingValidationError("هذا البند مُصنَّف مسبقًا")
+    meeting = await _load_meeting(db, item.meeting_id)
+
+    task = await task_service.create_task(
+        db,
+        actor=actor,
+        committee_id=meeting.committee_id,
+        title=(title or item.text),
+        start_date=start_date,
+        end_date=end_date,
+        assignee_user_id=assignee_user_id,
+    )
+    item.status = MeetingExtractedItemStatus.assigned_task
+    item.linked_task_id = task.task_id
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+async def assign_extracted_item_as_decision(
+    db: AsyncSession,
+    *,
+    actor: User,
+    item_id: uuid.UUID,
+    title: str | None,
+    classification: DecisionClassification,
+    start_date,
+    end_date,
+) -> MeetingExtractedItem:
+    """FR-DEC-004/UC7: يحوّل البند إلى قرار حقيقي عبر
+    decision_service.create_decision (يتحقق من decisions.create بنفسه،
+    ويرجع القرار المُنشأ مباشرة)، مربوطًا بالاجتماع المصدر تلقائيًا
+    (meeting_id)، ثم يربط البند به."""
+    item = await _load_extracted_item(db, item_id)
+    if item.status != MeetingExtractedItemStatus.pending:
+        raise MeetingValidationError("هذا البند مُصنَّف مسبقًا")
+    meeting = await _load_meeting(db, item.meeting_id)
+
+    decision = await decision_service.create_decision(
+        db,
+        actor=actor,
+        committee_id=meeting.committee_id,
+        title=(title or item.text),
+        classification=classification,
+        start_date=start_date,
+        end_date=end_date,
+        meeting_id=meeting.meeting_id,
+    )
+    item.status = MeetingExtractedItemStatus.assigned_decision
+    item.linked_decision_id = decision.decision_id
+    await db.commit()
+    await db.refresh(item)
+    return item

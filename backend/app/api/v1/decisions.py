@@ -6,7 +6,7 @@ app/services/decision_service.py للتفويض والاجتهادات المو�
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
@@ -61,6 +61,7 @@ async def create_decision(
             classification=payload.classification,
             start_date=payload.start_date,
             end_date=payload.end_date,
+            meeting_id=payload.meeting_id,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
@@ -69,9 +70,14 @@ async def create_decision(
 
 @router.get("", response_model=list[DecisionOut])
 async def list_decisions(
-    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    meeting_id: uuid.UUID | None = Query(
+        default=None,
+        description="فلترة لقرارات اجتماع واحد فقط — تستخدمها لوحة \"القرارات\" داخل غرفة الاجتماع.",
+    ),
 ) -> list[DecisionOut]:
-    decisions = await decision_service.list_decisions(db, actor=current_user)
+    decisions = await decision_service.list_decisions(db, actor=current_user, meeting_id=meeting_id)
     return [DecisionOut.model_validate(d) for d in decisions]
 
 

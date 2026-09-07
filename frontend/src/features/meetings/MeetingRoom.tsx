@@ -1,426 +1,315 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import {
-  Loader2,
-  Mic,
-  MicOff,
-  MonitorUp,
-  PhoneOff,
-  ScreenShareOff,
-  Users as UsersIcon,
-  Video,
-  VideoOff,
-  X,
-} from 'lucide-react'
-import type {
-  IAgoraRTCClient,
-  IAgoraRTCRemoteUser,
-  ICameraVideoTrack,
-  ILocalVideoTrack,
-  IMicrophoneAudioTrack,
-} from 'agora-rtc-sdk-ng'
-import { useJoinMeeting, useLeaveMeeting } from '@/hooks/useMeetings'
-import { cn, extractErrorMessage } from '@/lib/utils'
+import { ClipboardList, Loader2, TimerOff } from 'lucide-react'
+import { useMeetingDetail } from '@/hooks/useMeetings'
+import { useAuthStore } from '@/store/authStore'
+import { useMeetingRealtime } from '@/hooks/useMeetingRealtime'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { useAgoraConnection } from './room/useAgoraConnection'
+import { useAudioRecorder } from './room/useAudioRecorder'
+import { MeetingRoomAppRail } from './room/MeetingRoomAppRail'
+import { MeetingRoomSidebar, type RoomPanelKey } from './room/MeetingRoomSidebar'
+import { MeetingRoomHeader } from './room/MeetingRoomHeader'
+import { MeetingStage } from './room/MeetingStage'
+import { MeetingControls } from './room/MeetingControls'
+import { ParticipantsPanel } from './room/panels/ParticipantsPanel'
+import { AgendaPanel } from './room/panels/AgendaPanel'
+import { DecisionsPanel } from './room/panels/DecisionsPanel'
+import { AttachmentsPanel } from './room/panels/AttachmentsPanel'
+import { ChatPanel } from './room/panels/ChatPanel'
+import { ActivityPanel } from './room/panels/ActivityPanel'
+import { RecordingPanel } from './room/panels/RecordingPanel'
+import type { MeetingAgendaItem } from '@/types'
+
+/** كل كم مللي ثانية تُحدَّث تفاصيل الاجتماع (الحالة تحديدًا) أثناء بقاء
+ * الغرفة مفتوحة — يكفي للكشف عن انتهاء وقت الاجتماع (_maybe_transition_status
+ * بالباك-إند، قرار موثّق مع لاما 2026-09-05: تحويل كسول بلا Scheduler
+ * منفصل) خلال دقيقة تقريبًا من انتهائه الفعلي، بلا إغراق الخادم بطلبات. */
+const MEETING_STATUS_POLL_MS = 20_000
+/** مهلة السماح قبل إغلاق الغرفة تلقائيًا بعد اكتشاف انتهاء وقت الاجتماع —
+ * تعطي فرصة لقراءة رسالة "انتهى الاجتماع" قبل الإخراج الفعلي. */
+const AUTO_LEAVE_GRACE_MS = 6_000
 
 /**
- * غرفة الفيديو الفعلية للاجتماع — Agora RTC Web SDK. تُفتح فوق الصفحة
- * كلها (Portal لـdocument.body، z-[60]) من MeetingDetailPage.tsx عند نقر
- * زر "دخول الاجتماع" النابض (يظهر فقط بعد وصول موعد الاجتماع، راجعي
- * isMeetingLive هناك).
+ * غرفة الاجتماع — إعادة تصميم 2026-09-06 المسائية لمطابقة الواجهة
+ * المرجعية الثانية التي رسمتها لاما بالضبط (بعد الإصدار الأول الذي لم
+ * يعجبها): شريطان منفصلان يمين الشاشة — شريط عام داكن بشعار الشركة
+ * وتنقّل عام (MeetingRoomAppRail.tsx)، ثم لوحة ديناميكية بيضاء (340px)
+ * تبويباتها صف أفقي صغير أعلاها (MeetingRoomSidebar.tsx، لم يعد شريطًا
+ * جانبيًا) — المحادثة تُفتح من الشريط العام، ولوحة التسجيل+الذكاء
+ * الاصطناعي من زر "المزيد" بشريط التحكم السفلي، لا من تبويب بلوحة
+ * المشاركين. التسجيل الصوتي رُفع لهذا المستوى (useAudioRecorder) ليكون
+ * مصدرًا حيًا واحدًا لثلاث واجهات: زر التسجيل بالتحكم السفلي، شارة
+ * "جاري التسجيل" أعلى الفيديو، ولوحة الذكاء الاصطناعي.
  *
- * تحميل مكتبة agora-rtc-sdk-ng ديناميكيًا (import() داخل useEffect) بدل
- * الاستيراد الثابت أعلى الملف — Code-splitting: أغلب من يفتح المشروع لا
- * يدخل اجتماع فيديو كل مرة، فلا داعي لتحميل مكتبة Agora (ثقيلة نسبيًا)
- * ضمن الحزمة الرئيسية. الاستيرادات بالأعلى type-only (import type) فقط،
- * تُحذف كليًا وقت البناء ولا تُدرَج بأي Chunk.
- *
- * بيانات الدخول (token) تأتي من POST /meetings/{id}/join بالباك-إند
- * (meeting_service.join_meeting + agora_client.generate_rtc_token) —
- * قصيرة العمر (AGORA_TOKEN_TTL_SECONDS)، ولا يصل AGORA_APP_CERTIFICATE
- * للفرونت أبدًا (نفس مبدأ SUPABASE_SERVICE_ROLE_KEY، راجعي رأس
- * db/migrations/0022_meetings_agora_video.sql).
+ * الواجهة الخارجية (props) لم تتغيّر عمدًا — MeetingDetailPage.tsx ما
+ * زال يستدعيها بنفس الشكل: <MeetingRoom meetingId meetingTitle onClose />.
  */
-
-type ConnectionPhase = 'connecting' | 'connected' | 'error'
-
-interface RemoteParticipant {
-  uid: string | number
-  hasVideo: boolean
-  hasAudio: boolean
-  videoTrack: IAgoraRTCRemoteUser['videoTrack']
-}
-
-function ControlButton({
-  onClick,
-  active,
-  danger,
-  label,
-  children,
-}: {
-  onClick: () => void
-  active?: boolean
-  danger?: boolean
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className={cn(
-        'flex h-12 w-12 items-center justify-center rounded-full transition-all active:scale-95',
-        danger
-          ? 'bg-danger text-white hover:brightness-95'
-          : active
-            ? 'bg-white/15 text-white hover:bg-white/25'
-            : 'bg-danger/90 text-white hover:bg-danger',
-      )}
-    >
-      {children}
-    </button>
-  )
-}
-
-function RemoteVideoTile({ participant }: { participant: RemoteParticipant }) {
-  const containerRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const node = containerRef.current
-    if (participant.videoTrack && node) {
-      participant.videoTrack.play(node)
-    }
-    return () => {
-      participant.videoTrack?.stop()
-    }
-  }, [participant.videoTrack])
-
-  return (
-    <div className="relative aspect-video overflow-hidden rounded-md bg-[#1c1f26]">
-      <div ref={containerRef} className="h-full w-full [&>div]:!h-full [&>div]:!w-full" />
-      {!participant.hasVideo && (
-        <div className="absolute inset-0 flex items-center justify-center text-white/40">
-          <UsersIcon size={28} />
-        </div>
-      )}
-      <div className="absolute inset-x-2 bottom-2 flex items-center justify-between">
-        <span className="rounded-xs bg-black/60 px-2 py-0.5 text-[11px] text-white">
-          مشارك #{participant.uid}
-        </span>
-        {!participant.hasAudio && (
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
-            <MicOff size={11} />
-          </span>
-        )}
-      </div>
-    </div>
-  )
-}
-
 export function MeetingRoom({
   meetingId,
-  meetingTitle,
   onClose,
 }: {
   meetingId: string
   meetingTitle: string
   onClose: () => void
 }) {
-  const joinMutation = useJoinMeeting()
-  const leaveMutation = useLeaveMeeting()
+  const currentUser = useAuthStore((s) => s.user)
+  // Polling أثناء بقاء الغرفة مفتوحة فقط (راجعي useMeetingDetail) — يكشف
+  // انتهاء وقت الاجتماع (status → finished) بدون حاجة لإعادة فتح الصفحة.
+  const meetingQuery = useMeetingDetail(meetingId, { refetchIntervalMs: MEETING_STATUS_POLL_MS })
+  const agora = useAgoraConnection(meetingId)
+  const realtime = useMeetingRealtime(meetingId)
+  const recorder = useAudioRecorder(meetingId)
 
-  const [phase, setPhase] = useState<ConnectionPhase>('connecting')
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [micEnabled, setMicEnabled] = useState(true)
-  const [camEnabled, setCamEnabled] = useState(true)
-  const [sharingScreen, setSharingScreen] = useState(false)
-  const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([])
+  const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
+  const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
+  const [leaving, setLeaving] = useState(false)
 
-  const clientRef = useRef<IAgoraRTCClient | null>(null)
-  const micTrackRef = useRef<IMicrophoneAudioTrack | null>(null)
-  const camTrackRef = useRef<ICameraVideoTrack | null>(null)
-  const screenVideoTrackRef = useRef<ILocalVideoTrack | null>(null)
-  const agoraUidRef = useRef<number | null>(null)
-  const localVideoRef = useRef<HTMLDivElement | null>(null)
-  const leftRef = useRef(false)
+  // عدد رسائل المحادثة "المُشاهَدة" — State حقيقي يُحدَّث فقط داخل معالج
+  // الحدث عند التنقل إلى لوحة "المحادثة" (انظر handleSelectPanel)، لا أثناء
+  // الـrender ولا داخل useEffect. طالما اللوحة مفتوحة، شارة "غير مقروءة"
+  // بالشريط العام مخفية أصلًا (!isActive بـMeetingRoomAppRail)، فلا حاجة
+  // لتحديث مستمر أثناء بقاء اللوحة مفتوحة — فقط عند لحظة الدخول إليها.
+  const [seenChatCount, setSeenChatCount] = useState(0)
+  const hasNewChatMessage = realtime.liveMessages.length > seenChatCount
 
-  const cleanupAndLeave = useCallback(async () => {
-    if (leftRef.current) return
-    leftRef.current = true
-
-    micTrackRef.current?.close()
-    camTrackRef.current?.close()
-    screenVideoTrackRef.current?.close()
-
-    const client = clientRef.current
-    clientRef.current = null
-    if (client) {
-      try {
-        await client.leave()
-      } catch {
-        // تجاهل — الهدف الأساسي إغلاق المسارات محليًا، مو ضمان نجاح leave بالسيرفر.
-      }
-    }
-
-    if (agoraUidRef.current !== null) {
-      leaveMutation.mutate({ meetingId, agoraUid: agoraUidRef.current })
-    }
-  }, [leaveMutation, meetingId])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function connect() {
-      try {
-        setPhase('connecting')
-        setErrorMessage(null)
-
-        const joinInfo = await joinMutation.mutateAsync(meetingId)
-        if (cancelled) return
-        agoraUidRef.current = joinInfo.uid
-
-        const { default: AgoraRTC } = await import('agora-rtc-sdk-ng')
-        if (cancelled) return
-
-        const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' })
-        clientRef.current = client
-
-        client.on('user-published', async (user, mediaType) => {
-          await client.subscribe(user, mediaType)
-          if (mediaType === 'video') {
-            setRemoteParticipants((prev) => {
-              const others = prev.filter((p) => p.uid !== user.uid)
-              return [...others, { uid: user.uid, hasVideo: true, hasAudio: !!user.hasAudio, videoTrack: user.videoTrack }]
-            })
-          }
-          if (mediaType === 'audio') {
-            user.audioTrack?.play()
-            setRemoteParticipants((prev) =>
-              prev.map((p) => (p.uid === user.uid ? { ...p, hasAudio: true } : p)),
-            )
-          }
-        })
-
-        client.on('user-unpublished', (user, mediaType) => {
-          if (mediaType === 'video') {
-            setRemoteParticipants((prev) =>
-              prev.map((p) => (p.uid === user.uid ? { ...p, hasVideo: false, videoTrack: undefined } : p)),
-            )
-          }
-          if (mediaType === 'audio') {
-            setRemoteParticipants((prev) =>
-              prev.map((p) => (p.uid === user.uid ? { ...p, hasAudio: false } : p)),
-            )
-          }
-        })
-
-        client.on('user-left', (user) => {
-          setRemoteParticipants((prev) => prev.filter((p) => p.uid !== user.uid))
-        })
-
-        await client.join(joinInfo.app_id, joinInfo.channel, joinInfo.token, joinInfo.uid)
-        if (cancelled) {
-          await client.leave().catch(() => {})
-          return
-        }
-
-        const [micTrack, camTrack] = await AgoraRTC.createMicrophoneAndCameraTracks()
-        if (cancelled) {
-          micTrack.close()
-          camTrack.close()
-          await client.leave().catch(() => {})
-          return
-        }
-        micTrackRef.current = micTrack
-        camTrackRef.current = camTrack
-        if (localVideoRef.current) camTrack.play(localVideoRef.current)
-        await client.publish([micTrack, camTrack])
-
-        setPhase('connected')
-      } catch (err) {
-        if (!cancelled) {
-          setPhase('error')
-          setErrorMessage(extractErrorMessage(err))
-        }
-      }
-    }
-
-    connect()
-
-    return () => {
-      cancelled = true
-      cleanupAndLeave()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingId])
-
-  function toggleMic() {
-    const track = micTrackRef.current
-    if (!track) return
-    const next = !micEnabled
-    track.setEnabled(next)
-    setMicEnabled(next)
-  }
-
-  function toggleCamera() {
-    const track = camTrackRef.current
-    if (!track) return
-    const next = !camEnabled
-    track.setEnabled(next)
-    setCamEnabled(next)
-  }
-
-  async function toggleScreenShare() {
-    const client = clientRef.current
-    if (!client) return
-
-    try {
-      if (!sharingScreen) {
-        const result = await import('agora-rtc-sdk-ng').then(({ default: AgoraRTC }) =>
-          AgoraRTC.createScreenVideoTrack({}, 'disable'),
-        )
-        screenVideoTrackRef.current = result
-        if (camTrackRef.current) await client.unpublish([camTrackRef.current])
-        await client.publish([result])
-        if (localVideoRef.current) result.play(localVideoRef.current)
-        setSharingScreen(true)
-
-        // لو المستخدم أوقف المشاركة من شريط المتصفح نفسه (وليس زرّنا)
-        result.on('track-ended', () => {
-          stopScreenShare()
-        })
-      } else {
-        await stopScreenShare()
-      }
-    } catch (err) {
-      // رفض صلاحية اختيار الشاشة من المتصفح مثلًا — نادر ولا نعتبره خطأ فادح بالاتصال.
-      setErrorMessage(extractErrorMessage(err))
+  function handleSelectPanel(key: RoomPanelKey) {
+    setActivePanel(key)
+    if (key === 'chat') {
+      setSeenChatCount(realtime.liveMessages.length)
     }
   }
 
-  async function stopScreenShare() {
-    const client = clientRef.current
-    if (!client || !screenVideoTrackRef.current) return
-    await client.unpublish([screenVideoTrackRef.current])
-    screenVideoTrackRef.current.close()
-    screenVideoTrackRef.current = null
-    if (camTrackRef.current) {
-      await client.publish([camTrackRef.current])
-      if (localVideoRef.current) camTrackRef.current.play(localVideoRef.current)
-    }
-    setSharingScreen(false)
+  const raisedHandUserIds = useMemo(
+    () => new Set(realtime.raisedHands.map((h) => h.userId)),
+    [realtime.raisedHands],
+  )
+  const iRaisedHand = currentUser ? raisedHandUserIds.has(currentUser.user_id) : false
+
+  const participantNames = useMemo(() => {
+    const map = new Map<string, string>()
+    meetingQuery.data?.participants.forEach((p) => {
+      map.set(p.user_id, `${p.first_name} ${p.last_name}`)
+    })
+    return map
+  }, [meetingQuery.data?.participants])
+
+  function handleStartDiscussing(item: MeetingAgendaItem) {
+    realtime.announceDiscussing(item.agenda_item_id, item.title)
   }
 
-  async function handleLeaveClick() {
-    await cleanupAndLeave()
+  async function handleConfirmLeave() {
+    setLeaving(true)
+    if (recorder.isRecording) recorder.stop()
+    await agora.leave()
+    setLeaving(false)
+    setConfirmLeaveOpen(false)
     onClose()
   }
 
-  const gridParticipantsCount = remoteParticipants.length + 1
-  const gridClass =
-    gridParticipantsCount <= 1
-      ? 'grid-cols-1'
-      : gridParticipantsCount <= 4
-        ? 'grid-cols-2'
-        : 'grid-cols-3'
+  async function handleToggleRecording() {
+    if (recorder.isRecording) {
+      recorder.stop()
+    } else {
+      await recorder.start()
+    }
+  }
+
+  const meeting = meetingQuery.data
+
+  // تعديل لاما 2026-09-06: "انتهى وقت الاجتماع وما اغلق تلقائيًا" — الحالة
+  // نفسها تُحسَب فعليًا بالباك-إند (_maybe_transition_status، تحويل كسول
+  // موثّق بلا Scheduler منفصل)، لكن أحدًا لم يكن يطلب قراءة جديدة أثناء
+  // بقاء الغرفة مفتوحة (بلا Polling سابقًا) فتبقى الحالة القديمة ظاهرة
+  // بالواجهة إلى الأبد. الـPolling أعلاه يحل هذا، وهنا نتصرف فعليًا عند
+  // اكتشاف finished/recorded: نعرض تنبيهًا ثم نُخرج الجميع تلقائيًا بعد
+  // مهلة سماح قصيرة (بدل تركهم بغرفة "منتهية" بلا أي إجراء).
+  const meetingEnded = meeting?.status === 'finished' || meeting?.status === 'recorded'
+  const autoLeaveTriggeredRef = useRef(false)
+
+  useEffect(() => {
+    if (!meetingEnded || autoLeaveTriggeredRef.current) return
+    autoLeaveTriggeredRef.current = true
+    const timeout = setTimeout(() => {
+      setLeaving(true)
+      if (recorder.isRecording) recorder.stop()
+      agora
+        .leave()
+        .catch(() => {})
+        .finally(() => {
+          setLeaving(false)
+          onClose()
+        })
+    }, AUTO_LEAVE_GRACE_MS)
+    return () => clearTimeout(timeout)
+    // عمدًا: agora/recorder/onClose لا تدخل بالـdeps — agora كائن جديد كل
+    // render (سيُعيد تشغيل المؤقّت باستمرار لو أُدرِج)، والاعتماد الفعلي
+    // الوحيد للتشغيل هو meetingEnded نفسه (الحارس أعلاه autoLeaveTriggeredRef
+    // يمنع أي تكرار على أي حال، بنفس نمط useAgoraConnection.ts).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingEnded])
 
   return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.18 }}
-      className="fixed inset-0 z-[60] flex flex-col bg-[#111318]"
       dir="rtl"
+      // z-[45]: أسفل ConfirmDialog/Modal العامّة (z-50 — components/ui/Modal.tsx)
+      // عمدًا، وإلا فأي Modal يُفتح من داخل الغرفة (تأكيد المغادرة تحديدًا)
+      // يُرسَم خلف خلفية الغرفة المعتمة فيبدو "بلا استجابة" عند الضغط
+      // (كان z-[60] سابقًا — أعلى من Modal — وهذا سبب عطل زر "مغادرة
+      // الاجتماع" الذي رصدته لاما 2026-09-06). ما زال أعلى من الشريط
+      // الجانبي للتطبيق (z-40 — Sidebar.tsx) لتغطية كامل الشاشة كما يجب.
+      className="fixed inset-0 z-[45] flex flex-col bg-[#0d1220]"
     >
-      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-        <div className="flex items-center gap-2 text-white">
-          <Video size={16} />
-          <p className="truncate text-sm font-semibold">{meetingTitle}</p>
-          {phase === 'connected' && (
-            <span className="flex items-center gap-1 rounded-xs bg-success/15 px-2 py-0.5 text-[11px] font-semibold text-success">
-              <span className="h-1.5 w-1.5 rounded-full bg-success animate-live-dot-pulse" />
-              جارٍ الآن
-            </span>
-          )}
+      {!meeting ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-white/70">
+          <Loader2 size={28} className="animate-spin" />
+          <p className="text-sm">جاري تحميل بيانات الاجتماع...</p>
         </div>
-        <button
-          type="button"
-          onClick={handleLeaveClick}
-          aria-label="إغلاق"
-          className="flex h-8 w-8 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-        >
-          <X size={18} />
-        </button>
-      </div>
+      ) : (
+        <>
+          <MeetingRoomHeader meeting={meeting} onOpenParticipants={() => handleSelectPanel('participants')} />
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-4">
-        {phase === 'connecting' && (
-          <div className="flex flex-col items-center gap-3 text-white/70">
-            <Loader2 size={28} className="animate-spin" />
-            <p className="text-sm">جاري الاتصال بالاجتماع...</p>
-          </div>
-        )}
+          <div className="flex min-h-0 flex-1">
+            <MeetingRoomAppRail
+              onExitClick={() => setConfirmLeaveOpen(true)}
+              onChatClick={() => handleSelectPanel('chat')}
+              chatActive={activePanel === 'chat'}
+              hasUnreadChat={hasNewChatMessage}
+            />
 
-        {phase === 'error' && (
-          <div className="flex flex-col items-center gap-3 text-center">
-            <p className="max-w-sm text-sm text-danger">{errorMessage ?? 'تعذّر الاتصال بالاجتماع.'}</p>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-sm bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15"
-            >
-              إغلاق
-            </button>
-          </div>
-        )}
+            <aside className="flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-border-default bg-bg-app">
+              <MeetingRoomSidebar
+                active={activePanel}
+                onSelect={handleSelectPanel}
+                raisedHandCount={realtime.raisedHands.length}
+              />
 
-        {phase === 'connected' && (
-          <div className={cn('grid w-full max-w-5xl gap-3', gridClass)}>
-            <div className="relative aspect-video overflow-hidden rounded-md bg-[#1c1f26]">
-              <div ref={localVideoRef} className="h-full w-full [&>div]:!h-full [&>div]:!w-full" />
-              {!camEnabled && !sharingScreen && (
-                <div className="absolute inset-0 flex items-center justify-center text-white/40">
-                  <UsersIcon size={28} />
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {activePanel === 'participants' && (
+                  <ParticipantsPanel
+                    participants={meeting.participants}
+                    onlineUserIds={realtime.onlineUserIds}
+                    raisedHandUserIds={raisedHandUserIds}
+                    currentUserId={currentUser?.user_id ?? ''}
+                  />
+                )}
+                {activePanel === 'agenda' && (
+                  <AgendaPanel
+                    agendaItems={meeting.agenda_items}
+                    discussingAgendaItemId={realtime.discussingAgendaItem?.id ?? null}
+                    onStartDiscussing={handleStartDiscussing}
+                  />
+                )}
+                {activePanel === 'decisions' && (
+                  <DecisionsPanel
+                    meetingId={meetingId}
+                    committeeId={meeting.committee_id}
+                    currentUserId={currentUser?.user_id ?? ''}
+                  />
+                )}
+                {activePanel === 'attachments' && <AttachmentsPanel meetingId={meetingId} />}
+                {activePanel === 'chat' && (
+                  <ChatPanel
+                    meetingId={meetingId}
+                    liveMessages={realtime.liveMessages}
+                    currentUserId={currentUser?.user_id ?? ''}
+                    onSend={realtime.sendChatMessage}
+                    connectionStatus={realtime.status}
+                  />
+                )}
+                {activePanel === 'activity' && <ActivityPanel events={realtime.activityEvents} />}
+                {activePanel === 'ai' && (
+                  <RecordingPanel meetingId={meetingId} recorder={recorder} />
+                )}
+              </div>
+            </aside>
+
+            <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+              {/* تعديل لاما 2026-09-06: "بدأ مناقشة البند ما ظهر إشعار أعلى
+                  الصفحة" — بث agenda.discussing كان يُسجَّل بسجل النشاط فقط
+                  بلا أي عنصر ظاهر بمنطقة الفيديو الرئيسية نفسها. */}
+              {realtime.discussingAgendaItem && (
+                <div className="flex items-center gap-2 rounded-md border border-brand-primary/30 bg-brand-primary/10 px-3 py-2 text-[12px] font-medium text-white">
+                  <ClipboardList size={14} className="shrink-0 text-brand-accent" />
+                  <span className="truncate">
+                    جارٍ الآن مناقشة: {realtime.discussingAgendaItem.title}
+                  </span>
                 </div>
               )}
-              <span className="absolute bottom-2 right-2 rounded-xs bg-black/60 px-2 py-0.5 text-[11px] text-white">
-                أنتِ
-              </span>
-              {!micEnabled && (
-                <span className="absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
-                  <MicOff size={11} />
-                </span>
+
+              {meetingEnded && (
+                <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-[12px] font-medium text-warning">
+                  <TimerOff size={14} className="shrink-0" />
+                  <span>انتهى الوقت المحدد لهذا الاجتماع — سيتم إغلاق الغرفة تلقائيًا خلال لحظات.</span>
+                </div>
+              )}
+
+              {agora.phase === 'connecting' && (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 text-white/60">
+                  <Loader2 size={26} className="animate-spin" />
+                  <p className="text-sm">جاري الاتصال بالاجتماع...</p>
+                </div>
+              )}
+              {agora.phase === 'error' && (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+                  <p className="max-w-sm text-sm text-danger">
+                    {agora.errorMessage ?? 'تعذّر الاتصال بالاجتماع.'}
+                  </p>
+                </div>
+              )}
+              {agora.phase === 'connected' && (
+                <MeetingStage
+                  localName={currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'أنتِ'}
+                  localDisplayTrack={agora.localDisplayTrack}
+                  micEnabled={agora.micEnabled}
+                  camEnabled={agora.camEnabled}
+                  sharingScreen={agora.sharingScreen}
+                  localAudioLevel={agora.localAudioLevel}
+                  remoteParticipants={agora.remoteParticipants}
+                  participantNames={participantNames}
+                  raisedHandUserIds={raisedHandUserIds}
+                  localUserId={currentUser?.user_id ?? ''}
+                  isRecording={recorder.isRecording}
+                  recordingElapsedSeconds={recorder.elapsedSeconds}
+                  onStopRecording={recorder.stop}
+                />
+              )}
+
+              {agora.phase === 'connected' && (
+                <MeetingControls
+                  micEnabled={agora.micEnabled}
+                  camEnabled={agora.camEnabled}
+                  sharingScreen={agora.sharingScreen}
+                  handRaised={iRaisedHand}
+                  isRecording={recorder.isRecording}
+                  onToggleMic={agora.toggleMic}
+                  onToggleCamera={agora.toggleCamera}
+                  onToggleScreenShare={agora.toggleScreenShare}
+                  onToggleHand={() => (iRaisedHand ? realtime.lowerHand() : realtime.raiseHand())}
+                  onToggleRecording={handleToggleRecording}
+                  onOpenMore={() => handleSelectPanel('ai')}
+                  onLeave={() => setConfirmLeaveOpen(true)}
+                />
               )}
             </div>
-            {remoteParticipants.map((participant) => (
-              <RemoteVideoTile key={participant.uid} participant={participant} />
-            ))}
           </div>
-        )}
-      </div>
-
-      {phase === 'connected' && (
-        <div className="flex items-center justify-center gap-3 border-t border-white/10 px-4 py-4">
-          <ControlButton onClick={toggleMic} active={micEnabled} label={micEnabled ? 'كتم الصوت' : 'تشغيل الصوت'}>
-            {micEnabled ? <Mic size={18} /> : <MicOff size={18} />}
-          </ControlButton>
-          <ControlButton onClick={toggleCamera} active={camEnabled} label={camEnabled ? 'إيقاف الكاميرا' : 'تشغيل الكاميرا'}>
-            {camEnabled ? <Video size={18} /> : <VideoOff size={18} />}
-          </ControlButton>
-          <ControlButton
-            onClick={toggleScreenShare}
-            active={sharingScreen}
-            label={sharingScreen ? 'إيقاف مشاركة الشاشة' : 'مشاركة الشاشة'}
-          >
-            {sharingScreen ? <ScreenShareOff size={18} /> : <MonitorUp size={18} />}
-          </ControlButton>
-          <ControlButton onClick={handleLeaveClick} danger label="مغادرة الاجتماع">
-            <PhoneOff size={18} />
-          </ControlButton>
-        </div>
+        </>
       )}
+
+      <ConfirmDialog
+        open={confirmLeaveOpen}
+        onClose={() => setConfirmLeaveOpen(false)}
+        onConfirm={handleConfirmLeave}
+        title="مغادرة الاجتماع"
+        description="هل أنتِ متأكدة أنك تريدين مغادرة الاجتماع؟"
+        confirmLabel="مغادرة"
+        variant="danger"
+        loading={leaving}
+      />
     </motion.div>,
     document.body,
   )

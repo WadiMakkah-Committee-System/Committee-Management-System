@@ -63,14 +63,28 @@ _PROMPT_TEMPLATE = """أنتِ مساعدة ذكاء اصطناعي متخصصة
 سيُزوَّدك بملف صوتي كامل لاجتماع لجنة باسم: "{meeting_title}"
 
 قائمة المشاركين المسجَّلين رسميًا بهذا الاجتماع (استخدميها لمطابقة الأصوات
-بالأسماء الحقيقية قدر استطاعتك؛ إذا لم تستطيعي تحديد المتحدث بثقة معقولة،
-استخدمي القيمة "متحدث غير معروف" بالضبط — لا تخمّني اسمًا لست متأكدة منه):
+بالأسماء الحقيقية):
 {participant_list}
+
+تعليمات مهمة لتحديد هوية المتحدث — اتبعيها بالترتيب قبل اليأس من التحديد:
+أ) انتبهي لأي تعريف بالنفس ("أنا فلان...")، أو مخاطبة باسم صريح ("يا فلان
+   وش رأيك؟"، "دور فلانة")، أو ذِكر منصب/دور يطابق أحد الأسماء بالقائمة —
+   هذه أقوى دليل لمطابقة الصوت بالاسم.
+ب) بمجرد ما تحددي هوية صوت معيّن بثقة معقولة (ولو بمقطع واحد فقط)، طبّقي
+   نفس الاسم على كل المقاطع الأخرى بنفس الصوت طيلة التسجيل، حتى لو ما
+   تكرر ذكر اسمه صراحة بها المقاطع — التمييز الصوتي المتصل عبر التسجيل
+   دليل كافٍ، وليس فقط اللحظة اللي فيها ذُكر الاسم.
+ج) لا تخمّني اسمًا من القائمة لصوت ما قدرتِ تربطينه بدليل معقول (سياق أو
+   استمرارية صوتية) — الدقة أهم من التخمين.
+د) إذا تعذّر تحديد الاسم الحقيقي لصوت معيّن، لا تستخدمي تسمية واحدة موحّدة
+   لكل الأصوات غير المعروفة — بدّلي كل صوت غير معروف عن الثاني برقم تسلسلي
+   يميّزهم عن بعض: "متحدث غير معروف 1"، "متحدث غير معروف 2"، وهكذا (نفس
+   الرقم لنفس الصوت طيلة التسجيل، بنفس منطق البند ب).
 
 مهمتك بالضبط:
 1) فرّغي التسجيل كاملًا إلى نص عربي دقيق، مقسّمًا إلى مقاطع حسب المتحدث،
    مع وقت تقريبي بصيغة mm:ss لبداية كل مقطع.
-2) لكل مقطع، حددي "من قاله" (اسم من القائمة أعلاه، أو "متحدث غير معروف").
+2) لكل مقطع، حددي "من قاله" وفق تعليمات تحديد الهوية أعلاه.
 3) اكتبي ملخصًا عامًا للاجتماع (3 إلى 6 جمل بالفصحى).
 4) استخرجي كل قرار تم اتخاذه أو اقتراحه صراحة أثناء النقاش — نص القرار،
    من اقترحه إن اتضح من السياق (وإلا null)، وهل تمت الموافقة عليه لفظيًا
@@ -79,6 +93,22 @@ _PROMPT_TEMPLATE = """أنتِ مساعدة ذكاء اصطناعي متخصصة
    المسؤول عنها إن ذُكر (وإلا null)، وأي موعد نهائي إن ذُكر (وإلا null).
 6) استخرجي أهم النقاط والملاحظات الجديرة بالإبراز بمحضر الاجتماع (نقاط
    قصيرة، كل نقطة جملة واحدة).
+7) استخرجي كل "توصية" ذُكرت بالاجتماع — أي اقتراح رُفع لجهة أعلى (الإدارة
+   العليا/مجلس الإدارة/لجنة أخرى) للنظر فيه، بدون أنه اتخذ كقرار نهائي
+   بهذا الاجتماع نفسه (فرّقي بينها وبين "القرارات" بالبند 4 — القرار
+   يعني موافقة/بتّ فعلي بنفس الاجتماع، التوصية تعني اقتراح مرفوع
+   للاعتماد لاحقًا من جهة أخرى). لكل توصية: نص التوصية، ومن اقترحها إن
+   اتضح (وإلا null).
+8) استخرجي كل "نقطة معلّقة" أو "سؤال مفتوح" أُثير بالنقاش ولم يُحسم أو
+   يُجب عليه صراحة أثناء الاجتماع (يحتاج متابعة أو رد لاحق). لكل نقطة:
+   نصها، ومن أثارها إن اتضح (وإلا null).
+9) بصفتك مساعدة لجنة حوكمة والتزام تحديدًا: استخرجي أي "ملاحظة أو مخاطرة
+   متعلقة بالالتزام/الحوكمة" ذُكرت أثناء النقاش (مخالفة إجرائية، تأخر
+   بمهمة رقابية، ثغرة بضبط داخلي، قضية امتثال تنظيمي، تعارض مصالح، أو ما
+   شابه — فقط لو ذُكرت فعليًا، لا تستنتجي مخاطر من عندك). لكل ملاحظة:
+   نصها، ومستوى خطورتها كما يظهر من سياق النقاش لو أمكن تقييمه بثقة
+   معقولة (قيمة واحدة بالضبط من: "مرتفع" أو "متوسط" أو "منخفض"، وإلا
+   null إن لم يتضح مستوى الخطورة من السياق).
 
 قواعد صارمة وملزمة:
 - لا تختلقي أي معلومة غير موجودة فعليًا بالتسجيل. الدقة أهم من الاكتمال.
@@ -145,8 +175,50 @@ _RESPONSE_SCHEMA = {
             },
         },
         "key_points": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "recommendations": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "text": {"type": "STRING"},
+                    "proposed_by": {"type": "STRING", "nullable": True},
+                },
+                "required": ["text"],
+            },
+        },
+        "open_items": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "text": {"type": "STRING"},
+                    "raised_by": {"type": "STRING", "nullable": True},
+                },
+                "required": ["text"],
+            },
+        },
+        "compliance_notes": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "text": {"type": "STRING"},
+                    "severity": {"type": "STRING", "nullable": True},
+                },
+                "required": ["text"],
+            },
+        },
     },
-    "required": ["full_transcript", "summary", "decisions", "action_items", "key_points"],
+    "required": [
+        "full_transcript",
+        "summary",
+        "decisions",
+        "action_items",
+        "key_points",
+        "recommendations",
+        "open_items",
+        "compliance_notes",
+    ],
 }
 
 
@@ -207,6 +279,140 @@ async def _wait_until_active(client: httpx.AsyncClient, api_key: str, *, file_na
     raise GeminiError("انتهت مهلة انتظار معالجة الملف الصوتي من طرف Gemini")
 
 
+
+_GENERATE_RETRY_MAX_ATTEMPTS = 3
+_GENERATE_RETRY_BASE_DELAY_SECONDS = 3
+
+
+async def _generate_content_with_retry(
+    client: httpx.AsyncClient, api_key: str, *, prompt: str, audio_mime_type: str, file_uri: str
+) -> httpx.Response:
+    """Gemini يرجّع أحيانًا 503 (UNAVAILABLE — ضغط مؤقت على الموديل) —
+    إعادة محاولة قصيرة بتأخير متصاعد أفضل من فشل التوليد فورًا وإجبار
+    المستخدم يضغط الزر يدويًا من جديد. أي status code ثاني (400/401/404...)
+    يرجع فورًا بدون إعادة محاولة لأنه خطأ دائم مو مؤقت."""
+    request_body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {"file_data": {"mime_type": audio_mime_type, "file_uri": file_uri}},
+                ]
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": _RESPONSE_SCHEMA,
+        },
+    }
+    response: httpx.Response | None = None
+    for attempt in range(_GENERATE_RETRY_MAX_ATTEMPTS):
+        response = await client.post(
+            f"{_API_BASE}/v1beta/models/{settings.GEMINI_MODEL}:generateContent",
+            params={"key": api_key},
+            json=request_body,
+        )
+        if response.status_code != 503:
+            return response
+        if attempt < _GENERATE_RETRY_MAX_ATTEMPTS - 1:
+            await asyncio.sleep(_GENERATE_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+    return response
+
+
+
+# ======================= استخراج بنود الاجتماع (FR-TASK-005) =======================
+# استدعاء نصّي خفيف منفصل تمامًا عن generate_meeting_draft أعلاه — بدون
+# رفع ملف صوتي، فقط نص ملخص الاجتماع الجاهز (مسودة مكتملة مسبقًا شرط
+# مسبق بطبقة الخدمة، راجعي meeting_service.extract_meeting_items). لا
+# تصنّف البنود كمهمة/قرار — هذا قرار بشري لاحق برئيس اللجنة (UC5/UC7).
+
+_EXTRACT_ITEMS_PROMPT_TEMPLATE = """أنتِ مساعدة ذكاء اصطناعي تدعمين رئيس لجنة حوكمة والتزام رسمية.
+
+فيما يلي ملخص اجتماع اللجنة:
+---
+{summary}
+---
+
+مهمتك: استخرجي من هذا الملخص فقط (بدون إضافة أي معلومة غير مذكورة فيه)
+قائمة "بنود" — كل بند نقطة واحدة محددة ذُكرت بالملخص وتحتاج متابعة رسمية
+من رئيس اللجنة، بحيث يمكن لاحقًا تحويلها إلى "مهمة" تُسند لمسؤول بموعد
+محدد، أو "قرار" رسمي يُسجَّل ويُعتمَد.
+
+قواعد صارمة وملزمة:
+- كل بند نص قصير وواضح (جملة واحدة بحد أقصى)، بصياغة تصلح كعنوان مهمة
+  أو قرار رسمي (مثال: "تحديث سياسة تعارض المصالح" — وليس فقرة سردية
+  طويلة أو اقتباسًا حرفيًا من الحديث).
+- لا تُصنّفي البند كـ"مهمة" أو "قرار" إطلاقًا، ولا تضيفي أي حقل غير
+  النص نفسه — التصنيف قرار بشري لاحق برئيس اللجنة فقط.
+- لا تكرري نفس البند بصياغتين مختلفتين.
+- لو الملخص لا يحتوي أي نقطة تستحق متابعة رسمية (مهمة أو قرار)، أعيدي
+  مصفوفة فارغة [] — لا تخترعي بنودًا لتعبئتها؛ الدقة أهم من الاكتمال.
+- أعيدي المخرجات بصيغة JSON فقط، مطابقة تمامًا للـSchema المحدد بالطلب،
+  بدون أي نص أو شرح خارج كائن الـJSON نفسه."""
+
+_EXTRACT_ITEMS_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "items": {"type": "ARRAY", "items": {"type": "STRING"}},
+    },
+    "required": ["items"],
+}
+
+
+async def _generate_text_only_with_retry(client: httpx.AsyncClient, api_key: str, *, prompt: str, response_schema: dict) -> httpx.Response:
+    """نفس منطق إعادة المحاولة عند 503 بـ_generate_content_with_retry أعلاه،
+    لكن بدون ملف مرفق (استدعاء نصّي بحت) — مفصولة لتفادي تعقيد التوقيع
+    المشترك بين الحالتين (صوت+نص مقابل نص فقط)."""
+    request_body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": response_schema,
+        },
+    }
+    response: httpx.Response | None = None
+    for attempt in range(_GENERATE_RETRY_MAX_ATTEMPTS):
+        response = await client.post(
+            f"{_API_BASE}/v1beta/models/{settings.GEMINI_MODEL}:generateContent",
+            params={"key": api_key},
+            json=request_body,
+        )
+        if response.status_code != 503:
+            return response
+        if attempt < _GENERATE_RETRY_MAX_ATTEMPTS - 1:
+            await asyncio.sleep(_GENERATE_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+    return response
+
+
+async def extract_meeting_items(*, summary: str) -> list[str]:
+    """FR-TASK-005/UC2: تستخرج قائمة نصوص بنود من ملخص الاجتماع الجاهز.
+    ترمي GeminiError عند أي فشل — نفس مبدأ generate_meeting_draft (الطبقة
+    المستدعية بـmeeting_service مسؤولة عن التعامل مع الخطأ، بدون تسريب
+    تفاصيل الاستدعاء الخارجي للمستخدم مباشرة)."""
+    api_key = _require_api_key()
+    prompt = _EXTRACT_ITEMS_PROMPT_TEMPLATE.format(summary=summary)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await _generate_text_only_with_retry(
+            client, api_key, prompt=prompt, response_schema=_EXTRACT_ITEMS_RESPONSE_SCHEMA
+        )
+    if response.status_code >= 400:
+        raise GeminiError(f"فشل استدعاء Gemini لاستخراج بنود الاجتماع: {response.status_code} — {response.text[:300]}")
+
+    body = response.json()
+    try:
+        raw_text = body["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(raw_text)
+        items = parsed["items"]
+    except (KeyError, IndexError, json.JSONDecodeError) as exc:
+        raise GeminiError("استجابة Gemini لا تطابق الشكل المتوقع") from exc
+
+    if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        raise GeminiError("استجابة Gemini لا تطابق الشكل المتوقع")
+
+    return [item.strip() for item in items if item.strip()]
+
+
 async def generate_meeting_draft(
     *, meeting_title: str, participant_names: list[str], audio_content: bytes, audio_mime_type: str, audio_file_name: str
 ) -> dict:
@@ -222,23 +428,12 @@ async def generate_meeting_draft(
             client, api_key, content=audio_content, mime_type=audio_mime_type, display_name=audio_file_name
         )
 
-        generate_response = await client.post(
-            f"{_API_BASE}/v1beta/models/{settings.GEMINI_MODEL}:generateContent",
-            params={"key": api_key},
-            json={
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": prompt},
-                            {"file_data": {"mime_type": audio_mime_type, "file_uri": file_uri}},
-                        ]
-                    }
-                ],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                    "responseSchema": _RESPONSE_SCHEMA,
-                },
-            },
+        generate_response = await _generate_content_with_retry(
+            client,
+            api_key,
+            prompt=prompt,
+            audio_mime_type=audio_mime_type,
+            file_uri=file_uri,
         )
     if generate_response.status_code >= 400:
         raise GeminiError(f"فشل استدعاء Gemini لتوليد المسودة: {generate_response.status_code} — {generate_response.text[:300]}")

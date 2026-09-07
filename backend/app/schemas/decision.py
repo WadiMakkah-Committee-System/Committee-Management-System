@@ -23,6 +23,12 @@ class DecisionCreate(BaseModel):
     """
 
     committee_id: uuid.UUID
+    # لو أُرسل من داخل غرفة الاجتماع (لوحة "القرارات" الجديدة) — يُربط
+    # القرار بالاجتماع المصدر تلقائيًا. اختياري: القرارات المستقلة من
+    # شاشة "إدارة القرارات" العامة تُرسله فارغًا (None). لا يُتحقَّق هنا
+    # أن meeting_id ينتمي فعليًا لنفس committee_id — تحقق ذلك بطبقة
+    # الخدمة (راجعي decision_service.create_decision).
+    meeting_id: uuid.UUID | None = None
     title: str = Field(min_length=2, max_length=255)
     classification: DecisionClassification
     start_date: date
@@ -71,6 +77,7 @@ class DecisionOut(BaseModel):
 
     decision_id: uuid.UUID
     committee_id: uuid.UUID
+    meeting_id: uuid.UUID | None
     title: str
     classification: DecisionClassification
     status: DecisionStatus

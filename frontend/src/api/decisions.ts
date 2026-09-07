@@ -13,8 +13,10 @@ import type {
  * صلاحية عامة ثابتة — راجعي hooks/useDecisions.ts وDecisionsPage.tsx.
  */
 
-export async function fetchDecisions(): Promise<Decision[]> {
-  const { data } = await apiClient.get<Decision[]>('/decisions')
+export async function fetchDecisions(meetingId?: string): Promise<Decision[]> {
+  const { data } = await apiClient.get<Decision[]>('/decisions', {
+    params: meetingId ? { meeting_id: meetingId } : undefined,
+  })
   return data
 }
 
