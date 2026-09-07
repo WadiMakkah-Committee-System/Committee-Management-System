@@ -488,3 +488,68 @@ async def test_open_voting_requires_at_least_two_options(
         headers=ctx["chair_headers"],
     )
     assert response.status_code == 422, response.text
+
+
+async def test_member_without_view_result_sees_only_own_vote(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """
+    تصحيح 2026-09-07 (بلاغ خطأ من صاحبة المشروع): decisions.view لا يعني
+    ضمنيًا decisions.vote.view_result — عضو يملك الأولى فقط (بدون
+    الثانية، الوضع الافتراضي الفعلي لدور "عضو اللجنة") يجب ألّا يشوف
+    تصويت بقية الأعضاء، فقط صوته الشخصي (إن وُجد).
+    """
+    ctx = await _create_approved_committee(
+        client, auth_headers, roles_by_name, suffix="hideresults", member_count=1
+    )
+
+    create = await client.post(
+        "/api/v1/decisions",
+        json={
+            "committee_id": ctx["committee_id"],
+            "title": "قرار سرّي النتيجة للأعضاء",
+            "classification": "voting",
+            "start_date": "2026-09-10",
+            "end_date": "2026-10-10",
+        },
+        headers=ctx["chair_headers"],
+    )
+    decision_id = create.json()["decision_id"]
+
+    open_vote = await client.post(
+        f"/api/v1/decisions/{decision_id}/open-voting",
+        json={"options": [{"label": "موافق", "is_approving": True}, {"label": "غير موافق", "is_approving": False}]},
+        headers=ctx["chair_headers"],
+    )
+    approve_option_id = next(
+        o["option_id"] for o in open_vote.json()["vote_options"] if o["label"] == "موافق"
+    )
+
+    # الرئيس يصوّت (يملك decisions.vote.view_result فيشوف كل شي).
+    await client.post(
+        f"/api/v1/decisions/{decision_id}/vote",
+        json={"option_id": approve_option_id},
+        headers=ctx["chair_headers"],
+    )
+    # العضو يصوّت أيضًا (لا يملك decisions.vote.view_result افتراضيًا).
+    member_vote = await client.post(
+        f"/api/v1/decisions/{decision_id}/vote",
+        json={"option_id": approve_option_id},
+        headers=ctx["member_headers_list"][0],
+    )
+    assert member_vote.status_code == 200, member_vote.text
+
+    # استجابة العضو نفسها بعد تصويته: يشوف صوته فقط، وليس صوت الرئيس.
+    member_votes = member_vote.json()["votes"]
+    assert len(member_votes) == 1
+    assert member_votes[0]["voter"]["user_id"] == ctx["member_ids"][0]
+
+    # استعلامه المباشر عن القرار: نفس النتيجة (صوته فقط).
+    member_get = await client.get(
+        f"/api/v1/decisions/{decision_id}", headers=ctx["member_headers_list"][0]
+    )
+    assert len(member_get.json()["votes"]) == 1
+
+    # الرئيس (يملك decisions.vote.view_result): يشوف صوتي الاثنين.
+    chair_get = await client.get(f"/api/v1/decisions/{decision_id}", headers=ctx["chair_headers"])
+    assert len(chair_get.json()["votes"]) == 2
