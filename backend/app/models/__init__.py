@@ -12,7 +12,7 @@ from app.models.decision import (
     DecisionClassification,
     DecisionStatus,
     DecisionVote,
-    DecisionVoteChoice,
+    DecisionVoteOption,
 )
 from app.models.department import Department
 from app.models.job_title import JobTitle
@@ -32,7 +32,7 @@ __all__ = [
     "DecisionClassification",
     "DecisionStatus",
     "DecisionVote",
-    "DecisionVoteChoice",
+    "DecisionVoteOption",
     "Department",
     "JobTitle",
     "Meeting",
