@@ -553,3 +553,60 @@ async def test_member_without_view_result_sees_only_own_vote(
     # الرئيس (يملك decisions.vote.view_result): يشوف صوتي الاثنين.
     chair_get = await client.get(f"/api/v1/decisions/{decision_id}", headers=ctx["chair_headers"])
     assert len(chair_get.json()["votes"]) == 2
+
+
+async def test_member_cannot_see_or_delete_pending_decision(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """
+    بلاغ خطأ 2026-09-08 (رئيسة لجنة فعلية): قرار بحالة pending (لم يُطرح
+    للتصويت أو يُعتمَد بعد) كان يظهر لأي عضو يملك decisions.view، ويمكنه
+    محاولة حذفه (الباك-إند كان يرفض الحذف فعليًا، لكن القرار كان يظهر
+    بقائمته أصلًا وهذا الخطأ بحد ذاته). التحقق هنا من الحالتين معًا.
+    """
+    ctx = await _create_approved_committee(
+        client, auth_headers, roles_by_name, suffix="hidepending", member_count=1
+    )
+
+    create = await client.post(
+        "/api/v1/decisions",
+        json={
+            "committee_id": ctx["committee_id"],
+            "title": "قرار لسا رئيسة اللجنة تجهّزه",
+            "classification": "voting",
+            "start_date": "2026-09-10",
+            "end_date": "2026-10-10",
+        },
+        headers=ctx["chair_headers"],
+    )
+    assert create.status_code == 201, create.text
+    decision_id = create.json()["decision_id"]
+
+    # العضو: القرار غير مرئي بالقائمة العامة.
+    member_list = await client.get("/api/v1/decisions", headers=ctx["member_headers_list"][0])
+    assert decision_id not in {d["decision_id"] for d in member_list.json()}
+
+    # العضو: استعلامه المباشر بالمعرّف يرجّع 404 (مو 403 — لا نكشف الوجود).
+    member_get = await client.get(
+        f"/api/v1/decisions/{decision_id}", headers=ctx["member_headers_list"][0]
+    )
+    assert member_get.status_code == 404, member_get.text
+
+    # العضو: محاولة الحذف تُرفض (403 — الصلاحية نفسها غير ممنوحة له أصلًا).
+    member_delete = await client.delete(
+        f"/api/v1/decisions/{decision_id}", headers=ctx["member_headers_list"][0]
+    )
+    assert member_delete.status_code == 403, member_delete.text
+
+    # الرئيسة: القرار يبقى مرئيًا لها بنفس القائمة رغم أنه pending.
+    chair_list = await client.get("/api/v1/decisions", headers=ctx["chair_headers"])
+    assert decision_id in {d["decision_id"] for d in chair_list.json()}
+
+    # بعد فتح التصويت (لم يعد pending): يصبح مرئيًا للعضو أيضًا.
+    await client.post(
+        f"/api/v1/decisions/{decision_id}/open-voting",
+        json={"options": [{"label": "موافق", "is_approving": True}, {"label": "غير موافق", "is_approving": False}]},
+        headers=ctx["chair_headers"],
+    )
+    member_list_after = await client.get("/api/v1/decisions", headers=ctx["member_headers_list"][0])
+    assert decision_id in {d["decision_id"] for d in member_list_after.json()}
