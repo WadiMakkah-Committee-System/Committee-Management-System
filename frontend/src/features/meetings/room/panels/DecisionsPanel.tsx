@@ -35,21 +35,30 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
   const approveMutation = useApproveDecision()
 
   const myVote = decision.votes.find((v) => v.voter.user_id === currentUserId)
-  const approveCount = decision.votes.filter((v) => v.choice === 'approve').length
-  const rejectCount = decision.votes.filter((v) => v.choice === 'reject').length
   const totalEligible = Math.max(decision.assignees.length, 1)
 
-  async function vote(choice: 'approve' | 'reject') {
+  async function vote(optionId: string) {
     try {
-      await castVoteMutation.mutateAsync({ decisionId: decision.decision_id, choice })
+      await castVoteMutation.mutateAsync({ decisionId: decision.decision_id, optionId })
     } catch (err) {
       showToast(extractErrorMessage(err), 'error')
     }
   }
 
+  // خياران ثابتان (موافق/غير موافق) — نفس السلوك السابق قبل تعديل رئيسة
+  // اللجنة لخيارات التصويت (راجعي DecisionOpenVotingPayload بـtypes/index.ts
+  // وDecisionDetailPage.tsx للنسخة الكاملة القابلة للتعديل بخيارات مخصّصة).
   async function openVoting() {
     try {
-      await openVotingMutation.mutateAsync({ decisionId: decision.decision_id })
+      await openVotingMutation.mutateAsync({
+        decisionId: decision.decision_id,
+        payload: {
+          options: [
+            { label: 'موافق', is_approving: true },
+            { label: 'غير موافق', is_approving: false },
+          ],
+        },
+      })
       showToast('تم فتح التصويت على القرار')
     } catch (err) {
       showToast(extractErrorMessage(err), 'error')
@@ -89,15 +98,15 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
           <p className="text-[11px] text-text-muted">
             {decision.votes.length} / {decision.assignees.length} صوّتوا
           </p>
-          {(['approve', 'reject'] as const).map((choice) => {
-            const count = choice === 'approve' ? approveCount : rejectCount
-            const selected = myVote?.choice === choice
+          {decision.vote_options.map((opt) => {
+            const count = decision.votes.filter((v) => v.option.option_id === opt.option_id).length
+            const selected = myVote?.option.option_id === opt.option_id
             return (
               <button
-                key={choice}
+                key={opt.option_id}
                 type="button"
                 disabled={!!myVote || castVoteMutation.isPending}
-                onClick={() => vote(choice)}
+                onClick={() => vote(opt.option_id)}
                 className={cn(
                   'flex items-center justify-between rounded-sm border px-2.5 py-1.5 text-[12px] transition-colors',
                   selected
@@ -105,13 +114,13 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
                     : 'border-border-default text-text-secondary hover:border-border-strong disabled:cursor-not-allowed',
                 )}
               >
-                <span>{choice === 'approve' ? 'موافق' : 'غير موافق'}</span>
+                <span>{opt.label}</span>
                 <span className="flex items-center gap-2">
                   <span className="h-1.5 w-16 overflow-hidden rounded-full bg-bg-elevated">
                     <span
                       className={cn(
                         'block h-full',
-                        choice === 'approve' ? 'bg-status-success-main' : 'bg-danger',
+                        opt.is_approving ? 'bg-status-success-main' : 'bg-danger',
                       )}
                       style={{ width: `${(count / totalEligible) * 100}%` }}
                     />
