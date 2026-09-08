@@ -27,6 +27,7 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { DocumentFormModal, type DocumentFormSubmitValues } from './DocumentFormModal'
+import { DocumentChatPanel } from './DocumentChatPanel'
 import { extractErrorMessage, formatDateTime, formatFileSize } from '@/lib/utils'
 
 /**
@@ -63,6 +64,9 @@ export function DocumentDetailPage() {
   const canUpdate = permissions.includes('documents.update')
   const canDelete = permissions.includes('documents.delete')
   const canDownload = permissions.includes('documents.download')
+  // نفس صلاحية الباك-إند لـPOST /documents/{id}/ask (documents.view) — بلا
+  // تجاوز تلقائي لـsuper_admin، مطابقةً لبقية أزرار الصفحة.
+  const canAskDocument = permissions.includes('documents.view')
 
   function handleEdit(values: DocumentFormSubmitValues) {
     if (!doc) return
@@ -113,7 +117,8 @@ export function DocumentDetailPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+    <div className="flex min-w-0 flex-1 flex-col gap-6">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
           <button
@@ -267,6 +272,13 @@ export function DocumentDetailPage() {
           )}
         </div>
       </Card>
+    </div>
+
+    {canAskDocument && (
+      <div className="w-full shrink-0 lg:sticky lg:top-6 lg:w-[380px]">
+        <DocumentChatPanel documentId={doc.document_id} className="h-[560px]" />
+      </div>
+    )}
 
       <DocumentFormModal
         open={formOpen}

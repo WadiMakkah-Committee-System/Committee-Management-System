@@ -17,6 +17,7 @@ import { CommitteesPage } from '@/features/committees/CommitteesPage'
 import { CommitteeDetailPage } from '@/features/committees/CommitteeDetailPage'
 import { DocumentsPage } from '@/features/documents/DocumentsPage'
 import { DocumentDetailPage } from '@/features/documents/DocumentDetailPage'
+import { DocumentsSmartSearchPage } from '@/features/documents/DocumentsSmartSearchPage'
 import { MeetingsPage } from '@/features/meetings/MeetingsPage'
 import { MeetingDetailPage } from '@/features/meetings/MeetingDetailPage'
 import { DecisionsPage } from '@/features/decisions/DecisionsPage'
@@ -106,6 +107,14 @@ function App() {
             <Route element={<ProtectedRoute anyPermission={['committees.view']} />}>
               <Route path="/committees/approved" element={<CommitteesPage />} />
               <Route path="/committees/approved/:committeeId" element={<CommitteeDetailPage />} />
+            </Route>
+
+            {/* راوت البحث الذكي بصلاحية منفصلة (documents.search_all_agent) — قبل
+                راوت /documents/:documentId عشان ما يتلخبط الترتيب مع مسار
+                حرفي مستقبلي، بنفس مبدأ /publish-targets قبل /{document_id}
+                بالباك-إند. */}
+            <Route element={<ProtectedRoute anyPermission={['documents.search_all_agent']} />}>
+              <Route path="/documents/search" element={<DocumentsSmartSearchPage />} />
             </Route>
 
             <Route element={<ProtectedRoute anyPermission={['documents.view', 'documents.search']} />}>

@@ -431,6 +431,26 @@ export interface DocumentUpdatePayload {
 }
 
 /**
+ * وثيقة استُخدمت فعليًا لبناء إجابة الشات الذكي — تُستخدم بالواجهة كرابط
+ * ينقل المستخدم لصفحة تلك الوثيقة مباشرة. راجعي backend
+ * app/schemas/document.py::DocumentChatSourceOut.
+ */
+export interface DocumentChatSource {
+  document_id: string
+  title: string
+}
+
+/**
+ * رد الشات الذكي داخل الوثائق — نفس الشكل لشات وثيقة واحدة (POST
+ * /documents/{document_id}/ask) وشات كل الوثائق (POST /documents/ask).
+ * راجعي backend app/schemas/document.py::DocumentChatResponse.
+ */
+export interface DocumentChatResponse {
+  answer: string
+  sources: DocumentChatSource[]
+}
+
+/**
  * سطر تعريفي خفيف — موظف من إدارة المستخدم الحالي عضو بلجنة رئيسها من
  * إدارة ثانية (أو بدون إدارة معروفة). مراجعة لاما 2026-08-30 (الجولة
  * الثالثة). عمدًا بدون بقية تفاصيل اللجنة — راجعي

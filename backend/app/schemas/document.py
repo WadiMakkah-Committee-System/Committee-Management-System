@@ -166,3 +166,29 @@ class DocumentOut(BaseModel):
     visible_users: list[DocumentVisibleUserOut]
     created_at: datetime
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# البحث الذكي والشات بوت (راجعي app/services/document_search_service.py)
+# ---------------------------------------------------------------------------
+
+
+class DocumentChatRequest(BaseModel):
+    """سؤال المستخدم — نفس الشكل لشات وثيقة واحدة (POST
+    /documents/{document_id}/ask) وشات كل الوثائق (POST /documents/ask)،
+    الفرق فقط بوجود document_id بمسار الأول."""
+
+    question: str = Field(min_length=2, max_length=1000)
+
+
+class DocumentChatSourceOut(BaseModel):
+    """وثيقة استُخدمت فعليًا لبناء إجابة الشات بوت — تُستخدَم بالواجهة
+    كرابط ينقل المستخدم لصفحة تلك الوثيقة مباشرة."""
+
+    document_id: uuid.UUID
+    title: str
+
+
+class DocumentChatResponse(BaseModel):
+    answer: str
+    sources: list[DocumentChatSourceOut]

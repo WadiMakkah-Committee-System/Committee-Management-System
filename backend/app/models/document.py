@@ -1,8 +1,8 @@
 """
 الهدف:
 نماذج SQLAlchemy ORM لوحدة "إدارة الوثائق" - تطابق بنية الجداول الفعلية
-في db/migrations/0012_documents_schema.sql (تم التحقق عبر Supabase MCP
-list_tables على القاعدة الفعلية).
+في db/migrations/0012_documents_schema.sql + 0029_documents_semantic_search.sql
+(تم التحقق عبر Supabase MCP list_tables على القاعدة الفعلية).
 
 المسؤولية:
 - DocumentCategory: تصنيفات الوثائق (عامة على مستوى الشركة، أو خاصة
@@ -18,10 +18,12 @@ list_tables على القاعدة الفعلية).
 ملاحظات تصميم مهمة:
 - content_tsv عمود GENERATED (tsvector) محسوب داخل قاعدة البيانات فقط
   ولا يُكتب إليه من كود بايثون أبدًا - لذلك غير معيَّن هنا عمدًا.
-- embedding (pgvector) مُجهَّز في قاعدة البيانات لمرحلة البحث الدلالي
-  القادمة عبر Gemini API - غير معيَّن هنا عمدًا لتفادي إضافة حزمة
-  بايثون (pgvector) غير مستخدمة في هذا المرحلة. سيُضاف عند البدء الفعلي
-  بمرحلة البحث الذكي.
+- embedding (pgvector، 768 بُعد) صار مفعَّلًا فعليًا من 0029 — يُولَّد
+  خلفيًا (BackgroundTask) عند كل رفع وثيقة عبر
+  app/services/document_embedding_service.py (استخراج نص + Gemini
+  Embedding API)، وليس يدويًا من كود بايثون هنا مباشرة. embedding_status/
+  embedding_error/embedded_at تتبّع حالة هذا التوليد الخلفي (نفس نمط
+  MeetingDraftStatus بـ app/models/meeting_draft.py بالضبط).
 - Soft Delete عبر deleted_at (NULLABLE) اتساقًا مع بقية الكيانات
   الجوهرية بالمشروع (departments, users, committees).
 """
@@ -30,6 +32,7 @@ import enum
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -48,6 +51,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
+# حجم متجه embedding — يطابق العمود VECTOR(768) المحجوز بـ 0012 وموديل
+# Gemini text-embedding-004 المستخدَم فعليًا (راجعي app/core/gemini_client.py
+# دالة embed_text). أي تغيير مستقبلي لموديل الـembedding يجب أن يبقي نفس
+# البُعد أو يترافق مع migration جديدة لتغيير حجم العمود.
+EMBEDDING_DIMENSIONS = 768
+
 
 class DocumentStatus(str, enum.Enum):
     active = "active"
@@ -57,6 +66,19 @@ class DocumentStatus(str, enum.Enum):
 class DocumentCategoryScope(str, enum.Enum):
     global_ = "global"
     department = "department"
+
+
+class DocumentEmbeddingStatus(str, enum.Enum):
+    """حالة توليد embedding البحث الدلالي لوثيقة — نفس فلسفة
+    MeetingDraftStatus بـ app/models/meeting_draft.py: pending فور الرفع،
+    processing أثناء استدعاء Gemini، completed/failed بعدها. راجعي
+    app/services/document_embedding_service.py للانتقال الفعلي بين
+    الحالات."""
+
+    pending = "pending"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
 
 
 # ظهور الوثيقة لإدارات محددة (قابل للدمج مع is_public واللجان والمستخدمين)
@@ -191,8 +213,16 @@ class Document(Base):
     )
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # content_tsv (tsvector, GENERATED) و embedding (vector) غير معيَّنين
-    # هنا عمدًا - راجع docstring أعلى الملف.
+    # content_tsv (tsvector, GENERATED) محسوب داخل القاعدة فقط — غير معيَّن هنا عمدًا.
+
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=True)
+    embedding_status: Mapped[DocumentEmbeddingStatus] = mapped_column(
+        SAEnum(DocumentEmbeddingStatus, name="document_embedding_status", native_enum=True),
+        nullable=False,
+        server_default=DocumentEmbeddingStatus.pending.value,
+    )
+    embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     uploaded_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False
