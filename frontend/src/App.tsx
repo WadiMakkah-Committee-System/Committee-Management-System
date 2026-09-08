@@ -21,7 +21,10 @@ import { MeetingsPage } from '@/features/meetings/MeetingsPage'
 import { MeetingDetailPage } from '@/features/meetings/MeetingDetailPage'
 import { DecisionsPage } from '@/features/decisions/DecisionsPage'
 import { DecisionDetailPage } from '@/features/decisions/DecisionDetailPage'
+import { TasksPage } from '@/features/tasks/TasksPage'
+import { TaskDetailPage } from '@/features/tasks/TaskDetailPage'
 import { ProfilePage } from '@/features/profile/ProfilePage'
+import { NotificationsPage } from '@/features/notifications/NotificationsPage'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { usersKeys } from '@/hooks/useUsers'
 import * as usersApi from '@/api/users'
@@ -71,6 +74,7 @@ function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
 
             <Route element={<ProtectedRoute anyPermission={['users.view']} />}>
               <Route path="/users" element={<UsersPage />} />
@@ -122,6 +126,12 @@ function App() {
             <Route element={<ProtectedRoute anyPermission={['decisions.view']} />}>
               <Route path="/decisions" element={<DecisionsPage />} />
               <Route path="/decisions/:decisionId" element={<DecisionDetailPage />} />
+            </Route>
+
+            {/* نفس نمط القرارات أعلاه بالضبط — راجعي hasTasksMembershipBypass بـProtectedRoute.tsx. */}
+            <Route element={<ProtectedRoute anyPermission={['tasks.view']} />}>
+              <Route path="/tasks" element={<TasksPage />} />
+              <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
             </Route>
 
             <Route path="/" element={<Navigate to="/users" replace />} />

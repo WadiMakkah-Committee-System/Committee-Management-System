@@ -2,6 +2,11 @@
 الهدف:
 Pydantic Schemas الخاصة بوحدة "إدارة القرارات" (القرارات المستقلة فقط).
 راجعي رأس db/migrations/0021_decisions_schema.sql للاجتهادات الموثّقة.
+
+تحديث 2026-09-07 (قرار صريح من صاحبة المشروع: "الي يحدد بيانات التصويت
+رئيس اللجنة بس والأعضاء يقررون"): خيارات التصويت (DecisionVoteOptionCreate)
+تُكتب من رئيسة اللجنة عند فتح التصويت (DecisionOpenVoting)، بدل أن تكون
+موافق/غير موافق ثابتة بالكود — راجعي رأس db/migrations/0025_decision_vote_options.sql.
 """
 
 import uuid
@@ -9,7 +14,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.decision import DecisionClassification, DecisionStatus, DecisionVoteChoice
+from app.models.decision import DecisionClassification, DecisionStatus
 from app.schemas.committee import CommitteeMemberUserOut
 
 
@@ -54,21 +59,48 @@ class DecisionUpdate(BaseModel):
     end_date: date | None = None
 
 
-class DecisionVoteCast(BaseModel):
-    choice: DecisionVoteChoice
+class DecisionVoteOptionCreate(BaseModel):
+    """
+    خيار تصويت واحد تكتبه رئيسة اللجنة عند فتح التصويت — نص حر بالكامل
+    (مثال: "موافق"/"غير موافق"، أو أي خيارات أخرى). is_approving يحدَّد
+    صراحة (لا يُستنتَج من النص) — يحدد هل هذا الخيار يُحسب "موافقة" عند
+    حساب الأغلبية التلقائية (راجعي رأس migration 0025 للتفصيل الكامل).
+    """
+
+    label: str = Field(min_length=1, max_length=255)
+    is_approving: bool = False
 
 
 class DecisionOpenVoting(BaseModel):
-    """فتح التصويت — voting_deadline اختياري (راجعي ملاحظة التصميم (2) بالـmigration)."""
+    """
+    فتح التصويت — options إلزامية (خياران على الأقل، وإلا لا معنى
+    للتصويت). voting_deadline اختياري (راجعي ملاحظة التصميم (2) بـ0021).
+    """
 
+    options: list[DecisionVoteOptionCreate] = Field(min_length=2)
     voting_deadline: datetime | None = None
+
+
+class DecisionVoteCast(BaseModel):
+    """التصويت لخيار محدَّد من خيارات هذا القرار تحديدًا (يُتحقَّق منه بطبقة الخدمة)."""
+
+    option_id: uuid.UUID
+
+
+class DecisionVoteOptionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    option_id: uuid.UUID
+    label: str
+    is_approving: bool
+    sort_order: int
 
 
 class DecisionVoteOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     voter: CommitteeMemberUserOut
-    choice: DecisionVoteChoice
+    option: DecisionVoteOptionOut
     voted_at: datetime
 
 
@@ -89,6 +121,7 @@ class DecisionOut(BaseModel):
     rejection_reason: str | None
     creator: CommitteeMemberUserOut
     assignees: list[CommitteeMemberUserOut]
+    vote_options: list[DecisionVoteOptionOut]
     votes: list[DecisionVoteOut]
     created_at: datetime
     updated_at: datetime

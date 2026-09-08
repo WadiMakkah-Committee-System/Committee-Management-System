@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as decisionsApi from '@/api/decisions'
-import type { DecisionCreatePayload, DecisionUpdatePayload, DecisionVoteChoice } from '@/types'
+import type { DecisionCreatePayload, DecisionOpenVotingPayload, DecisionUpdatePayload } from '@/types'
 
 export const decisionsKeys = {
   all: ['decisions'] as const,
@@ -75,11 +75,11 @@ export function useOpenVoting() {
   return useMutation({
     mutationFn: ({
       decisionId,
-      votingDeadline,
+      payload,
     }: {
       decisionId: string
-      votingDeadline?: string | null
-    }) => decisionsApi.openVoting(decisionId, votingDeadline),
+      payload: DecisionOpenVotingPayload
+    }) => decisionsApi.openVoting(decisionId, payload),
     onSuccess: (_data, variables) => invalidateDecisionQueries(queryClient, variables.decisionId),
   })
 }
@@ -87,8 +87,8 @@ export function useOpenVoting() {
 export function useCastVote() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ decisionId, choice }: { decisionId: string; choice: DecisionVoteChoice }) =>
-      decisionsApi.castVote(decisionId, choice),
+    mutationFn: ({ decisionId, optionId }: { decisionId: string; optionId: string }) =>
+      decisionsApi.castVote(decisionId, optionId),
     onSuccess: (_data, variables) => invalidateDecisionQueries(queryClient, variables.decisionId),
   })
 }

@@ -12,7 +12,7 @@ from app.models.decision import (
     DecisionClassification,
     DecisionStatus,
     DecisionVote,
-    DecisionVoteChoice,
+    DecisionVoteOption,
 )
 from app.models.department import Department
 from app.models.job_title import JobTitle
@@ -20,6 +20,7 @@ from app.models.meeting import Meeting, MeetingAgendaItem, MeetingMode, MeetingS
 from app.models.meeting_chat import MeetingChatMessage
 from app.models.meeting_draft import MeetingDraft, MeetingDraftStatus, MeetingRecording
 from app.models.meeting_extracted_item import MeetingExtractedItem, MeetingExtractedItemStatus
+from app.models.notification import Notification
 from app.models.password_reset_token import PasswordResetToken
 from app.models.role import Permission, Role
 from app.models.task import Task, TaskAssignmentHistory, TaskStatus
@@ -35,7 +36,7 @@ __all__ = [
     "DecisionClassification",
     "DecisionStatus",
     "DecisionVote",
-    "DecisionVoteChoice",
+    "DecisionVoteOption",
     "Department",
     "JobTitle",
     "Meeting",
@@ -48,6 +49,7 @@ __all__ = [
     "MeetingMode",
     "MeetingRecording",
     "MeetingStatus",
+    "Notification",
     "PasswordResetToken",
     "Permission",
     "Role",

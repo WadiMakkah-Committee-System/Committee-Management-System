@@ -671,14 +671,32 @@ export interface MeetingDraft {
  * مستخرجة من اجتماع بالذكاء الاصطناعي — تُبنى لاحقًا). مطابقة تمامًا
  * لـbackend/app/schemas/decision.py وapp/models/decision.py. راجعي رأس
  * db/migrations/0021_decisions_schema.sql لكل الاجتهادات الموثّقة.
+ *
+ * تحديث 2026-09-07 (قرار صريح: "الي يحدد بيانات التصويت رئيس اللجنة بس
+ * والأعضاء يقررون"): خيارات التصويت لم تعد ثابتة (موافق/غير موافق) —
+ * رئيسة اللجنة تكتبها بنفسها عند فتح التصويت (DecisionVoteOptionInput)،
+ * والعضو يصوّت لـoption_id محدَّد بدل قيمة ثابتة. راجعي رأس
+ * db/migrations/0025_decision_vote_options.sql للتفصيل الكامل.
  */
 export type DecisionClassification = 'final' | 'voting'
 export type DecisionStatus = 'pending' | 'voting' | 'approved' | 'rejected'
-export type DecisionVoteChoice = 'approve' | 'reject'
+
+export interface DecisionVoteOption {
+  option_id: string
+  label: string
+  is_approving: boolean
+  sort_order: number
+}
+
+/** خيار تصويت تكتبه رئيسة اللجنة عند فتح التصويت — راجعي DecisionOpenVotingPayload. */
+export interface DecisionVoteOptionInput {
+  label: string
+  is_approving: boolean
+}
 
 export interface DecisionVote {
   voter: CommitteeMemberUser
-  choice: DecisionVoteChoice
+  option: DecisionVoteOption
   voted_at: string
 }
 
@@ -698,6 +716,7 @@ export interface Decision {
   rejection_reason: string | null
   creator: CommitteeMemberUser
   assignees: CommitteeMemberUser[]
+  vote_options: DecisionVoteOption[]
   votes: DecisionVote[]
   created_at: string
   updated_at: string
@@ -718,4 +737,94 @@ export interface DecisionUpdatePayload {
   classification?: DecisionClassification
   start_date?: string
   end_date?: string
+}
+
+/** فتح التصويت — options إلزامية (خياران على الأقل)، تكتبها رئيسة اللجنة بالكامل. */
+export interface DecisionOpenVotingPayload {
+  options: DecisionVoteOptionInput[]
+  voting_deadline?: string | null
+}
+
+/**
+ * أنواع وحدة "إدارة المهام" — إنشاء مباشر من واجهة المهام فقط (بدون مهام
+ * مستخرجة من اجتماع بالذكاء الاصطناعي — تُبنى لاحقًا)، مسؤول واحد فقط لكل
+ * مهمة (قرار صاحبة المشروع 2026-09-06). مطابقة تمامًا لـ
+ * backend/app/schemas/task.py وapp/models/task.py. راجعي رأس
+ * db/migrations/0024_tasks_schema.sql لكل الاجتهادات الموثّقة.
+ */
+export type TaskStatus = 'todo' | 'in_progress' | 'on_hold' | 'completed'
+
+export interface TaskAssignmentHistoryEntry {
+  history_id: string
+  from_user: CommitteeMemberUser | null
+  to_user: CommitteeMemberUser
+  changer: CommitteeMemberUser
+  changed_at: string
+}
+
+export interface Task {
+  task_id: string
+  committee_id: string
+  title: string
+  status: TaskStatus
+  start_date: string
+  end_date: string
+  assignee: CommitteeMemberUser
+  creator: CommitteeMemberUser
+  assignment_history: TaskAssignmentHistoryEntry[]
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskCreatePayload {
+  committee_id: string
+  title: string
+  start_date: string
+  end_date: string
+  assignee_user_id: string
+}
+
+export interface TaskUpdatePayload {
+  title?: string
+  start_date?: string
+  end_date?: string
+}
+
+export interface TaskStatusUpdatePayload {
+  status: TaskStatus
+}
+
+export interface TaskReassignPayload {
+  assignee_user_id: string
+}
+
+/**
+ * أنواع وحدة "الإشعارات" داخل النظام — مطابقة تمامًا لـ
+ * backend/app/schemas/notification.py وapp/models/notification.py. راجعي
+ * رأس db/migrations/0027_notifications_schema.sql لكل الاجتهادات
+ * الموثّقة (event_type نصي حر، related_entity_type/id بدون FK فعلي).
+ */
+export type NotificationEntityType = 'task' | 'committee_request' | 'committee' | 'decision' | 'meeting'
+
+export interface Notification {
+  notification_id: string
+  event_type: string
+  title: string
+  body: string | null
+  related_entity_type: NotificationEntityType | null
+  related_entity_id: string | null
+  is_read: boolean
+  read_at: string | null
+  created_at: string
+}
+
+export interface NotificationPage {
+  items: Notification[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface UnreadCount {
+  unread_count: number
 }

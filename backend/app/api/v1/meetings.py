@@ -161,7 +161,9 @@ async def create_meeting(
     # إشعار بريدي لأعضاء اللجنة كـBackgroundTask (بعد commit الناجح) — لا
     # يُبطئ استجابة إنشاء الاجتماع، ولا يُفشلها لو تعذّر إرسال البريد
     # (راجعي core/email_client.py وservices/notification_service.py).
-    background_tasks.add_task(notification_service.notify_meeting_created, meeting)
+    background_tasks.add_task(
+        notification_service.notify_meeting_created, meeting, actor_user_id=current_user.user_id
+    )
     return MeetingOut.model_validate(meeting)
 
 
@@ -213,7 +215,12 @@ async def update_meeting(
     # قرار لاما 2026-09-06. notify_meeting_updated نفسها لا ترسل شيئًا لو
     # changes فارغة، فالفحص هنا للوضوح فقط (تفادي جدولة Task فارغة).
     if changes:
-        background_tasks.add_task(notification_service.notify_meeting_updated, meeting, changes)
+        background_tasks.add_task(
+            notification_service.notify_meeting_updated,
+            meeting,
+            changes,
+            actor_user_id=current_user.user_id,
+        )
     return MeetingOut.model_validate(meeting)
 
 
@@ -233,7 +240,9 @@ async def delete_meeting(
     # صار قبله مباشرة داخل meeting_service.delete_meeting —
     # expire_on_commit=False بـdb/session.py يضمن بقاء القيم المحمَّلة أصلًا
     # صالحة بلا استعلام إضافي (راجعي notification_service.py).
-    background_tasks.add_task(notification_service.notify_meeting_cancelled, meeting)
+    background_tasks.add_task(
+        notification_service.notify_meeting_cancelled, meeting, actor_user_id=current_user.user_id
+    )
 
 
 # ============================== الانضمام لاجتماع عن بعد (Agora) ==============================
