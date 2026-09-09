@@ -28,6 +28,7 @@ db/migrations/0025_meeting_recordings_and_drafts.sql لقرار اختيار Gem
 
 import asyncio
 import json
+from typing import Literal
 
 import httpx
 
@@ -450,3 +451,130 @@ async def generate_meeting_draft(
         raise GeminiError(f"مخرجات Gemini ناقصة — الحقول المفقودة: {', '.join(missing)}")
 
     return draft
+
+# ======================= البحث الذكي داخل الوثائق (البحث الدلالي + شات) =======================
+# دالتان مستقلتان عن مسودة الاجتماع أعلاه، تُستخدَمان من
+# app/services/document_embedding_service.py وapp/services/document_search_service.py
+# (راجعي رأس db/migrations/0029_documents_semantic_search.sql للقرار الكامل).
+
+_EMBEDDING_MODEL = "models/gemini-embedding-001"
+# طول أقصى للنص المُرسَل لطلب الـembedding نفسه (وليس content_text
+# المخزَّن — ذاك يُقتطع بحد أوسع بـtext_extraction.MAX_EXTRACTED_CHARS).
+# gemini-embedding-001 له حد أقصى ~2048 توكن للمدخل؛ نقتطع بحرص أكبر
+# (بالأحرف تقريبًا) بدل الاعتماد على تقدير توكنات دقيق.
+_EMBEDDING_INPUT_MAX_CHARS = 8_000
+
+
+async def embed_text(text: str, *, task_type: Literal["RETRIEVAL_DOCUMENT", "RETRIEVAL_QUERY"]) -> list[float]:
+    """
+    يحوّل نص إلى متجه 768 بُعد عبر Gemini Embedding API — يُستخدم مرتين
+    بمنطق مختلف قليلًا (فرّقهما Google تحديدًا بـtaskType حتى تُعطي نتائج
+    مقارنة أدق): RETRIEVAL_DOCUMENT وقت تخزين/فهرسة وثيقة،
+    RETRIEVAL_QUERY وقت تحويل سؤال المستخدم بالبحث/الشات لنفس فضاء
+    المقارنة. يرمي GeminiError عند أي فشل (نفس فلسفة بقية الدوال هنا —
+    الطبقة المستدعية مسؤولة عن حالة failed بدل تسريب تفاصيل الاستدعاء
+    الخارجي مباشرة)."""
+    api_key = _require_api_key()
+    trimmed = text.strip()[:_EMBEDDING_INPUT_MAX_CHARS]
+    if not trimmed:
+        raise GeminiError("لا يوجد نص فعلي لتوليد embedding له")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{_API_BASE}/v1beta/{_EMBEDDING_MODEL}:embedContent",
+            params={"key": api_key},
+            json={
+                "model": _EMBEDDING_MODEL,
+                "content": {"parts": [{"text": trimmed}]},
+                "taskType": task_type,
+                "outputDimensionality": 768,
+            },
+        )
+    if response.status_code >= 400:
+        raise GeminiError(f"فشل استدعاء Gemini لتوليد embedding: {response.status_code} — {response.text[:300]}")
+
+    body = response.json()
+    try:
+        values = body["embedding"]["values"]
+    except (KeyError, TypeError) as exc:
+        raise GeminiError("استجابة Gemini لـembedding لا تطابق الشكل المتوقع") from exc
+    if not isinstance(values, list) or len(values) != 768:
+        raise GeminiError(f"طول متجه embedding غير متوقع من Gemini ({len(values) if isinstance(values, list) else 'N/A'})")
+    return values
+
+
+# طول أقصى لمحتوى كل وثيقة يُدرَج ضمن سياق سؤال الشات بوت (وليس
+# content_text المخزَّن كاملًا) — يبقي حجم الطلب معقولًا لـgenerateContent
+# حتى مع عدة وثائق بالشات العام دفعة واحدة.
+_CHAT_CONTEXT_CHARS_PER_DOCUMENT = 6_000
+
+_DOCUMENT_CHAT_PROMPT_TEMPLATE = """أنتِ مساعدة ذكاء اصطناعي تجاوبين على أسئلة موظفي الشركة اعتمادًا حصريًا
+على محتوى الوثائق الرسمية المزوَّدة لك أدناه — ولا شيء غيرها.
+
+سؤال المستخدم:
+{question}
+
+الوثائق المتاحة (كل وثيقة لها معرّف id وعنوان ومحتوى):
+{documents_block}
+
+قواعد صارمة وملزمة:
+- جاوبي فقط بالاعتماد على محتوى الوثائق أعلاه — لا تستخدمي أي معلومة
+  عامة من عندك ولا تخمّني.
+- لو الإجابة غير موجودة صراحة أو ضمنيًا بأي من الوثائق المزوَّدة، قولي
+  بوضوح إنك ما لقيتِ إجابة لهذا السؤال ضمن الوثائق المتاحة — لا تختلقي
+  إجابة.
+- اكتبي الإجابة بالعربية الفصحى الواضحة، مختصرة ومباشرة.
+- أرجعي أيضًا قائمة معرّفات (id) الوثائق اللي فعليًا استخدمتِ محتواها
+  لبناء الإجابة فقط (مصفوفة فارغة [] لو ما لقيتِ إجابة من أي وثيقة)."""
+
+_DOCUMENT_CHAT_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "answer": {"type": "STRING"},
+        "used_document_ids": {"type": "ARRAY", "items": {"type": "STRING"}},
+    },
+    "required": ["answer", "used_document_ids"],
+}
+
+
+async def answer_from_documents(
+    *, question: str, documents: list[dict[str, str]]
+) -> dict:
+    """
+    RAG (استرجاع معزَّز بالتوليد): تجاوب على question بالاعتماد فقط على
+    documents (كل عنصر {"document_id", "title", "content"}) — نفس الدالة
+    تخدم شات "وثيقة واحدة مفتوحة" (documents بعنصر واحد) وشات "كل
+    الوثائق" (عدة عناصر أعادها البحث الدلالي، راجعي
+    document_search_service.semantic_search) بدون فرق بالمنطق، الفرق فقط
+    بعدد العناصر الممرَّرة. ترمي GeminiError عند أي فشل."""
+    api_key = _require_api_key()
+
+    if not documents:
+        return {"answer": "لا توجد وثائق متاحة للإجابة على سؤالك حاليًا.", "used_document_ids": []}
+
+    documents_block = "\n\n".join(
+        f"--- وثيقة id={doc['document_id']} — العنوان: {doc['title']} ---\n"
+        f"{doc['content'][:_CHAT_CONTEXT_CHARS_PER_DOCUMENT]}"
+        for doc in documents
+    )
+    prompt = _DOCUMENT_CHAT_PROMPT_TEMPLATE.format(question=question, documents_block=documents_block)
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await _generate_text_only_with_retry(
+            client, api_key, prompt=prompt, response_schema=_DOCUMENT_CHAT_RESPONSE_SCHEMA
+        )
+    if response.status_code >= 400:
+        raise GeminiError(f"فشل استدعاء Gemini لشات الوثائق: {response.status_code} — {response.text[:300]}")
+
+    body = response.json()
+    try:
+        raw_text = body["candidates"][0]["content"]["parts"][0]["text"]
+        parsed = json.loads(raw_text)
+        answer = parsed["answer"]
+        used_document_ids = parsed["used_document_ids"]
+    except (KeyError, IndexError, json.JSONDecodeError) as exc:
+        raise GeminiError("استجابة Gemini لشات الوثائق لا تطابق الشكل المتوقع") from exc
+
+    if not isinstance(used_document_ids, list):
+        used_document_ids = []
+    return {"answer": answer, "used_document_ids": [str(i) for i in used_document_ids]}
