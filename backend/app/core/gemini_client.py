@@ -511,7 +511,11 @@ _CHAT_CONTEXT_CHARS_PER_DOCUMENT = 6_000
 _DOCUMENT_CHAT_PROMPT_TEMPLATE = """أنتِ مساعدة ذكاء اصطناعي تجاوبين على أسئلة موظفي الشركة اعتمادًا حصريًا
 على محتوى الوثائق الرسمية المزوَّدة لك أدناه — ولا شيء غيرها.
 
-سؤال المستخدم:
+سياق المحادثة السابق (لفهم الأسئلة المتابِعة مثل "وماذا عن..." أو "وضّحي
+أكثر" — استخدميه فقط لفهم المقصود بالسؤال الحالي، ليس كمصدر للإجابة):
+{history_block}
+
+سؤال المستخدم الحالي:
 {question}
 
 الوثائق المتاحة (كل وثيقة لها معرّف id وعنوان ومحتوى):
@@ -519,13 +523,32 @@ _DOCUMENT_CHAT_PROMPT_TEMPLATE = """أنتِ مساعدة ذكاء اصطناع�
 
 قواعد صارمة وملزمة:
 - جاوبي فقط بالاعتماد على محتوى الوثائق أعلاه — لا تستخدمي أي معلومة
-  عامة من عندك ولا تخمّني.
+  عامة من عندك ولا تخمّني، وحتى لو ذُكرت معلومة بسياق المحادثة السابق
+  ما لها مصدر بالوثائق، لا تعتمدي عليها بالإجابة.
 - لو الإجابة غير موجودة صراحة أو ضمنيًا بأي من الوثائق المزوَّدة، قولي
   بوضوح إنك ما لقيتِ إجابة لهذا السؤال ضمن الوثائق المتاحة — لا تختلقي
   إجابة.
 - اكتبي الإجابة بالعربية الفصحى الواضحة، مختصرة ومباشرة.
 - أرجعي أيضًا قائمة معرّفات (id) الوثائق اللي فعليًا استخدمتِ محتواها
   لبناء الإجابة فقط (مصفوفة فارغة [] لو ما لقيتِ إجابة من أي وثيقة)."""
+
+# الحد الأقصى لعدد الأحرف من كل رسالة سابقة تُدرَج بسياق المحادثة —
+# يمنع محادثة طويلة جدًا من تضخيم الطلب لـGemini بلا داعٍ (نفس فلسفة
+# _CHAT_CONTEXT_CHARS_PER_DOCUMENT أدناه لمحتوى الوثائق).
+_CHAT_HISTORY_CHARS_PER_MESSAGE = 500
+
+
+def _format_chat_history(history: list[dict[str, str]]) -> str:
+    """يحوّل [{"role": "user"|"assistant", "content": ...}, ...] لنص محادثة
+    مقروء يُدرَج داخل الـPrompt — راجعي answer_from_documents."""
+    if not history:
+        return "لا يوجد — هذا أول سؤال بالمحادثة."
+    speaker_labels = {"user": "المستخدم", "assistant": "المساعدة"}
+    lines = [
+        f"{speaker_labels.get(turn['role'], turn['role'])}: {turn['content'][:_CHAT_HISTORY_CHARS_PER_MESSAGE]}"
+        for turn in history
+    ]
+    return "\n".join(lines)
 
 _DOCUMENT_CHAT_RESPONSE_SCHEMA = {
     "type": "OBJECT",
@@ -538,7 +561,7 @@ _DOCUMENT_CHAT_RESPONSE_SCHEMA = {
 
 
 async def answer_from_documents(
-    *, question: str, documents: list[dict[str, str]]
+    *, question: str, documents: list[dict[str, str]], history: list[dict[str, str]] | None = None
 ) -> dict:
     """
     RAG (استرجاع معزَّز بالتوليد): تجاوب على question بالاعتماد فقط على
@@ -546,7 +569,14 @@ async def answer_from_documents(
     تخدم شات "وثيقة واحدة مفتوحة" (documents بعنصر واحد) وشات "كل
     الوثائق" (عدة عناصر أعادها البحث الدلالي، راجعي
     document_search_service.semantic_search) بدون فرق بالمنطق، الفرق فقط
-    بعدد العناصر الممرَّرة. ترمي GeminiError عند أي فشل."""
+    بعدد العناصر الممرَّرة. ترمي GeminiError عند أي فشل.
+
+    history: آخر رسائل المحادثة الحالية (إن وُجدت — راجعي
+    document_chat_service.py) بترتيب زمني تصاعدي، [{"role", "content"}]،
+    تُستخدَم فقط لفهم أسئلة المتابعة (مثال: "وماذا عن القسم الثاني؟")،
+    وليست مصدرًا للإجابة نفسها (راجعي القاعدة الصريحة بالـPrompt أدناه —
+    قرار أمني: لا نخلي Gemini يجاوب من كلامه هو بمحادثة سابقة، فقط من
+    محتوى الوثائق الفعلي في كل استدعاء)."""
     api_key = _require_api_key()
 
     if not documents:
@@ -557,7 +587,10 @@ async def answer_from_documents(
         f"{doc['content'][:_CHAT_CONTEXT_CHARS_PER_DOCUMENT]}"
         for doc in documents
     )
-    prompt = _DOCUMENT_CHAT_PROMPT_TEMPLATE.format(question=question, documents_block=documents_block)
+    history_block = _format_chat_history(history or [])
+    prompt = _DOCUMENT_CHAT_PROMPT_TEMPLATE.format(
+        question=question, documents_block=documents_block, history_block=history_block
+    )
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await _generate_text_only_with_retry(
