@@ -35,6 +35,8 @@ from app.schemas.document import (
     DocumentCategoryCreate,
     DocumentCategoryOut,
     DocumentCategoryUpdate,
+    DocumentChatConversationDetailOut,
+    DocumentChatConversationOut,
     DocumentChatRequest,
     DocumentChatResponse,
     DocumentChatSourceOut,
@@ -44,7 +46,7 @@ from app.schemas.document import (
     DocumentVisibleCommitteeOut,
     DocumentVisibleDepartmentOut,
 )
-from app.services import document_search_service, document_service
+from app.services import document_chat_service, document_search_service, document_service
 from app.services.document_embedding_service import generate_embedding_for_document
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -122,7 +124,12 @@ def _to_chat_response(result: dict) -> DocumentChatResponse:
             DocumentChatSourceOut(document_id=s["document_id"], title=s["title"])
             for s in result["sources"]
         ],
+        conversation_id=result["conversation_id"],
     )
+
+
+def _conversation_error_to_http(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="المحادثة غير موجودة")
 
 
 # ---------------------------------------------------------------------------
@@ -325,10 +332,15 @@ async def ask_documents(
     """
     try:
         result = await document_search_service.answer_question(
-            db, current_user=current_user, question=payload.question
+            db,
+            current_user=current_user,
+            question=payload.question,
+            conversation_id=payload.conversation_id,
         )
     except (document_search_service.DocumentSearchNotConfiguredError, GeminiError) as exc:
         raise _search_error_to_http(exc) from exc
+    except document_chat_service.ConversationNotFoundError as exc:
+        raise _conversation_error_to_http(exc) from exc
     return _to_chat_response(result)
 
 
@@ -351,13 +363,97 @@ async def ask_document(
     """
     try:
         result = await document_search_service.answer_question(
-            db, current_user=current_user, question=payload.question, document_id=document_id
+            db,
+            current_user=current_user,
+            question=payload.question,
+            document_id=document_id,
+            conversation_id=payload.conversation_id,
         )
     except (document_search_service.DocumentSearchNotConfiguredError, GeminiError) as exc:
         raise _search_error_to_http(exc) from exc
+    except document_chat_service.ConversationNotFoundError as exc:
+        raise _conversation_error_to_http(exc) from exc
     if result["not_found"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="الوثيقة غير موجودة")
     return _to_chat_response(result)
+
+
+# ---------------------------------------------------------------------------
+# محادثات البحث الذكي المحفوظة (Sidebar) — راجعي
+# db/migrations/0030_document_chat_conversations.sql وapp/services/
+# document_chat_service.py. مسارات الشات العام (بدون document_id) هنا
+# قبل GET /{document_id} عمدًا (نفس ترتيب /publish-targets أعلاه) —
+# وإلا "conversations" كمسار حرفي يتصادم مع {document_id} كباراميتر.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/conversations",
+    response_model=list[DocumentChatConversationOut],
+    dependencies=[Depends(require_permission("documents.search_all_agent"))],
+)
+async def list_global_chat_conversations(
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[DocumentChatConversationOut]:
+    """قائمة محادثات "البحث الذكي" العامة (الشات عبر كل الوثائق) الخاصة
+    بـcurrent_user — تغذّي الـSidebar بصفحة البحث الذكي العامة."""
+    conversations = await document_chat_service.list_conversations(
+        db, user=current_user, document_id=None
+    )
+    return [DocumentChatConversationOut.model_validate(c) for c in conversations]
+
+
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=DocumentChatConversationDetailOut,
+    dependencies=[Depends(require_permission("documents.search_all_agent"))],
+)
+async def get_global_chat_conversation(
+    conversation_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> DocumentChatConversationDetailOut:
+    try:
+        conversation = await document_chat_service.get_conversation_with_messages(
+            db, user=current_user, conversation_id=conversation_id, document_id=None
+        )
+    except document_chat_service.ConversationNotFoundError as exc:
+        raise _conversation_error_to_http(exc) from exc
+    return DocumentChatConversationDetailOut.model_validate(conversation)
+
+
+@router.get(
+    "/{document_id}/conversations",
+    response_model=list[DocumentChatConversationOut],
+    dependencies=[Depends(require_permission("documents.view"))],
+)
+async def list_document_chat_conversations(
+    document_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[DocumentChatConversationOut]:
+    """قائمة محادثات شات هذي الوثيقة تحديدًا الخاصة بـcurrent_user — تغذّي
+    الـSidebar بلوحة الشات جوا صفحة تفاصيل الوثيقة."""
+    conversations = await document_chat_service.list_conversations(
+        db, user=current_user, document_id=document_id
+    )
+    return [DocumentChatConversationOut.model_validate(c) for c in conversations]
+
+
+@router.get(
+    "/{document_id}/conversations/{conversation_id}",
+    response_model=DocumentChatConversationDetailOut,
+    dependencies=[Depends(require_permission("documents.view"))],
+)
+async def get_document_chat_conversation(
+    document_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DocumentChatConversationDetailOut:
+    try:
+        conversation = await document_chat_service.get_conversation_with_messages(
+            db, user=current_user, conversation_id=conversation_id, document_id=document_id
+        )
+    except document_chat_service.ConversationNotFoundError as exc:
+        raise _conversation_error_to_http(exc) from exc
+    return DocumentChatConversationDetailOut.model_validate(conversation)
 
 
 @router.get(

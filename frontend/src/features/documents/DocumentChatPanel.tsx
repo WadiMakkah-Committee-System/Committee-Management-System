@@ -1,85 +1,66 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, FileText, Lock, Send, Sparkles } from 'lucide-react'
-import { useAskDocument, useAskDocuments } from '@/hooks/useDocumentChat'
+import { AnimatePresence, motion } from 'framer-motion'
+import { AlertCircle, Clock, FileText, Lock, Plus, Send, Sparkles } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
+import type { DocumentChatSession } from '@/hooks/useDocumentChat'
 import { Avatar } from '@/components/ui/Avatar'
 import { Spinner } from '@/components/ui/Spinner'
-import { cn, extractErrorMessage } from '@/lib/utils'
-import type { DocumentChatSource } from '@/types'
-
-interface ChatTurn {
-  id: string
-  question: string
-  answer?: string
-  sources?: DocumentChatSource[]
-  status: 'pending' | 'done' | 'error'
-  errorMessage?: string
-}
+import { cn, formatDateTime } from '@/lib/utils'
 
 /**
  * الهدف:
  * لوحة "البحث الذكي" داخل الوثائق — نفس المكوّن يُستخدم بشكلين حسب
- * documentId: مقيَّد بوثيقة واحدة (Docked ضمن DocumentDetailPage، الإجابة
- * من محتوى تلك الوثيقة فقط) أو عام عبر كل الوثائق (صفحة كاملة
+ * session.documentId: مقيَّد بوثيقة واحدة (Docked ضمن DocumentDetailPage،
+ * الإجابة من محتوى تلك الوثيقة فقط) أو عام عبر كل الوثائق (صفحة كاملة
  * DocumentsSmartSearchPage). راجعي api/documentChat.ts وrouter الباك-إند
  * المطابق POST /documents/{document_id}/ask وPOST /documents/ask.
  *
- * كل سؤال مستقل (بلا تاريخ محادثة محفوظ بالخادم — قرار مقصود لمرحلة أولى
- * بسيطة، راجعي answer_question بـdocument_search_service.py) — سجل
- * الأسئلة/الأجوبة هنا محلي فقط بحالة المكوّن (turns)، يُفقَد عند مغادرة
- * الصفحة.
+ * كل حالة المحادثة (الأسئلة/الأجوبة، قائمة المحادثات المحفوظة، التنقل
+ * بينها) تأتي جاهزة عبر useDocumentChatSession — راجعي
+ * hooks/useDocumentChat.ts. اللوحة هنا عرض فقط + زر "محادثة جديدة" وقائمة
+ * سجل مضغوطة بالهيدر (hideHistoryToggle تخفيها لما تكون قائمة كاملة
+ * DocumentChatSidebar معروضة أصلاً بجنبها، راجعي DocumentsSmartSearchPage).
  */
-export function DocumentChatPanel({ documentId, className }: { documentId?: string; className?: string }) {
+export function DocumentChatPanel({
+  session,
+  className,
+  hideHistoryToggle,
+}: {
+  session: DocumentChatSession
+  className?: string
+  hideHistoryToggle?: boolean
+}) {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
-  const askDocument = useAskDocument()
-  const askDocuments = useAskDocuments()
+  const { documentId, turns, isSending, sendQuestion, startNew, loadConversation, conversations } = session
 
-  const [turns, setTurns] = useState<ChatTurn[]>([])
   const [draft, setDraft] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
   const listRef = useRef<HTMLDivElement | null>(null)
+  const historyRef = useRef<HTMLDivElement | null>(null)
 
-  function scrollToBottom() {
+  useEffect(() => {
+    if (!historyOpen) return
+    const onClickOutside = (e: MouseEvent) => {
+      if (historyRef.current && !historyRef.current.contains(e.target as Node)) setHistoryOpen(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [historyOpen])
+
+  useEffect(() => {
     requestAnimationFrame(() => {
       listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
     })
-  }
+  }, [turns])
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    const question = draft.trim()
-    if (!question) return
-
-    const turnId = crypto.randomUUID()
-    setTurns((prev) => [...prev, { id: turnId, question, status: 'pending' }])
+    if (!draft.trim()) return
+    sendQuestion(draft)
     setDraft('')
-    scrollToBottom()
-
-    const mutation = documentId
-      ? askDocument.mutateAsync({ documentId, question })
-      : askDocuments.mutateAsync(question)
-
-    mutation
-      .then((res) => {
-        setTurns((prev) =>
-          prev.map((t) =>
-            t.id === turnId ? { ...t, status: 'done' as const, answer: res.answer, sources: res.sources } : t,
-          ),
-        )
-        scrollToBottom()
-      })
-      .catch((err: unknown) => {
-        setTurns((prev) =>
-          prev.map((t) =>
-            t.id === turnId ? { ...t, status: 'error' as const, errorMessage: extractErrorMessage(err) } : t,
-          ),
-        )
-        scrollToBottom()
-      })
   }
-
-  const isSending = askDocument.isPending || askDocuments.isPending
 
   return (
     <div className={cn('flex flex-col overflow-hidden rounded-md border border-border-default bg-bg-surface', className)}>
@@ -87,14 +68,70 @@ export function DocumentChatPanel({ documentId, className }: { documentId?: stri
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-brand-primary to-brand-purple">
           <Sparkles size={15} className="text-white" />
         </div>
-        <div>
-          <p className="text-[13px] font-bold text-text-primary">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-bold text-text-primary">
             {documentId ? 'اسأل عن هذه الوثيقة' : 'البحث الذكي'}
           </p>
-          <p className="text-[11px] text-text-muted">
+          <p className="truncate text-[11px] text-text-muted">
             {documentId ? 'الإجابات من محتوى هذه الوثيقة فقط' : 'اسأل عن أي وثيقة مصرَّح لك برؤيتها'}
           </p>
         </div>
+
+        <button
+          type="button"
+          onClick={startNew}
+          title="محادثة جديدة"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
+        >
+          <Plus size={15} />
+        </button>
+
+        {!hideHistoryToggle && (
+          <div className="relative" ref={historyRef}>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((o) => !o)}
+              title="محادثاتي السابقة"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
+            >
+              <Clock size={15} />
+            </button>
+            <AnimatePresence>
+              {historyOpen && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute left-0 top-full z-20 mt-1 max-h-80 w-64 overflow-y-auto rounded-sm border border-border-default bg-bg-elevated py-1 shadow-lg"
+                >
+                  {conversations.length === 0 ? (
+                    <p className="px-3 py-3 text-center text-[12px] text-text-muted">ما فيه محادثات سابقة بعد</p>
+                  ) : (
+                    conversations.map((c) => (
+                      <button
+                        key={c.conversation_id}
+                        onClick={() => {
+                          setHistoryOpen(false)
+                          loadConversation(c.conversation_id)
+                        }}
+                        className={cn(
+                          'flex w-full flex-col items-start gap-0.5 px-3 py-2 text-right transition-colors hover:bg-bg-surface',
+                          c.conversation_id === session.conversationId && 'bg-bg-surface',
+                        )}
+                      >
+                        <span className="w-full truncate text-[12.5px] font-medium text-text-primary">
+                          {c.title ?? 'محادثة بلا عنوان'}
+                        </span>
+                        <span className="text-[10.5px] text-text-muted">{formatDateTime(c.updated_at)}</span>
+                      </button>
+                    ))
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
       </div>
 
       <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-4">

@@ -444,10 +444,46 @@ export interface DocumentChatSource {
  * رد الشات الذكي داخل الوثائق — نفس الشكل لشات وثيقة واحدة (POST
  * /documents/{document_id}/ask) وشات كل الوثائق (POST /documents/ask).
  * راجعي backend app/schemas/document.py::DocumentChatResponse.
+ * conversation_id: معرّف المحادثة (جديدة أو مستمرة) — يُرسَل بالسؤال
+ * التالي بنفس المحادثة عبر DocumentChatRequest.conversation_id.
  */
 export interface DocumentChatResponse {
   answer: string
   sources: DocumentChatSource[]
+  conversation_id: string
+}
+
+/**
+ * محادثة "البحث الذكي" محفوظة بدون رسائلها — عنصر قائمة الـSidebar.
+ * document_id: null يعني محادثة الشات العام (كل الوثائق)، وإلا محادثة
+ * وثيقة محددة. راجعي backend app/schemas/document.py::DocumentChatConversationOut.
+ */
+export interface DocumentChatConversation {
+  conversation_id: string
+  document_id: string | null
+  title: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * رسالة واحدة ضمن محادثة محفوظة. راجعي backend
+ * app/schemas/document.py::DocumentChatMessageOut.
+ */
+export interface DocumentChatMessage {
+  message_id: string
+  role: 'user' | 'assistant'
+  content: string
+  sources: DocumentChatSource[] | null
+  created_at: string
+}
+
+/**
+ * نفس DocumentChatConversation + كامل رسائلها — عند فتح محادثة محدَّدة من
+ * الـSidebar. راجعي backend app/schemas/document.py::DocumentChatConversationDetailOut.
+ */
+export interface DocumentChatConversationDetail extends DocumentChatConversation {
+  messages: DocumentChatMessage[]
 }
 
 /**

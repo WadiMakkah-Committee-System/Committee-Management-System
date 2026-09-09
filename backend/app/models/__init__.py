@@ -18,6 +18,7 @@ from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.meeting import Meeting, MeetingAgendaItem, MeetingMode, MeetingStatus
 from app.models.meeting_chat import MeetingChatMessage
+from app.models.document_chat import DocumentChatConversation, DocumentChatMessage
 from app.models.meeting_draft import MeetingDraft, MeetingDraftStatus, MeetingRecording
 from app.models.meeting_extracted_item import MeetingExtractedItem, MeetingExtractedItemStatus
 from app.models.notification import Notification
@@ -42,6 +43,8 @@ __all__ = [
     "Meeting",
     "MeetingAgendaItem",
     "MeetingChatMessage",
+    "DocumentChatConversation",
+    "DocumentChatMessage",
     "MeetingDraft",
     "MeetingDraftStatus",
     "MeetingExtractedItem",

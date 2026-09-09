@@ -28,6 +28,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { DocumentFormModal, type DocumentFormSubmitValues } from './DocumentFormModal'
 import { DocumentChatPanel } from './DocumentChatPanel'
+import { useDocumentChatSession } from '@/hooks/useDocumentChat'
 import { extractErrorMessage, formatDateTime, formatFileSize } from '@/lib/utils'
 
 /**
@@ -45,6 +46,7 @@ export function DocumentDetailPage() {
   const { showToast } = useToast()
 
   const { data: doc, isLoading, isError, refetch } = useDocumentDetail(documentId)
+  const chatSession = useDocumentChatSession(documentId)
   const { data: categories } = useDocumentCategories()
   // إدارات ولجان الرفع مُصفَّاة مسبقًا حسب مبدأ أقل صلاحية ممكنة — راجعي
   // نفس التعليق في DocumentsPage.tsx.
@@ -276,7 +278,7 @@ export function DocumentDetailPage() {
 
     {canAskDocument && (
       <div className="w-full shrink-0 lg:sticky lg:top-6 lg:w-[380px]">
-        <DocumentChatPanel documentId={doc.document_id} className="h-[560px]" />
+        <DocumentChatPanel session={chatSession} className="h-[560px]" />
       </div>
     )}
 

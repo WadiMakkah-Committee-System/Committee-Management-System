@@ -176,9 +176,16 @@ class DocumentOut(BaseModel):
 class DocumentChatRequest(BaseModel):
     """سؤال المستخدم — نفس الشكل لشات وثيقة واحدة (POST
     /documents/{document_id}/ask) وشات كل الوثائق (POST /documents/ask)،
-    الفرق فقط بوجود document_id بمسار الأول."""
+    الفرق فقط بوجود document_id بمسار الأول.
+
+    conversation_id: None يعني "ابدأ محادثة جديدة" (السلوك الافتراضي —
+    نفس شكل الطلب القديم قبل إضافة حفظ المحادثات، بلا كسر توافق). لو
+    مُعطى، يجب أن تكون المحادثة موجودة وتخص current_user فعلاً (نفس
+    نطاق الوثيقة إن وُجد) — راجعي app/services/document_search_service.py.
+    """
 
     question: str = Field(min_length=2, max_length=1000)
+    conversation_id: uuid.UUID | None = None
 
 
 class DocumentChatSourceOut(BaseModel):
@@ -192,3 +199,38 @@ class DocumentChatSourceOut(BaseModel):
 class DocumentChatResponse(BaseModel):
     answer: str
     sources: list[DocumentChatSourceOut]
+    # معرّف المحادثة (جديدة أو مستمرة) — الواجهة ترسله بالسؤال التالي
+    # بنفس المحادثة عبر conversation_id أعلاه.
+    conversation_id: uuid.UUID
+
+
+class DocumentChatMessageOut(BaseModel):
+    """رسالة واحدة ضمن محادثة محفوظة — راجعي
+    app/models/document_chat.py::DocumentChatMessage."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    message_id: uuid.UUID
+    role: Literal["user", "assistant"]
+    content: str
+    sources: list[DocumentChatSourceOut] | None = None
+    created_at: datetime
+
+
+class DocumentChatConversationOut(BaseModel):
+    """محادثة واحدة بدون رسائلها — شكل عنصر قائمة Sidebar."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    conversation_id: uuid.UUID
+    document_id: uuid.UUID | None
+    title: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentChatConversationDetailOut(DocumentChatConversationOut):
+    """نفس DocumentChatConversationOut + كامل رسائلها — عند فتح محادثة
+    محدَّدة من الـSidebar."""
+
+    messages: list[DocumentChatMessageOut]
