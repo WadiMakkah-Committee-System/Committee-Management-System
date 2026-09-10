@@ -97,6 +97,7 @@ export function SplashScreen({ children }: { children: ReactNode }) {
             className="fixed inset-0 z-[100] flex items-center justify-center bg-brand-primary"
             role="presentation"
             aria-hidden="true"
+            data-testid="splash-screen"
           >
             <AnimatePresence>
               {logoVisible && (
