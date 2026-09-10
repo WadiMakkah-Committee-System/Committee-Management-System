@@ -19,6 +19,8 @@ import { DocumentsPage } from '@/features/documents/DocumentsPage'
 import { DocumentDetailPage } from '@/features/documents/DocumentDetailPage'
 import { MeetingsPage } from '@/features/meetings/MeetingsPage'
 import { MeetingDetailPage } from '@/features/meetings/MeetingDetailPage'
+import { MeetingMinutesPage } from '@/features/meetings/MeetingMinutesPage'
+import { MinutesListPage } from '@/features/meetings/MinutesListPage'
 import { DecisionsPage } from '@/features/decisions/DecisionsPage'
 import { DecisionDetailPage } from '@/features/decisions/DecisionDetailPage'
 import { TasksPage } from '@/features/tasks/TasksPage'
@@ -120,6 +122,23 @@ function App() {
             <Route element={<ProtectedRoute anyPermission={['meetings.view']} />}>
               <Route path="/meetings" element={<MeetingsPage />} />
               <Route path="/meetings/:meetingId" element={<MeetingDetailPage />} />
+            </Route>
+
+            {/* قسم "المحاضر" المستقل بالقائمة الجانبية (طلب لاما 2026-09-08،
+                وفصل تام لاحق 2026-09-09: "قسم المحاضر يجب أن يكون وحدة
+                مستقلة مرتبطة بالاجتماع فقط كمرجع") — مسار صفحة المحضر
+                التفصيلية نُقل من /meetings/:meetingId/minutes إلى
+                /minutes/:meetingId عمدًا: قبل النقل كان الاعتماد على
+                بادئة /meetings يجعل NavLink بالسايد بار (Sidebar.tsx، بلا
+                خاصية end) يُفعّل "الاجتماعات" بدل "المحاضر" أثناء عرض
+                صفحة المحضر فعليًا — وهذا بالضبط ما بدا وكأن قسم المحاضر
+                "جزء من" قسم الاجتماعات رغم أنه واجهة Lovable مستقلة كليًا.
+                كما كان محميًا بصلاحية meetings.view بدل minutes.view، وهو
+                خطأ صلاحيات إضافي بحد ذاته. راجعي hasMinutesMembershipBypass
+                بـProtectedRoute.tsx وSidebar.tsx. */}
+            <Route element={<ProtectedRoute anyPermission={['minutes.view']} />}>
+              <Route path="/minutes" element={<MinutesListPage />} />
+              <Route path="/minutes/:meetingId" element={<MeetingMinutesPage />} />
             </Route>
 
             {/* نفس نمط الاجتماعات أعلاه بالضبط — راجعي hasDecisionsMembershipBypass بـProtectedRoute.tsx. */}

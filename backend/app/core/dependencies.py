@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis_client import is_session_valid, touch_session
 from app.core.security import InvalidTokenError, decode_token
-from app.db.session import get_db
+from app.db.session import AsyncSessionLocal, get_db
 from app.models.user import User, UserStatus
 from app.services import user_service
 
@@ -97,16 +97,32 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 async def get_current_user_ws(
     token: Annotated[str, Query()],
-    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     """مكافئ get_current_user لراوتات WebSocket — التوكن يصل كـQuery Param
     (?token=...، راجعي التعليق أعلى _resolve_user_from_token). أي
     HTTPException من التحقق تُحوَّل لـWebSocketException برمز 1008
     (Policy Violation) بدل استجابة HTTP عادية — FastAPI يُغلق الاتصال
     تلقائيًا بهذا الرمز قبل قبوله (accept)، فلا داعي لراوت meeting_live_socket
-    نفسه يتحقق من الخطأ يدويًا."""
+    نفسه يتحقق من الخطأ يدويًا.
+
+    إصلاح 2026-09-10 (بلاغ لاما — نفس عارض الصفحة البيضاء/تعليق كل طلبات
+    REST يرجع حتى بعد إصلاح 2026-09-09 بالراوت نفسه): هذي الدالة بالذات
+    كانت لسه تستخدم db: AsyncSession = Depends(get_db) — جلسة DB تُحقَن
+    كـDependency قبل استدعاء الـendpoint. المشكلة إن FastAPI/Starlette
+    لراوتات WebSocket تحديدًا لا يُنهي (tear down) الـDependency ذات
+    yield إلا لما الـendpoint نفسه يرجع (return) — يعني لما الاتصال
+    بالكامل ينقطع، مو بعد كل رسالة زي راوتات REST العادية. فهذي الجلسة
+    كانت تفضل محجوزة من الـpool طوال عمر اتصال الويب سكوت كامل (ساعات
+    أحيانًا)، ولأن كل اجتماع يفتح قناتين (غرفة + محضر، كلاهما يمر هنا)،
+    يستنزف الـpool المحدود (Supabase Pooler) بسرعة فيعلّق أي طلب DB
+    جديد بلا خطأ واضح — بالضبط نفس سبب إصلاح 2026-09-09 بجسم الدالة
+    بالراوت، لكن فات هذي الدالة تحديدًا لأنها Dependency منفصلة تُحل قبل
+    استدعاء جسم الراوت. الحل: جلسة db قصيرة العمر تُفتح وتُغلق فقط أثناء
+    التحقق من التوكن (بنفس نمط require_realtime_access بجسم الراوت) بدل
+    الاعتماد على Depends(get_db) المحقونة."""
     try:
-        return await _resolve_user_from_token(token, db)
+        async with AsyncSessionLocal() as db:
+            return await _resolve_user_from_token(token, db)
     except HTTPException as exc:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc.detail)) from exc
 

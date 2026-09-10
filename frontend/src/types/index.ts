@@ -576,6 +576,8 @@ export type MeetingRealtimeEvent =
   | { type: 'agenda.discussing'; agenda_item_id: string; title: string }
   | { type: 'presence.joined'; user_id: string; full_name: string }
   | { type: 'presence.left'; user_id: string; full_name: string }
+  | { type: 'minutes.editing'; user_id: string; full_name: string; section_id: string }
+  | { type: 'minutes.updated'; user_id: string; full_name: string; sections: MinutesSection[] }
 
 /**
  * التسجيل الصوتي + المسودة بالذكاء الاصطناعي (Gemini) — راجعي رأس
@@ -643,6 +645,62 @@ export interface MeetingExtractedItem {
   linked_task_id: string | null
   linked_decision_id: string | null
   created_by: CommitteeMemberUser
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * وحدة "المحاضر" (SRS §7) — راجعي رأس backend/app/services/
+ * meeting_minutes_service.py للتصميم الكامل (آلة الحالة، القوالب
+ * الثابتة). التحرير التعاوني اللحظي عبر نفس WebSocket المستخدَم للمحادثة
+ * (useMeetingRealtime.ts) — أحداث minutes.editing/minutes.updated.
+ */
+export type MeetingMinutesStage = 'none' | 'preparing' | 'review' | 'approval' | 'signature' | 'completed'
+export type MeetingMinutesReviewStatus = 'pending' | 'approved' | 'returned'
+export type MinutesTemplateId = 'executive' | 'formal' | 'detailed'
+
+export interface MinutesSection {
+  id: string
+  title: string
+  body: string
+  order: number
+}
+
+export interface MinutesTemplate {
+  id: MinutesTemplateId
+  name: string
+  description: string
+  sections: string[]
+}
+
+export interface MinutesReviewer {
+  reviewer_id: string
+  user: CommitteeMemberUser
+  status: MeetingMinutesReviewStatus
+  comment: string | null
+  reviewed_at: string | null
+}
+
+export interface MinutesSignature {
+  signature_id: string
+  user: CommitteeMemberUser
+  signed: boolean
+  signed_at: string | null
+}
+
+export interface MeetingMinutes {
+  minutes_id: string
+  meeting_id: string
+  template_id: MinutesTemplateId | null
+  stage: MeetingMinutesStage
+  owner: CommitteeMemberUser | null
+  sections: MinutesSection[]
+  reviewers: MinutesReviewer[]
+  signatures: MinutesSignature[]
+  sent_to_review_at: string | null
+  approved_at: string | null
+  sent_for_signature_at: string | null
+  completed_at: string | null
   created_at: string
   updated_at: string
 }

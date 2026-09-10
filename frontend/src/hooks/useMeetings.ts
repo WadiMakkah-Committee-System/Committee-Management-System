@@ -20,6 +20,13 @@ export const meetingsKeys = {
   detail: (meetingId: string) => ['meetings', meetingId] as const,
   attachments: (meetingId: string) => ['meetings', meetingId, 'attachments'] as const,
   chatHistory: (meetingId: string) => ['meetings', meetingId, 'chat-history'] as const,
+  // مساحة Cache مستقلة كليًا عن meetingsKeys.detail أعلاه — قرار موثّق مع
+  // لاما 2026-09-10: قسم "المحاضر" يجب ألا يعتمد على بيانات محمَّلة مسبقًا
+  // من قسم "الاجتماعات" (ولا العكس) بأي شكل، حتى عبر مشاركة Cache صامتة —
+  // كل قسم يسوي استعلامه المستقل بنفسه دايمًا، بصرف النظر عن مسار الدخول
+  // (من قسم الاجتماعات مباشرة، أو من قسم المحاضر مباشرة). راجعي
+  // useMeetingDetailForMinutes أدناه، المستخدَمة حصرًا من MeetingMinutesPage.
+  minutesSectionDetail: (meetingId: string) => ['minutes-section', 'meeting', meetingId] as const,
 }
 
 /** تحميل تاريخ المحادثة مرة واحدة عند فتح لوحة "المحادثة" — الرسائل
@@ -57,6 +64,25 @@ export function useMeetingDetail(
     queryFn: () => meetingsApi.fetchMeeting(meetingId as string),
     enabled: !!meetingId,
     refetchInterval: options?.refetchIntervalMs,
+  })
+}
+
+/**
+ * نسخة مستقلة من useMeetingDetail أعلاه، حصرًا لقسم "المحاضر"
+ * (MeetingMinutesPage.tsx) — قرار موثّق مع لاما 2026-09-10: فصل تام بين
+ * قسمي "الاجتماعات" و"المحاضر"، بلا أي اعتماد على Cache محمَّل مسبقًا من
+ * الآخر. تستخدم queryKey مختلفة كليًا (meetingsKeys.minutesSectionDetail
+ * بدل meetingsKeys.detail) فتُجبَر على طلب مستقل من الباك-إند بمجرد
+ * الدخول لقسم المحاضر واختيار اجتماع، بصرف النظر هل زارت المستخدمة صفحة
+ * تفاصيل الاجتماع بقسم "الاجتماعات" قبلها أو لا. دالة الجلب نفسها
+ * (meetingsApi.fetchMeeting) نفس المستخدَمة بـuseMeetingDetail — الفرق
+ * فقط بمساحة الـCache، لا بمصدر البيانات بالباك-إند.
+ */
+export function useMeetingDetailForMinutes(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: meetingsKeys.minutesSectionDetail(meetingId ?? ''),
+    queryFn: () => meetingsApi.fetchMeeting(meetingId as string),
+    enabled: !!meetingId,
   })
 }
 

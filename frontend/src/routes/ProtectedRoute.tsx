@@ -47,13 +47,18 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     // فعليًا لمهامه على الأقل، حتى بدون tasks.view على مستوى System Role.
     const hasTasksMembershipBypass =
       !!anyPermission?.includes('tasks.view') && user.has_any_committee_membership
+    // نفس المبدأ لمسار /minutes (طلب لاما 2026-09-08: قسم "المحاضر"
+    // المستقل بالقائمة الجانبية) — راجعي نفس الملاحظة أعلاه وSidebar.tsx.
+    const hasMinutesMembershipBypass =
+      !!anyPermission?.includes('minutes.view') && user.has_any_committee_membership
     if (
       anyPermission &&
       !anyPermission.some((code) => user.permissions.includes(code)) &&
       !hasCommitteeMembershipBypass &&
       !hasMeetingsMembershipBypass &&
       !hasDecisionsMembershipBypass &&
-      !hasTasksMembershipBypass
+      !hasTasksMembershipBypass &&
+      !hasMinutesMembershipBypass
     ) {
       return <Navigate to="/profile" replace />
     }
