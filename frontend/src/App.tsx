@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/authStore'
 import { AppShell } from '@/components/layout/AppShell'
+import { SplashScreen } from '@/components/layout/SplashScreen'
 import { ProtectedRoute } from '@/routes/ProtectedRoute'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { UsersPage } from '@/features/users/UsersPage'
@@ -69,9 +70,10 @@ function AppBootstrap({ children }: { children: React.ReactNode }) {
 
 function App() {
   return (
-    <AppBootstrap>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
+    <SplashScreen>
+      <AppBootstrap>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
 
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
@@ -153,8 +155,9 @@ function App() {
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </AppBootstrap>
+        </Routes>
+      </AppBootstrap>
+    </SplashScreen>
   )
 }
 
