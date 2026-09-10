@@ -192,6 +192,19 @@ async def _redact_votes_if_unauthorized(
     return decision
 
 
+async def _can_see_pending_decision(db: AsyncSession, actor: User, committee: Committee) -> bool:
+    """
+    بلاغ خطأ 2026-09-08 من صاحبة المشروع (بحضور رئيسة لجنة فعلية): قرار
+    بحالة 'pending' (أُنشئ، لم يُطرح للتصويت أو يُعتمَد بعد — لا تزال
+    رئيسة اللجنة "تجهّزه") كان يظهر لأي عضو يملك decisions.view فقط،
+    رغم أن لا قرار فعليًا اتُّخذ بشأنه بعد ليراه أحد غير من يديره. من
+    يقدر على decisions.update (عمليًا: رئيسة اللجنة فقط، أو من يملك صلاحية
+    نظامية مكافئة) هو وحده من يرى القرار بحالة pending — بقية الحالات
+    (voting/approved/rejected) تبقى مرئية بلا أي قيد إضافي كالسابق تمامًا.
+    """
+    return await _has_access(db, actor, committee, "decisions.update")
+
+
 # ============================== إغلاق التصويت (كسلي) ==============================
 
 
@@ -309,6 +322,12 @@ async def get_decision(
     await _require_access(
         db, actor, committee, "decisions.view", "ليست لديك صلاحية لعرض هذا القرار"
     )
+    if decision.status == DecisionStatus.pending and not await _can_see_pending_decision(
+        db, actor, committee
+    ):
+        # نفس رسالة "غير موجود" العادية (وليس 403) عمدًا — لا داعي لكشف
+        # وجود قرار لم يُتَّخذ بشأنه شيء بعد لمن لا يديره أصلًا.
+        raise DecisionNotFoundError("القرار غير موجود")
     changed = _maybe_close_voting(decision, committee)
     just_rejected = changed and decision.status == DecisionStatus.rejected
     if changed:
@@ -357,6 +376,10 @@ async def list_decisions(
     redacted: list[Decision] = []
     for decision in decisions:
         committee = await _load_committee(db, decision.committee_id)
+        if decision.status == DecisionStatus.pending and not await _can_see_pending_decision(
+            db, actor, committee
+        ):
+            continue
         if _maybe_close_voting(decision, committee):
             changed = True
         redacted.append(await _redact_votes_if_unauthorized(db, actor, committee, decision))

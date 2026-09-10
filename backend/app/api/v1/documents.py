@@ -23,24 +23,31 @@ import os
 import uuid
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storage_client
 from app.core.dependencies import CurrentUser, require_permission
+from app.core.gemini_client import GeminiError
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.document import (
     DocumentCategoryCreate,
     DocumentCategoryOut,
     DocumentCategoryUpdate,
+    DocumentChatConversationDetailOut,
+    DocumentChatConversationOut,
+    DocumentChatRequest,
+    DocumentChatResponse,
+    DocumentChatSourceOut,
     DocumentOut,
     DocumentPublishTargetsOut,
     DocumentUpdate,
     DocumentVisibleCommitteeOut,
     DocumentVisibleDepartmentOut,
 )
-from app.services import document_service
+from app.services import document_chat_service, document_search_service, document_service
+from app.services.document_embedding_service import generate_embedding_for_document
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 categories_router = APIRouter(prefix="/document-categories", tags=["Document Categories"])
@@ -99,6 +106,30 @@ def _storage_error_to_http(exc: storage_client.StorageError) -> HTTPException:
             detail="خدمة تخزين الملفات غير مُهيّأة بعد (راجع إعدادات SUPABASE_* بالبيئة)",
         )
     return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+
+def _search_error_to_http(exc: Exception) -> HTTPException:
+    if isinstance(exc, document_search_service.DocumentSearchNotConfiguredError):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="خدمة البحث الذكي غير مُهيّأة بعد (راجع إعدادات GEMINI_API_KEY بالبيئة)",
+        )
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+
+def _to_chat_response(result: dict) -> DocumentChatResponse:
+    return DocumentChatResponse(
+        answer=result["answer"],
+        sources=[
+            DocumentChatSourceOut(document_id=s["document_id"], title=s["title"])
+            for s in result["sources"]
+        ],
+        conversation_id=result["conversation_id"],
+    )
+
+
+def _conversation_error_to_http(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="المحادثة غير موجودة")
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +248,7 @@ async def list_documents(
 )
 async def upload_document(
     current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: str = Form(..., min_length=2, max_length=255),
     description: str | None = Form(None),
@@ -247,6 +279,10 @@ async def upload_document(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except storage_client.StorageError as exc:
         raise _storage_error_to_http(exc) from exc
+    # توليد embedding البحث الدلالي خلفي دائمًا — لا يؤخّر استجابة الرفع
+    # للمستخدم، وفشله (Gemini غير مهيّأ، نوع ملف غير مدعوم...) لا يفشل
+    # الرفع نفسه أبدًا. راجعي app/services/document_embedding_service.py.
+    background_tasks.add_task(generate_embedding_for_document, document.document_id)
     return DocumentOut.model_validate(document)
 
 
@@ -277,6 +313,147 @@ async def get_document_publish_targets(
         departments=[DocumentVisibleDepartmentOut.model_validate(d) for d in departments],
         committees=[DocumentVisibleCommitteeOut.model_validate(c) for c in committees],
     )
+
+
+@router.post(
+    "/ask",
+    response_model=DocumentChatResponse,
+    dependencies=[Depends(require_permission("documents.search_all_agent"))],
+)
+async def ask_documents(
+    payload: DocumentChatRequest, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> DocumentChatResponse:
+    """
+    شات بوت "كل الوثائق" — يدوّر دلاليًا بين كل الوثائق المرئية فعليًا
+    لـcurrent_user ويجاوب من أقربها لسؤاله. صلاحية documents.search_all_agent
+    منفصلة عن documents.view/search (تحكم استخدام ميزة الذكاء الاصطناعي
+    نفسها، وليس رؤية الوثائق — تلك تُفحص دائمًا لكل نتيجة بمعزل عن هذه
+    الصلاحية، راجعي app/services/document_search_service.py).
+    """
+    try:
+        result = await document_search_service.answer_question(
+            db,
+            current_user=current_user,
+            question=payload.question,
+            conversation_id=payload.conversation_id,
+        )
+    except (document_search_service.DocumentSearchNotConfiguredError, GeminiError) as exc:
+        raise _search_error_to_http(exc) from exc
+    except document_chat_service.ConversationNotFoundError as exc:
+        raise _conversation_error_to_http(exc) from exc
+    return _to_chat_response(result)
+
+
+@router.post(
+    "/{document_id}/ask",
+    response_model=DocumentChatResponse,
+    dependencies=[Depends(require_permission("documents.view"))],
+)
+async def ask_document(
+    document_id: uuid.UUID,
+    payload: DocumentChatRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DocumentChatResponse:
+    """
+    شات بوت "وثيقة واحدة مفتوحة" — صلاحية documents.view فقط (بلا
+    search_all_agent) لأن السؤال يقتصر على وثيقة المستخدم أصلًا يقدر
+    يفتحها ويقرأها بنفسه؛ الميزة هنا اختصار وقت القراءة، وليست توسيعًا
+    لما يقدر يراه.
+    """
+    try:
+        result = await document_search_service.answer_question(
+            db,
+            current_user=current_user,
+            question=payload.question,
+            document_id=document_id,
+            conversation_id=payload.conversation_id,
+        )
+    except (document_search_service.DocumentSearchNotConfiguredError, GeminiError) as exc:
+        raise _search_error_to_http(exc) from exc
+    except document_chat_service.ConversationNotFoundError as exc:
+        raise _conversation_error_to_http(exc) from exc
+    if result["not_found"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="الوثيقة غير موجودة")
+    return _to_chat_response(result)
+
+
+# ---------------------------------------------------------------------------
+# محادثات البحث الذكي المحفوظة (Sidebar) — راجعي
+# db/migrations/0030_document_chat_conversations.sql وapp/services/
+# document_chat_service.py. مسارات الشات العام (بدون document_id) هنا
+# قبل GET /{document_id} عمدًا (نفس ترتيب /publish-targets أعلاه) —
+# وإلا "conversations" كمسار حرفي يتصادم مع {document_id} كباراميتر.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/conversations",
+    response_model=list[DocumentChatConversationOut],
+    dependencies=[Depends(require_permission("documents.search_all_agent"))],
+)
+async def list_global_chat_conversations(
+    current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[DocumentChatConversationOut]:
+    """قائمة محادثات "البحث الذكي" العامة (الشات عبر كل الوثائق) الخاصة
+    بـcurrent_user — تغذّي الـSidebar بصفحة البحث الذكي العامة."""
+    conversations = await document_chat_service.list_conversations(
+        db, user=current_user, document_id=None
+    )
+    return [DocumentChatConversationOut.model_validate(c) for c in conversations]
+
+
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=DocumentChatConversationDetailOut,
+    dependencies=[Depends(require_permission("documents.search_all_agent"))],
+)
+async def get_global_chat_conversation(
+    conversation_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> DocumentChatConversationDetailOut:
+    try:
+        conversation = await document_chat_service.get_conversation_with_messages(
+            db, user=current_user, conversation_id=conversation_id, document_id=None
+        )
+    except document_chat_service.ConversationNotFoundError as exc:
+        raise _conversation_error_to_http(exc) from exc
+    return DocumentChatConversationDetailOut.model_validate(conversation)
+
+
+@router.get(
+    "/{document_id}/conversations",
+    response_model=list[DocumentChatConversationOut],
+    dependencies=[Depends(require_permission("documents.view"))],
+)
+async def list_document_chat_conversations(
+    document_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[DocumentChatConversationOut]:
+    """قائمة محادثات شات هذي الوثيقة تحديدًا الخاصة بـcurrent_user — تغذّي
+    الـSidebar بلوحة الشات جوا صفحة تفاصيل الوثيقة."""
+    conversations = await document_chat_service.list_conversations(
+        db, user=current_user, document_id=document_id
+    )
+    return [DocumentChatConversationOut.model_validate(c) for c in conversations]
+
+
+@router.get(
+    "/{document_id}/conversations/{conversation_id}",
+    response_model=DocumentChatConversationDetailOut,
+    dependencies=[Depends(require_permission("documents.view"))],
+)
+async def get_document_chat_conversation(
+    document_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> DocumentChatConversationDetailOut:
+    try:
+        conversation = await document_chat_service.get_conversation_with_messages(
+            db, user=current_user, conversation_id=conversation_id, document_id=document_id
+        )
+    except document_chat_service.ConversationNotFoundError as exc:
+        raise _conversation_error_to_http(exc) from exc
+    return DocumentChatConversationDetailOut.model_validate(conversation)
 
 
 @router.get(

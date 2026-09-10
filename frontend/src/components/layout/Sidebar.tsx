@@ -41,7 +41,7 @@ interface NavItem {
 
 /** ترتيب التنقل الموثّق في §15 — العناصر غير المبنية بعد تظهر معطّلة ("قريبًا") بدل إخفائها. */
 const NAV_ITEMS: NavItem[] = [
-  { label: 'لوحة التحكم', icon: LayoutDashboard, comingSoon: true },
+  { label: 'لوحة التحكم', icon: LayoutDashboard, path: '/dashboard' },
   {
     label: 'المستخدمين',
     icon: Users,
@@ -88,7 +88,12 @@ const NAV_ITEMS: NavItem[] = [
     path: '/documents',
     requiredPermission: ['documents.view', 'documents.search'],
   },
-  { label: 'البحث الذكي', icon: Sparkles, comingSoon: true },
+  {
+    label: 'البحث الذكي',
+    icon: Sparkles,
+    path: '/documents/search',
+    requiredPermission: ['documents.search_all_agent'],
+  },
   { label: 'الإشعارات', icon: Bell, path: '/notifications' },
   { label: 'التقارير', icon: BarChart3, comingSoon: true },
 ]

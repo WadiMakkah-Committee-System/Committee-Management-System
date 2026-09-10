@@ -431,6 +431,62 @@ export interface DocumentUpdatePayload {
 }
 
 /**
+ * وثيقة استُخدمت فعليًا لبناء إجابة الشات الذكي — تُستخدم بالواجهة كرابط
+ * ينقل المستخدم لصفحة تلك الوثيقة مباشرة. راجعي backend
+ * app/schemas/document.py::DocumentChatSourceOut.
+ */
+export interface DocumentChatSource {
+  document_id: string
+  title: string
+}
+
+/**
+ * رد الشات الذكي داخل الوثائق — نفس الشكل لشات وثيقة واحدة (POST
+ * /documents/{document_id}/ask) وشات كل الوثائق (POST /documents/ask).
+ * راجعي backend app/schemas/document.py::DocumentChatResponse.
+ * conversation_id: معرّف المحادثة (جديدة أو مستمرة) — يُرسَل بالسؤال
+ * التالي بنفس المحادثة عبر DocumentChatRequest.conversation_id.
+ */
+export interface DocumentChatResponse {
+  answer: string
+  sources: DocumentChatSource[]
+  conversation_id: string
+}
+
+/**
+ * محادثة "البحث الذكي" محفوظة بدون رسائلها — عنصر قائمة الـSidebar.
+ * document_id: null يعني محادثة الشات العام (كل الوثائق)، وإلا محادثة
+ * وثيقة محددة. راجعي backend app/schemas/document.py::DocumentChatConversationOut.
+ */
+export interface DocumentChatConversation {
+  conversation_id: string
+  document_id: string | null
+  title: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * رسالة واحدة ضمن محادثة محفوظة. راجعي backend
+ * app/schemas/document.py::DocumentChatMessageOut.
+ */
+export interface DocumentChatMessage {
+  message_id: string
+  role: 'user' | 'assistant'
+  content: string
+  sources: DocumentChatSource[] | null
+  created_at: string
+}
+
+/**
+ * نفس DocumentChatConversation + كامل رسائلها — عند فتح محادثة محدَّدة من
+ * الـSidebar. راجعي backend app/schemas/document.py::DocumentChatConversationDetailOut.
+ */
+export interface DocumentChatConversationDetail extends DocumentChatConversation {
+  messages: DocumentChatMessage[]
+}
+
+/**
  * سطر تعريفي خفيف — موظف من إدارة المستخدم الحالي عضو بلجنة رئيسها من
  * إدارة ثانية (أو بدون إدارة معروفة). مراجعة لاما 2026-08-30 (الجولة
  * الثالثة). عمدًا بدون بقية تفاصيل اللجنة — راجعي
@@ -885,4 +941,58 @@ export interface NotificationPage {
 
 export interface UnreadCount {
   unread_count: number
+}
+
+/**
+ * أنواع وحدة "لوحة التحكم" — مطابقة تمامًا لـ backend/app/schemas/dashboard.py.
+ * راجعي رأس app/services/dashboard_service.py: كل عدّاد (`*_count`) يعكس
+ * الإجمالي الفعلي، وليس طول قائمة `*_preview` (تُقتصر على عدد قليل للعرض
+ * السريع فقط). "التقارير" (حالة استخدام رابعة بالـSRS) مؤجَّلة عمدًا —
+ * قرار صريح من صاحبة المشروع 2026-09-08.
+ */
+export interface DashboardCommitteeItem {
+  committee_id: string
+  name: string
+}
+
+export interface DashboardMeetingItem {
+  meeting_id: string
+  title: string
+  scheduled_at: string
+  mode: MeetingMode
+  committee_name: string
+}
+
+export interface DashboardDecisionItem {
+  decision_id: string
+  title: string
+  committee_name: string
+  voting_deadline: string | null
+}
+
+export interface DashboardTaskItem {
+  task_id: string
+  title: string
+  status: TaskStatus
+  end_date: string
+  committee_name: string
+}
+
+export interface DashboardDocumentItem {
+  document_id: string
+  title: string
+  created_at: string
+}
+
+export interface DashboardSummary {
+  committees_count: number
+  committees_preview: DashboardCommitteeItem[]
+  upcoming_meetings_count: number
+  upcoming_meetings_preview: DashboardMeetingItem[]
+  pending_votes_count: number
+  pending_votes_preview: DashboardDecisionItem[]
+  open_tasks_count: number
+  open_tasks_preview: DashboardTaskItem[]
+  documents_count: number
+  recent_documents_preview: DashboardDocumentItem[]
 }
