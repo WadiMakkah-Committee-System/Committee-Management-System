@@ -94,12 +94,6 @@ class UpdateSectionsIn(BaseModel):
     sections: list[MinutesSection]
 
 
-class SendToReviewIn(BaseModel):
-    """إرسال المحضر للمراجعة — رئيس اللجنة يحدد المراجعين من أعضاء اللجنة."""
-
-    reviewer_user_ids: list[uuid.UUID] = Field(min_length=1)
-
-
 class ReviewDecisionIn(BaseModel):
     """اعتماد مراجعة أو إعادتها للتعديل — comment إلزامي عمليًا عند
     الإعادة فقط (يُتحقَّق منه بطبقة الخدمة لا هنا)."""

@@ -38,16 +38,6 @@ export async function updateMinutesSections(
   return data
 }
 
-export async function sendMinutesToReview(
-  meetingId: string,
-  reviewerUserIds: string[],
-): Promise<MeetingMinutes> {
-  const { data } = await apiClient.post<MeetingMinutes>(`/meetings/${meetingId}/minutes/review/send`, {
-    reviewer_user_ids: reviewerUserIds,
-  })
-  return data
-}
-
 export async function approveMinutesReview(meetingId: string, comment?: string): Promise<MeetingMinutes> {
   const { data } = await apiClient.post<MeetingMinutes>(`/meetings/${meetingId}/minutes/review/approve`, {
     comment: comment ?? null,

@@ -47,12 +47,6 @@ export function useUpdateMinutesSections() {
   )
 }
 
-export function useSendMinutesToReview() {
-  return useMinutesMutation((args: { meetingId: string; reviewerUserIds: string[] }) =>
-    minutesApi.sendMinutesToReview(args.meetingId, args.reviewerUserIds),
-  )
-}
-
 export function useApproveMinutesReview() {
   return useMinutesMutation((args: { meetingId: string; comment?: string }) =>
     minutesApi.approveMinutesReview(args.meetingId, args.comment),

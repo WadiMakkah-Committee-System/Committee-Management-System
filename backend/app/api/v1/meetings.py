@@ -65,7 +65,6 @@ from app.schemas.meeting_minutes import (
     MinutesTemplateOut,
     ReviewDecisionIn,
     SelectTemplateIn,
-    SendToReviewIn,
     SignMinutesIn,
     UpdateSectionsIn,
 )
@@ -859,22 +858,6 @@ async def update_minutes_sections(
             meeting_id=meeting_id,
             actor=current_user,
             sections=[s.model_dump() for s in payload.sections],
-        )
-    except _SERVICE_ERRORS as exc:
-        raise _handle_errors(exc) from exc
-    return _minutes_out(minutes)
-
-
-@router.post("/{meeting_id}/minutes/review/send", response_model=MeetingMinutesOut)
-async def send_minutes_to_review(
-    meeting_id: uuid.UUID,
-    payload: SendToReviewIn,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> MeetingMinutesOut:
-    try:
-        minutes = await meeting_minutes_service.send_to_review(
-            db, meeting_id=meeting_id, actor=current_user, reviewer_user_ids=payload.reviewer_user_ids
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc

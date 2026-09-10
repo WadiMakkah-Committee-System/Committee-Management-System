@@ -32,7 +32,6 @@ import {
   useReturnMinutesReview,
   useSelectMinutesTemplate,
   useSendMinutesForSignature,
-  useSendMinutesToReview,
   useSignMinutes,
   useUpdateMinutesSections,
 } from '@/hooks/useMeetingMinutes'
@@ -45,7 +44,7 @@ import { Textarea } from '@/components/ui/Textarea'
 import { Avatar } from '@/components/ui/Avatar'
 import { Tabs, type TabItem } from '@/components/ui/Tabs'
 import { Modal } from '@/components/ui/Modal'
-import { MultiCheckPicker } from '@/components/ui/MultiCheckPicker'
+import { useToast } from '@/components/ui/Toast'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import type { MinutesSection, MinutesTemplateId } from '@/types'
@@ -103,6 +102,7 @@ export function MeetingMinutesPage() {
   const linkedItems = (extractedItemsQuery.data ?? []).filter((i) => i.status !== 'pending')
 
   const { collaborators, remoteSections, announceEditing, broadcastUpdate } = useMinutesRealtime(meetingId)
+  const { showToast } = useToast()
 
   const [tab, setTab] = useState('editor')
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
@@ -111,7 +111,6 @@ export function MeetingMinutesPage() {
   const [reviewComment, setReviewComment] = useState('')
   const [returnComment, setReturnComment] = useState('')
   const [returnDialogOpen, setReturnDialogOpen] = useState<'review' | 'approval' | null>(null)
-  const [reviewerIds, setReviewerIds] = useState<string[]>([])
   const [signatureOpen, setSignatureOpen] = useState(false)
   const [mutationError, setMutationError] = useState<string | null>(null)
 
@@ -140,7 +139,6 @@ export function MeetingMinutesPage() {
 
   const updateSectionsMutation = useUpdateMinutesSections()
   const selectTemplateMutation = useSelectMinutesTemplate()
-  const sendToReviewMutation = useSendMinutesToReview()
   const approveReviewMutation = useApproveMinutesReview()
   const returnReviewMutation = useReturnMinutesReview()
   const approveMutation = useApproveMinutes()
@@ -158,7 +156,14 @@ export function MeetingMinutesPage() {
     scopeFor(user, 'minutes.approve') === 'all' || (!!committee && committee.chair_user_id === user?.user_id)
 
   const myReviewer = minutes?.reviewers.find((r) => r.user.user_id === user?.user_id) ?? null
-  const editable = canManage && minutes?.stage === 'preparing'
+  // تحديث 2026-09-10: محاضر قديمة تكوّنت قبل هذا التحديث ممكن تكون
+  // متوقفة فعليًا بمرحلة 'review' أو 'approval' (القيم القديمة قبل حذف
+  // خطوة "إرسال للمراجعة") — لازم نتعامل معهم هنا كـ"قابل للاعتماد/تعديل"
+  // بالضبط متل approve_minutes بالباك-إند، وإلا تظهر أزرار الاعتماد مقفلة
+  // لأي محضر قديم عالق بإحدى هالمرحلتين.
+  const approvableStage =
+    minutes?.stage === 'preparing' || minutes?.stage === 'review' || minutes?.stage === 'approval'
+  const editable = canManage && approvableStage
 
   const sortedAgendaItems = useMemo(
     () => (meeting ? [...meeting.agenda_items].sort((a, b) => a.sort_order - b.sort_order) : []),
@@ -231,18 +236,6 @@ export function MeetingMinutesPage() {
     )
   }
 
-  function handleSendToReview() {
-    if (!meetingId || reviewerIds.length === 0) return
-    setMutationError(null)
-    sendToReviewMutation.mutate(
-      { meetingId, reviewerUserIds: reviewerIds },
-      {
-        onSuccess: () => setReviewerIds([]),
-        onError: (err) => setMutationError(extractErrorMessage(err)),
-      },
-    )
-  }
-
   function handleApproveReview() {
     if (!meetingId) return
     setMutationError(null)
@@ -263,7 +256,15 @@ export function MeetingMinutesPage() {
           setReturnComment('')
           setTab('editor')
         },
-        onError: (err) => setMutationError(extractErrorMessage(err)),
+        // تحديث 2026-09-10: هذا الزر داخل Modal (z-50 يغطي كامل الشاشة) —
+        // شريط mutationError يترسم بجسم الصفحة الأساسي (خلف الـModal
+        // تمامًا)، فأي فشل هنا كان يمر بصمت من غير ما تشوفه المستخدمة.
+        // الـToast (z-100) يترسم فوق كل شي فيبقى ظاهر حتى والـModal مفتوح.
+        onError: (err) => {
+          const msg = extractErrorMessage(err)
+          setMutationError(msg)
+          showToast(msg, 'error')
+        },
       },
     )
   }
@@ -288,7 +289,11 @@ export function MeetingMinutesPage() {
           setReturnComment('')
           setTab('editor')
         },
-        onError: (err) => setMutationError(extractErrorMessage(err)),
+        onError: (err) => {
+          const msg = extractErrorMessage(err)
+          setMutationError(msg)
+          showToast(msg, 'error')
+        },
       },
     )
   }
@@ -301,11 +306,32 @@ export function MeetingMinutesPage() {
 
   function handleSaveSignature() {
     if (!meetingId || !sigPadRef.current || sigPadRef.current.isEmpty()) return
-    const dataUrl = sigPadRef.current.getTrimmedCanvas().toDataURL('image/png')
+    // تحديث 2026-09-10 (بلاغ لاما — "زر الحفظ ما يشتغل"): السبب الفعلي
+    // (تأكّدنا منه من Console المتصفح): getTrimmedCanvas() بمكتبة
+    // react-signature-canvas@1.1.0-alpha.2 يستخدم داخليًا حزمة trim-canvas
+    // (تصدير CommonJS)، وVite يفشل بتحويلها الصحيح ضمن dependency
+    // pre-bundling فيرمي فورًا "TypeError: (0 , import_build.default) is
+    // not a function" — قبل حتى ما نوصل لـsignMutation.mutate. يعني ما
+    // فيه طلب شبكة أصلًا ولا خطأ يبان — الزر "يتجمد" فعليًا. الحل: نتجاوز
+    // getTrimmedCanvas() كليًا ونستخدم toDataURL() مباشرة (تفويض مباشر
+    // لمكتبة signature_pad الأساسية، بدون المرور بـtrim-canvas المعطوبة) —
+    // الفرق الوحيد إن الصورة ما تُقصّ تلقائيًا للهامش الشفاف حول التوقيع،
+    // وهذا شكلي بحت ومالوش أي أثر على صحة التوقيع نفسه.
+    const dataUrl = sigPadRef.current.toDataURL('image/png')
     setMutationError(null)
     signMutation.mutate(
       { meetingId, signatureImage: dataUrl },
-      { onSuccess: () => setSignatureOpen(false), onError: (err) => setMutationError(extractErrorMessage(err)) },
+      {
+        onSuccess: () => setSignatureOpen(false),
+        // إبقاء الـToast (بالإضافة لـmutationError) — الـModal (z-50) يغطي
+        // شريط mutationError اللي يترسم بجسم الصفحة الأساسي، فأي فشل فعلي
+        // لاحق (401/403/422 من الباك-إند) يبقى خفي بدون هذا التنبيه.
+        onError: (err) => {
+          const msg = extractErrorMessage(err)
+          setMutationError(msg)
+          showToast(msg, 'error')
+        },
+      },
     )
   }
 
@@ -343,22 +369,25 @@ export function MeetingMinutesPage() {
 
   const headerAction = (() => {
     if (!minutes) return null
-    if (minutes.stage === 'preparing' && canManage)
+    // تحديث 2026-09-10 (قرار لاما): ما فيه خطوة "إرسال للمراجعة" — المراجعة
+    // مفتوحة تلقائيًا لكل أعضاء اللجنة بمجرد اختيار القالب. رئيس اللجنة
+    // يقدر يعتمد من مرحلة "التحضير" مباشرة في أي وقت (بدون انتظار
+    // المراجعين)، وإلا فالمراجع العادي يشوف زر اعتماد مراجعته الخاصة.
+    if (approvableStage && canApprove)
       return (
-        <Button icon={<Send size={16} />} disabled={sections.length === 0} onClick={() => setTab('review')}>
-          إرسال للمراجعة
+        <Button
+          icon={<Stamp size={16} />}
+          disabled={sections.length === 0}
+          loading={approveMutation.isPending}
+          onClick={handleApprove}
+        >
+          اعتماد المحضر
         </Button>
       )
-    if (minutes.stage === 'review' && myReviewer && myReviewer.status === 'pending')
+    if (approvableStage && myReviewer && myReviewer.status === 'pending')
       return (
         <Button icon={<Check size={16} />} loading={approveReviewMutation.isPending} onClick={handleApproveReview}>
           اعتماد المراجعة
-        </Button>
-      )
-    if (minutes.stage === 'approval' && canApprove)
-      return (
-        <Button icon={<Stamp size={16} />} loading={approveMutation.isPending} onClick={handleApprove}>
-          اعتماد المحضر
         </Button>
       )
     if (minutes.stage === 'signature' && canManage && minutes.signatures.length === 0)
@@ -845,34 +874,13 @@ export function MeetingMinutesPage() {
               <Card className="lg:col-span-2">
                 <h3 className="text-sm font-semibold text-text-primary">مراجعة المحضر قبل الاعتماد</h3>
                 <p className="mt-1 text-xs text-text-muted">
-                  راجعي محتوى المحضر وسجّلي ملاحظاتك، ثم اعتمدي المراجعة أو أعيديه للتعديل.
+                  المراجعة مفتوحة تلقائيًا لكل أعضاء اللجنة بمجرد اختيار القالب — راجعي محتوى المحضر وسجّلي
+                  ملاحظاتك، ورئيس اللجنة يقدر يعتمد المحضر في أي وقت دون انتظار اكتمال المراجعات.
                 </p>
 
-                {minutes.stage === 'preparing' && canManage && (
-                  <div className="mt-4 rounded-md border border-border-default bg-bg-elevated p-4">
-                    <p className="mb-2 text-sm font-semibold text-text-primary">إرسال المحضر للمراجعة</p>
-                    <MultiCheckPicker
-                      items={(committee?.members ?? []).filter((m) => m.user_id !== user?.user_id)}
-                      getId={(m) => m.user_id}
-                      getLabel={(m) => `${m.first_name} ${m.last_name}`}
-                      selected={reviewerIds}
-                      onChange={setReviewerIds}
-                      searchPlaceholder="ابحثي عن عضو..."
-                    />
-                    <Button
-                      className="mt-3"
-                      size="sm"
-                      icon={<Send size={14} />}
-                      disabled={reviewerIds.length === 0}
-                      loading={sendToReviewMutation.isPending}
-                      onClick={handleSendToReview}
-                    >
-                      إرسال للمراجعة
-                    </Button>
-                  </div>
-                )}
-
-                {minutes.stage !== 'preparing' && (
+                {minutes.stage === 'none' || !minutes.template_id ? (
+                  <p className="mt-4 text-xs text-text-muted">لم يتم اختيار قالب بعد — لا يوجد محتوى للمراجعة.</p>
+                ) : (
                   <>
                     <div className="mt-4 max-h-96 space-y-4 overflow-y-auto rounded-md border border-border-default bg-bg-elevated p-4">
                       {minutes.sections.map((s) => (
@@ -884,7 +892,7 @@ export function MeetingMinutesPage() {
                         </div>
                       ))}
                     </div>
-                    {myReviewer && myReviewer.status === 'pending' && minutes.stage === 'review' && (
+                    {myReviewer && myReviewer.status === 'pending' && approvableStage && (
                       <>
                         <Textarea
                           value={reviewComment}
@@ -957,8 +965,9 @@ export function MeetingMinutesPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-text-primary">اعتماد المحضر</h3>
                     <p className="mt-1 text-xs text-text-muted">
-                      يتم الاعتماد بعد اكتمال موافقة جميع المراجعين (
-                      {minutes.reviewers.filter((r) => r.status === 'approved').length}/{minutes.reviewers.length}).
+                      رئيس اللجنة يقدر يعتمد المحضر في أي وقت دون انتظار اكتمال مراجعة الأعضاء (
+                      {minutes.reviewers.filter((r) => r.status === 'approved').length}/{minutes.reviewers.length}
+                      موافقة مسجَّلة حتى الآن).
                     </p>
                   </div>
                 </div>
@@ -971,7 +980,7 @@ export function MeetingMinutesPage() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button
                   icon={<Stamp size={14} />}
-                  disabled={minutes.stage !== 'approval' || !canApprove}
+                  disabled={!approvableStage || !canApprove}
                   loading={approveMutation.isPending}
                   onClick={handleApprove}
                 >
@@ -980,7 +989,7 @@ export function MeetingMinutesPage() {
                 <Button variant="secondary" icon={<Eye size={14} />} onClick={() => setTab('view')}>
                   عرض المحضر
                 </Button>
-                {canApprove && minutes.stage === 'approval' && (
+                {canApprove && minutes.stage === 'signature' && (
                   <Button
                     variant="secondary"
                     icon={<RotateCcw size={14} />}
@@ -1127,7 +1136,11 @@ export function MeetingMinutesPage() {
           setReturnComment('')
         }}
         title="إعادة المحضر للتعديل"
-        description="سيعود المحضر إلى مرحلة الإعداد، وسيُشعَر المسؤول عن الإعداد بالملاحظات المسجلة."
+        description={
+          returnDialogOpen === 'approval'
+            ? 'سيُلغى اعتماد المحضر ويعود قابلاً للتعديل من جديد، وسيُشعَر المسؤول عن الإعداد بالملاحظات المسجلة.'
+            : 'سيُسجَّل رأيك كإعادة للتعديل مع ملاحظاتك، وسيُشعَر المسؤول عن الإعداد بها — المحضر يبقى مفتوحًا للتعديل دون انتظار.'
+        }
         footer={
           <>
             <Button

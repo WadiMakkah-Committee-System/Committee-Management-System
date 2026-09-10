@@ -263,6 +263,16 @@ async def select_template(
     if minutes.owner_user_id is None:
         minutes.owner_user_id = actor.user_id
 
+    # تحديث 2026-09-10 (قرار لاما — إلغاء اختيار المراجعين يدويًا،
+    # المراجعة تصير "مفتوحة" لكل أعضاء اللجنة تلقائيًا بمجرد اختيار
+    # القالب، بمن فيهم رئيسها): تُعبَّأ مرة واحدة فقط (لو فارغة) — إعادة
+    # اختيار القالب لاحقًا لا تصفّر مراجعات موجودة أصلًا.
+    if not minutes.reviewers:
+        minutes.reviewers = [
+            MeetingMinutesReviewer(minutes_id=minutes.minutes_id, user_id=member.user_id)
+            for member in _all_committee_members(committee)
+        ]
+
     await db.commit()
     return await _load_minutes_or_404(db, meeting_id)
 
@@ -303,36 +313,6 @@ async def update_sections(
 # ============================== المراجعة ==============================
 
 
-async def send_to_review(
-    db: AsyncSession, *, meeting_id: uuid.UUID, actor: User, reviewer_user_ids: list[uuid.UUID]
-) -> MeetingMinutes:
-    meeting, committee = await _load_meeting_and_committee(db, meeting_id)
-    await _require_access(db, actor, committee, "minutes.update", "ليست لديك صلاحية إرسال المحضر للمراجعة")
-
-    minutes = await _load_minutes_or_404(db, meeting_id)
-    if minutes.stage != MeetingMinutesStage.preparing:
-        raise MinutesInvalidStateError("المحضر ليس بمرحلة الإعداد")
-    if not minutes.template_id:
-        raise MinutesValidationError("اختاري قالبًا للمحضر أولًا")
-
-    member_ids = {m.user_id for m in _all_committee_members(committee)}
-    invalid_ids = set(reviewer_user_ids) - member_ids
-    if invalid_ids:
-        raise MinutesValidationError("المراجعون يجب أن يكونوا من أعضاء اللجنة")
-
-    for existing in list(minutes.reviewers):
-        await db.delete(existing)
-    minutes.reviewers = [
-        MeetingMinutesReviewer(minutes_id=minutes.minutes_id, user_id=user_id)
-        for user_id in reviewer_user_ids
-    ]
-    minutes.stage = MeetingMinutesStage.review
-    minutes.sent_to_review_at = datetime.now(UTC)
-
-    await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
-
-
 async def submit_review(
     db: AsyncSession,
     *,
@@ -345,30 +325,24 @@ async def submit_review(
     await _require_access(db, actor, committee, "minutes.approve", "ليست لديك صلاحية اعتماد المراجعة")
 
     minutes = await _load_minutes_or_404(db, meeting_id)
-    if minutes.stage != MeetingMinutesStage.review:
-        raise MinutesInvalidStateError("المحضر ليس بمرحلة المراجعة")
+    if minutes.stage != MeetingMinutesStage.preparing:
+        raise MinutesInvalidStateError("المحضر ليس بمرحلة تسمح بالمراجعة")
 
     reviewer_row = next((r for r in minutes.reviewers if r.user_id == actor.user_id), None)
     if reviewer_row is None:
         raise MinutesForbiddenError("لست ضمن مراجعي هذا المحضر")
 
+    # تحديث 2026-09-10 (قرار لاما — المراجعة "مفتوحة" لكل الأعضاء تلقائيًا،
+    # ولا تُستخدم كبوابة أصلًا): تسجيل رأي/ملاحظة المراجع فقط، بلا أي أثر
+    # على مرحلة المحضر — لا إعادة تلقائية للتعديل عند الرفض، ولا نقل
+    # تلقائي عند اكتمال الموافقات. رئيس اللجنة يقدر يعتمد من "التحضير"
+    # مباشرة في أي وقت يبيه، بغض النظر عن حالة المراجعين (راجعي
+    # approve_minutes أدناه).
     reviewer_row.status = (
         MeetingMinutesReviewStatus.approved if approve else MeetingMinutesReviewStatus.returned
     )
     reviewer_row.comment = comment
     reviewer_row.reviewed_at = datetime.now(UTC)
-
-    if not approve:
-        # إعادة فورية للتعديل بمجرد أول ملاحظة رفض من أي مراجع — نفس
-        # سلوك Lovable (returnForEdit) — بدل انتظار بقية المراجعين على
-        # محضر يحتاج تعديلًا مؤكدًا أصلًا.
-        minutes.stage = MeetingMinutesStage.preparing
-        minutes.sent_to_review_at = None
-        for r in minutes.reviewers:
-            r.status = MeetingMinutesReviewStatus.pending
-            r.reviewed_at = None
-    elif all(r.status == MeetingMinutesReviewStatus.approved for r in minutes.reviewers):
-        minutes.stage = MeetingMinutesStage.approval
 
     await db.commit()
     return await _load_minutes_or_404(db, meeting_id)
@@ -382,8 +356,17 @@ async def approve_minutes(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
     await _require_access(db, actor, committee, "minutes.approve", "ليست لديك صلاحية اعتماد المحضر")
 
     minutes = await _load_minutes_or_404(db, meeting_id)
-    if minutes.stage != MeetingMinutesStage.approval:
-        raise MinutesInvalidStateError("المحضر ليس بمرحلة الاعتماد")
+    # تحديث 2026-09-10 (قرار لاما): الاعتماد صار متاحًا مباشرة من مرحلة
+    # "التحضير" في أي وقت يقرره رئيس اللجنة — بدون انتظار اكتمال مراجعة
+    # الأعضاء وبدون المرور بمرحلتي "المراجعة"/"الاعتماد" القديمتين كبوابة.
+    # أبقينا review وapproval هنا فقط توافقًا رجعيًا مع أي محاضر كانت فعلًا
+    # بهذه المرحلة من قبل هذا التحديث.
+    if minutes.stage not in (
+        MeetingMinutesStage.preparing,
+        MeetingMinutesStage.review,
+        MeetingMinutesStage.approval,
+    ):
+        raise MinutesInvalidStateError("المحضر ليس بمرحلة تسمح بالاعتماد")
 
     minutes.stage = MeetingMinutesStage.signature
     minutes.approved_at = datetime.now(UTC)
@@ -395,14 +378,15 @@ async def approve_minutes(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
 async def return_for_edit(
     db: AsyncSession, *, meeting_id: uuid.UUID, actor: User, comment: str | None
 ) -> MeetingMinutes:
-    """إعادة المحضر للتعديل من مرحلة الاعتماد مباشرة (بدون المرور
-    بمراجع محدَّد — بخلاف submit_review أعلاه اللي يُستخدم فقط أثناء
-    مرحلة المراجعة)."""
+    """إعادة المحضر للتعديل — تُستخدم الآن كطريقة "التراجع" الوحيدة بعد
+    الاعتماد (approve_minutes صار يقفز مباشرة من "التحضير" إلى "التوقيع"،
+    فما فيه مرحلة "اعتماد" وسيطة يُنتظر فيها الرد — الإعادة هنا تلغي
+    اعتمادًا سابقًا وترجّع المحضر قابلًا للتعديل من جديد)."""
     meeting, committee = await _load_meeting_and_committee(db, meeting_id)
     await _require_access(db, actor, committee, "minutes.approve", "ليست لديك صلاحية إعادة المحضر للتعديل")
 
     minutes = await _load_minutes_or_404(db, meeting_id)
-    if minutes.stage != MeetingMinutesStage.approval:
+    if minutes.stage not in (MeetingMinutesStage.approval, MeetingMinutesStage.signature):
         raise MinutesInvalidStateError("المحضر ليس بمرحلة تسمح بالإعادة للتعديل")
 
     minutes.stage = MeetingMinutesStage.preparing
