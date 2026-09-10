@@ -2,26 +2,31 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
 
-const SESSION_KEY = 'wm-splash-shown'
-
 /**
- * شاشة افتتاحية (Splash Screen) — تظهر مرة واحدة فقط لكل جلسة متصفح
- * (sessionStorage، وليس مرة واحدة للأبد — علامة تبويب/زيارة جديدة تشوفها
- * من جديد، طلب صريح: "يظهر مباشرة عند فتح الموقع لأول مرة"). طبقة عرض
- * بحتة (Overlay بـposition:fixed فوق كل شيء) — لا تلمس منطق التوجيه أو
- * صفحة تسجيل الدخول إطلاقًا؛ ما تحتها (App الفعلي) يبدأ برندره فورًا
- * خلفها، وتُكشَف عنه فقط بالتلاشي، بدل انتظاره.
+ * شاشة افتتاحية (Splash Screen) — طبقة عرض بحتة (Overlay بـposition:fixed
+ * فوق كل شيء)، مصمَّمة لتُستخدَم مع صفحة تسجيل الدخول تحديدًا (ضعيها
+ * كغلاف حول <LoginPage /> بمسار /login بـApp.tsx، وليس حول التطبيق كامل).
  *
- * التصميم (طلب صريح من صاحبة المشروع 2026-09-09 — Corporate/Elegant/
- * Minimal، بلا Gradient مبالغ فيه ولا Glassmorphism ولا Neon):
- * - خلفية اللون الأساسي لهوية وادي مكة (--brand-primary) فقط، بلا تدرّج.
+ * تحديث 2026-09-09 (طلب صريح من صاحبة المشروع): تظهر **في كل مرة** يصل
+ * فيها المستخدم لصفحة تسجيل الدخول — بلا أي تتبّع لـ"ظهرت من قبل"
+ * (sessionStorage) كما بالنسخة الأولى؛ كل تحميل/دخول لهذه الصفحة تحديدًا
+ * = ظهور جديد للشاشة، بينما التنقّل الداخلي بالتطبيق بعد تسجيل الدخول لا
+ * يمرّ بهذا المكوّن إطلاقًا (غير مرتبط بأي راوت آخر).
+ *
+ * التصميم (Corporate/Elegant/Minimal، بلا Gradient مبالغ فيه ولا
+ * Glassmorphism ولا Neon):
+ * - خلفية: نسخة أغمق من اللون البنفسجي الظاهر بالشعار الرسمي نفسه
+ *   (--color-brand-purple: #9a559c بالنظام) — وليس لونًا عشوائيًا جديدًا؛
+ *   نفس البنفسجي مع تخفيض إضاءة ~28% فقط (#6e3d70).
  * - الشعار الرسمي كما هو (wadi-makkah-mark.png) — بلا إعادة رسم أو تلوين.
  * - حركة واحدة هادئة: Fade+Scale خفيف عند الدخول (لا دوران، لا Bounce)،
- *   ثبات قصير، ثم Fade بسيط عند الخروج (بلا Scale) — بالضبط تسلسل الخطوات
- *   المطلوب. المدة الإجمالية من الظهور حتى الاختفاء الكامل ~1.5 ثانية.
+ *   ثبات قصير، ثم Fade بسيط عند الخروج (بلا Scale). المدة الإجمالية
+ *   ~1.5 ثانية.
  * - يحترم prefers-reduced-motion (يقصّر المدد ويلغي التحجيم لمن يفضّل
  *   حركة أقل، دون حذف الشاشة نفسها).
  */
+const SPLASH_BG = '#6e3d70'
+
 const TIMING = {
   logoEnterMs: 550,
   logoHoldMs: 550,
@@ -45,16 +50,10 @@ export function SplashScreen({ children }: { children: ReactNode }) {
   )
   const timing = prefersReducedMotion ? REDUCED_TIMING : TIMING
 
-  const [visible, setVisible] = useState(() => {
-    if (typeof window === 'undefined') return false
-    return !window.sessionStorage.getItem(SESSION_KEY)
-  })
+  const [visible, setVisible] = useState(true)
   const [logoVisible, setLogoVisible] = useState(true)
 
   useEffect(() => {
-    if (!visible) return
-    window.sessionStorage.setItem(SESSION_KEY, '1')
-
     const hideLogoTimer = window.setTimeout(
       () => setLogoVisible(false),
       timing.logoEnterMs + timing.logoHoldMs,
@@ -69,7 +68,7 @@ export function SplashScreen({ children }: { children: ReactNode }) {
       window.clearTimeout(hideScreenTimer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible])
+  }, [])
 
   const logoVariants = {
     hidden: { opacity: 0, scale: prefersReducedMotion ? 1 : 0.92 },
@@ -94,7 +93,8 @@ export function SplashScreen({ children }: { children: ReactNode }) {
             initial={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: timing.screenExitMs / 1000, ease: 'easeInOut' }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-brand-primary"
+            className="fixed inset-0 z-[100] flex items-center justify-center"
+            style={{ backgroundColor: SPLASH_BG }}
             role="presentation"
             aria-hidden="true"
             data-testid="splash-screen"
