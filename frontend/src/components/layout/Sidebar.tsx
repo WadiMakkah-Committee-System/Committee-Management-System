@@ -40,7 +40,7 @@ interface NavItem {
 
 /** ترتيب التنقل الموثّق في §15 — العناصر غير المبنية بعد تظهر معطّلة ("قريبًا") بدل إخفائها. */
 const NAV_ITEMS: NavItem[] = [
-  { label: 'لوحة التحكم', icon: LayoutDashboard, comingSoon: true },
+  { label: 'لوحة التحكم', icon: LayoutDashboard, path: '/dashboard' },
   {
     label: 'المستخدمين',
     icon: Users,
