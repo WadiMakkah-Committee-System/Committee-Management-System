@@ -1,46 +1,32 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { SplashScreen } from './SplashScreen'
 
 describe('SplashScreen', () => {
-  beforeEach(() => {
-    window.sessionStorage.clear()
-  })
-
   it('يعرض المحتوى الداخلي (children) فورًا بلا انتظار', () => {
     render(
       <SplashScreen>
-        <div>محتوى التطبيق</div>
+        <div>محتوى صفحة تسجيل الدخول</div>
       </SplashScreen>,
     )
-    expect(screen.getByText('محتوى التطبيق')).toBeInTheDocument()
+    expect(screen.getByText('محتوى صفحة تسجيل الدخول')).toBeInTheDocument()
   })
 
-  it('يعرض الشاشة الافتتاحية أول مرة بالجلسة (شعار وادي مكة ظاهر)', () => {
-    render(
+  it('يعرض الشاشة الافتتاحية عند كل عرض (بلا تتبّع "ظهرت من قبل")', () => {
+    const { unmount } = render(
       <SplashScreen>
-        <div>محتوى التطبيق</div>
+        <div>محتوى صفحة تسجيل الدخول</div>
       </SplashScreen>,
     )
     expect(screen.getByTestId('splash-screen')).toBeInTheDocument()
-  })
+    unmount()
 
-  it('لا يعرضها مرة ثانية بنفس الجلسة (sessionStorage محدَّد مسبقًا)', () => {
-    window.sessionStorage.setItem('wm-splash-shown', '1')
+    // إعادة عرض ثانية (تحاكي زيارة ثانية لصفحة تسجيل الدخول) — تظهر مجددًا.
     render(
       <SplashScreen>
-        <div>محتوى التطبيق</div>
+        <div>محتوى صفحة تسجيل الدخول</div>
       </SplashScreen>,
     )
-    expect(screen.queryByTestId('splash-screen')).not.toBeInTheDocument()
-  })
-
-  it('تسجّل ظهورها بـsessionStorage فور العرض الأول', () => {
-    render(
-      <SplashScreen>
-        <div>محتوى التطبيق</div>
-      </SplashScreen>,
-    )
-    expect(window.sessionStorage.getItem('wm-splash-shown')).toBe('1')
+    expect(screen.getByTestId('splash-screen')).toBeInTheDocument()
   })
 })
