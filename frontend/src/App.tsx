@@ -70,10 +70,16 @@ function AppBootstrap({ children }: { children: React.ReactNode }) {
 
 function App() {
   return (
-    <SplashScreen>
-      <AppBootstrap>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
+    <AppBootstrap>
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            <SplashScreen>
+              <LoginPage />
+            </SplashScreen>
+          }
+        />
 
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
@@ -156,8 +162,7 @@ function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </AppBootstrap>
-    </SplashScreen>
+    </AppBootstrap>
   )
 }
 
