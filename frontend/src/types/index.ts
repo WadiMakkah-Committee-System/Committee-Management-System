@@ -884,3 +884,57 @@ export interface NotificationPage {
 export interface UnreadCount {
   unread_count: number
 }
+
+/**
+ * أنواع وحدة "لوحة التحكم" — مطابقة تمامًا لـ backend/app/schemas/dashboard.py.
+ * راجعي رأس app/services/dashboard_service.py: كل عدّاد (`*_count`) يعكس
+ * الإجمالي الفعلي، وليس طول قائمة `*_preview` (تُقتصر على عدد قليل للعرض
+ * السريع فقط). "التقارير" (حالة استخدام رابعة بالـSRS) مؤجَّلة عمدًا —
+ * قرار صريح من صاحبة المشروع 2026-09-08.
+ */
+export interface DashboardCommitteeItem {
+  committee_id: string
+  name: string
+}
+
+export interface DashboardMeetingItem {
+  meeting_id: string
+  title: string
+  scheduled_at: string
+  mode: MeetingMode
+  committee_name: string
+}
+
+export interface DashboardDecisionItem {
+  decision_id: string
+  title: string
+  committee_name: string
+  voting_deadline: string | null
+}
+
+export interface DashboardTaskItem {
+  task_id: string
+  title: string
+  status: TaskStatus
+  end_date: string
+  committee_name: string
+}
+
+export interface DashboardDocumentItem {
+  document_id: string
+  title: string
+  created_at: string
+}
+
+export interface DashboardSummary {
+  committees_count: number
+  committees_preview: DashboardCommitteeItem[]
+  upcoming_meetings_count: number
+  upcoming_meetings_preview: DashboardMeetingItem[]
+  pending_votes_count: number
+  pending_votes_preview: DashboardDecisionItem[]
+  open_tasks_count: number
+  open_tasks_preview: DashboardTaskItem[]
+  documents_count: number
+  recent_documents_preview: DashboardDocumentItem[]
+}
