@@ -40,6 +40,7 @@ from sqlalchemy.orm import selectinload
 from app.core import storage_client
 from app.core.config import settings
 from app.models.committee import Committee, committee_members
+from app.models.committee_request import CommitteeFormationRequest
 from app.models.department import Department
 from app.models.document import (
     Document,
@@ -62,6 +63,27 @@ class DocumentValidationError(ValueError):
 async def _user_committee_ids(db: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
     result = await db.execute(
         select(committee_members.c.committee_id).where(committee_members.c.user_id == user_id)
+    )
+    return {row[0] for row in result.all()}
+
+
+async def _department_committee_ids(db: AsyncSession, dep_id: uuid.UUID) -> set[uuid.UUID]:
+    """
+    اللجان اللي "تتبع" إدارة معينة — تُعرَّف بإدارة مَن طلب تشكيلها
+    (CommitteeFormationRequest.requested_by)، وليس بعمود مباشر على
+    Committee (غير موجود بالنموذج أصلًا). قرار عمل موثّق مع لجينـ
+    2026-09-09: الأدمن هو مَن يطلب تشكيل لجان إدارته (committees.request.create
+    بنطاق all)، فهذا هو الرابط الطبيعي بين اللجنة وإدارتها — راجعي
+    can_view_document أدناه لاستخدامها.
+    """
+    result = await db.execute(
+        select(Committee.committee_id)
+        .join(
+            CommitteeFormationRequest,
+            CommitteeFormationRequest.request_id == Committee.source_request_id,
+        )
+        .join(User, User.user_id == CommitteeFormationRequest.requested_by)
+        .where(User.dep_id == dep_id, Committee.deleted_at.is_(None))
     )
     return {row[0] for row in result.all()}
 
@@ -96,6 +118,19 @@ async def can_view_document(db: AsyncSession, *, current_user: User, document: D
         user_committee_ids = await _user_committee_ids(db, current_user.user_id)
         if visible_committee_ids & user_committee_ids:
             return True
+        # إضافة موثّقة مع لجينـ 2026-09-09: مَن يملك صلاحية طلب تشكيل
+        # لجنة بنطاق "all" (الأدمن حاليًا) يشوف وثائق لجان إدارته حتى لو
+        # ما كان عضوًا فيها فعليًا — لأنه هو مَن يطلب تشكيلها أصلًا.
+        # مقيَّدة بإدارته هو تحديدًا (dep_id)، وليست تجاوزًا شاملًا لكل
+        # اللجان. راجعي _department_committee_ids أعلاه لتعريف "لجان
+        # الإدارة".
+        if (
+            current_user.dep_id is not None
+            and current_user.scope_for("committees.request.create") == "all"
+        ):
+            department_committee_ids = await _department_committee_ids(db, current_user.dep_id)
+            if visible_committee_ids & department_committee_ids:
+                return True
     return False
 
 
