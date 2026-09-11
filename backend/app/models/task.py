@@ -28,6 +28,12 @@ class TaskStatus(str, enum.Enum):
     completed = "completed"
 
 
+class TaskPriority(str, enum.Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -43,9 +49,19 @@ class Task(Base):
         nullable=False,
         server_default=TaskStatus.todo.value,
     )
+    priority: Mapped[TaskPriority] = mapped_column(
+        SAEnum(TaskPriority, name="task_priority", native_enum=True),
+        nullable=False,
+        server_default=TaskPriority.medium.value,
+    )
 
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    # تذكير قبل الاستحقاق + تنبيه تأخر فوري لرئيس اللجنة (migration 0031)
+    reminder_offset_days: Mapped[int] = mapped_column(nullable=False, server_default="1")
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    overdue_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     assignee_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False

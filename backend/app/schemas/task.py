@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.task import TaskStatus
+from app.models.task import TaskPriority, TaskStatus
 from app.schemas.committee import CommitteeMemberUserOut
 
 
@@ -21,6 +21,10 @@ class TaskCreate(BaseModel):
     start_date: date
     end_date: date
     assignee_user_id: uuid.UUID
+    priority: TaskPriority = TaskPriority.medium
+    # عدد الأيام قبل end_date لإرسال تذكير للمسؤول عن المهمة (افتراضي يوم واحد،
+    # اختياري لرئيس اللجنة يغيّره — طلب صاحبة المشروع 2026-09-11)
+    reminder_offset_days: int = Field(default=1, ge=0, le=30)
 
     @model_validator(mode="after")
     def _end_after_start(self) -> "TaskCreate":
@@ -35,6 +39,8 @@ class TaskUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=255)
     start_date: date | None = None
     end_date: date | None = None
+    priority: TaskPriority | None = None
+    reminder_offset_days: int | None = Field(default=None, ge=0, le=30)
 
 
 class TaskStatusUpdate(BaseModel):
@@ -66,10 +72,28 @@ class TaskOut(BaseModel):
     committee_id: uuid.UUID
     title: str
     status: TaskStatus
+    priority: TaskPriority
     start_date: date
     end_date: date
+    reminder_offset_days: int
     assignee: CommitteeMemberUserOut
     creator: CommitteeMemberUserOut
     assignment_history: list[TaskAssignmentHistoryOut]
     created_at: datetime
     updated_at: datetime
+
+
+class TaskActivityEntry(BaseModel):
+    """
+    سطر واحد بمسار المهمة الموحَّد (طلب صاحبة المشروع 2026-09-11، بعد
+    بحث في الأنظمة العالمية — Jira/ClickUp يدمجان كل التغييرات بخط زمني
+    واحد، بخلاف اقتصار مسار المهمة سابقًا على إعادة الإسناد فقط). يُبنى
+    بدمج task_assignment_history + audit_logs (target_type="task") معًا
+    — راجعي task_service.get_task_activity. label جاهز للعرض مباشرة
+    (يُبنى بالباك-إند، بنفس نمط نصوص notification_service.py).
+    """
+
+    entry_type: str  # "reassigned" | "status_changed" | "priority_changed" | "details_updated"
+    label: str
+    actor: CommitteeMemberUserOut | None
+    occurred_at: datetime
