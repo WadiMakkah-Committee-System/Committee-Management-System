@@ -106,7 +106,7 @@ export function DocumentChatPanel({
                   className="absolute left-0 top-full z-20 mt-1 max-h-80 w-64 overflow-y-auto rounded-sm border border-border-default bg-bg-elevated py-1 shadow-lg"
                 >
                   {conversations.length === 0 ? (
-                    <p className="px-3 py-3 text-center text-[12px] text-text-muted">ما فيه محادثات سابقة بعد</p>
+                    <p className="px-3 py-3 text-center text-[12px] text-text-muted">لا توجد محادثات سابقة بعد</p>
                   ) : (
                     conversations.map((c) => (
                       <button

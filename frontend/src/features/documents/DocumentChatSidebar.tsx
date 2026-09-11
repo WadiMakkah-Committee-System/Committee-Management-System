@@ -27,7 +27,7 @@ export function DocumentChatSidebar({ session, className }: { session: DocumentC
             <Spinner size={16} />
           </div>
         ) : conversations.length === 0 ? (
-          <p className="px-2 py-6 text-center text-[12px] text-text-muted">ما فيه محادثات سابقة بعد</p>
+          <p className="px-2 py-6 text-center text-[12px] text-text-muted">لا توجد محادثات سابقة بعد</p>
         ) : (
           <div className="flex flex-col gap-1">
             {conversations.map((c) => (
