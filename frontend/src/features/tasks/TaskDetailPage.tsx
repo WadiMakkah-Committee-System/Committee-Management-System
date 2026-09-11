@@ -29,7 +29,7 @@ import { Avatar } from '@/components/ui/Avatar'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ActionMenu } from '@/components/ui/ActionMenu'
 import { Modal } from '@/components/ui/Modal'
-import { TaskStatusBadge } from '@/components/ui/StatusBadge'
+import { TASK_STATUS_META, TaskStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { TaskFormModal, type TaskFormSubmitValues } from './TaskFormModal'
 import { TaskPipeline } from './TaskPipeline'
@@ -179,62 +179,76 @@ export function TaskDetailPage() {
       ]
     : []
 
+  const statusTone = TASK_STATUS_META[task.status].tone
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-        <div className="flex items-start gap-3">
-          <button
-            onClick={() => navigate('/tasks')}
-            className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
-            aria-label="العودة إلى المهام"
-          >
-            <ArrowRight size={18} />
-          </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-text-primary">{task.title}</h1>
-              <TaskStatusBadge status={task.status} />
+    <motion.div
+      initial={{ opacity: 0, x: 14 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.25, ease: 'easeOut' }}
+      className="flex flex-col gap-6"
+    >
+      <Card className="relative p-0">
+        <span
+          className="absolute inset-y-0 right-0 w-1 rounded-tr-md rounded-br-md"
+          style={{ backgroundColor: `var(--status-${statusTone}-main)` }}
+          aria-hidden
+        />
+        <div className="flex flex-col items-start justify-between gap-4 px-5 py-4 pr-6 sm:flex-row sm:items-center">
+          <div className="flex items-start gap-3">
+            <button
+              onClick={() => navigate('/tasks')}
+              className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
+              aria-label="العودة إلى المهام"
+            >
+              <ArrowRight size={18} />
+            </button>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl font-bold text-text-primary">{task.title}</h1>
+                <TaskStatusBadge status={task.status} />
+              </div>
+              {committee && <p className="mt-1 text-sm text-text-muted">لجنة: {committee.name}</p>}
             </div>
-            {committee && <p className="mt-1 text-sm text-text-muted">لجنة: {committee.name}</p>}
           </div>
+          {canManage && !isLocked && (
+            <ActionMenu
+              items={[
+                {
+                  label: 'تعديل المهمة',
+                  icon: <Pencil size={14} />,
+                  onClick: () => {
+                    setEditError(null)
+                    setEditOpen(true)
+                  },
+                },
+                {
+                  label: 'إعادة إسناد',
+                  icon: <Repeat size={14} />,
+                  onClick: () => {
+                    setReassignError(null)
+                    setReassignTarget(null)
+                    setReassignOpen(true)
+                  },
+                },
+                {
+                  label: 'حذف المهمة',
+                  icon: <Trash2 size={14} />,
+                  tone: 'danger',
+                  onClick: () => {
+                    setDeleteError(null)
+                    setDeleteOpen(true)
+                  },
+                },
+              ]}
+            />
+          )}
         </div>
-        {canManage && !isLocked && (
-          <ActionMenu
-            items={[
-              {
-                label: 'تعديل المهمة',
-                icon: <Pencil size={14} />,
-                onClick: () => {
-                  setEditError(null)
-                  setEditOpen(true)
-                },
-              },
-              {
-                label: 'إعادة إسناد',
-                icon: <Repeat size={14} />,
-                onClick: () => {
-                  setReassignError(null)
-                  setReassignTarget(null)
-                  setReassignOpen(true)
-                },
-              },
-              {
-                label: 'حذف المهمة',
-                icon: <Trash2 size={14} />,
-                tone: 'danger',
-                onClick: () => {
-                  setDeleteError(null)
-                  setDeleteOpen(true)
-                },
-              },
-            ]}
-          />
-        )}
-      </div>
+      </Card>
 
       <TaskPipeline status={task.status} />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <Card className="grid grid-cols-1 divide-y divide-border-default p-0 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         {[
           {
             icon: <CalendarRange size={20} />,
@@ -260,19 +274,18 @@ export function TaskDetailPage() {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+            className="flex items-center gap-4 px-5 py-4"
           >
-            <Card className="flex items-center gap-4">
-              <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-full', item.tone)}>
-                {item.icon}
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-text-primary">{item.value}</p>
-                <p className="mt-1 text-xs text-text-muted">{item.label}</p>
-              </div>
-            </Card>
+            <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-full', item.tone)}>
+              {item.icon}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-text-primary">{item.value}</p>
+              <p className="mt-1 text-xs text-text-muted">{item.label}</p>
+            </div>
           </motion.div>
         ))}
-      </div>
+      </Card>
 
       {canUpdateStatus && (
         <Card>
@@ -316,43 +329,54 @@ export function TaskDetailPage() {
         {task.assignment_history.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-text-muted">لا توجد أي عمليات إسناد بعد</p>
         ) : (
-          <div className="flex flex-col gap-2 p-3">
-            {[...task.assignment_history]
-              .sort((a, b) => new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime())
-              .map((entry, i) => (
+          <div className="flex flex-col p-4">
+            {(() => {
+              const sorted = [...task.assignment_history].sort(
+                (a, b) => new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime(),
+              )
+              return sorted.map((entry, i) => (
                 <motion.div
                   key={entry.history_id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-                  className="flex items-center gap-3 rounded-sm border border-info-border/25 bg-info-bg px-3.5 py-3"
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.25) }}
+                  className="relative flex gap-3"
                 >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-info text-white">
-                    {entry.from_user ? <UserCheck size={16} /> : <UserPlus size={16} />}
+                  {i < sorted.length - 1 && (
+                    <span
+                      className="absolute right-[15px] top-8 bottom-0 w-px bg-border-default"
+                      aria-hidden
+                    />
+                  )}
+                  <div className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-info text-white ring-4 ring-bg-surface">
+                    {entry.from_user ? <UserCheck size={15} /> : <UserPlus size={15} />}
                   </div>
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <p className="text-sm text-text-primary">
-                      {entry.from_user ? (
-                        <>
-                          إسناد من <span className="font-semibold">{entry.from_user.first_name} {entry.from_user.last_name}</span>{' '}
-                          إلى <span className="font-semibold">{entry.to_user.first_name} {entry.to_user.last_name}</span>
-                        </>
-                      ) : (
-                        <>
-                          الإسناد الأول إلى{' '}
-                          <span className="font-semibold">{entry.to_user.first_name} {entry.to_user.last_name}</span>
-                        </>
-                      )}
-                    </p>
-                    <p className="text-xs font-medium text-info/75">
-                      بواسطة {entry.changer.first_name} {entry.changer.last_name} · {formatDateTime(entry.changed_at)}
-                    </p>
-                  </div>
-                  <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border-2 border-bg-surface bg-info text-[10px] font-bold text-white">
-                    {getInitials(entry.to_user.first_name, entry.to_user.last_name)}
+                  <div className="flex min-w-0 flex-1 items-start justify-between gap-3 pb-6">
+                    <div className="flex min-w-0 flex-col gap-0.5">
+                      <p className="text-sm text-text-primary">
+                        {entry.from_user ? (
+                          <>
+                            إسناد من <span className="font-semibold">{entry.from_user.first_name} {entry.from_user.last_name}</span>{' '}
+                            إلى <span className="font-semibold">{entry.to_user.first_name} {entry.to_user.last_name}</span>
+                          </>
+                        ) : (
+                          <>
+                            الإسناد الأول إلى{' '}
+                            <span className="font-semibold">{entry.to_user.first_name} {entry.to_user.last_name}</span>
+                          </>
+                        )}
+                      </p>
+                      <p className="text-xs font-medium text-text-muted">
+                        بواسطة {entry.changer.first_name} {entry.changer.last_name} · {formatDateTime(entry.changed_at)}
+                      </p>
+                    </div>
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info-bg text-[10px] font-bold text-info">
+                      {getInitials(entry.to_user.first_name, entry.to_user.last_name)}
+                    </div>
                   </div>
                 </motion.div>
-              ))}
+              ))
+            })()}
           </div>
         )}
       </Card>
@@ -450,6 +474,6 @@ export function TaskDetailPage() {
         confirmLabel="تأكيد الإكمال"
         loading={statusMutation.isPending}
       />
-    </div>
+    </motion.div>
   )
 }
