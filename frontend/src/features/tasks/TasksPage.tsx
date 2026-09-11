@@ -7,12 +7,10 @@ import {
   Eye,
   ListChecks,
   ListTodo,
-  PauseCircle,
   Pencil,
   Plus,
   PlayCircle,
   Trash2,
-  type LucideIcon,
 } from 'lucide-react'
 import { useCommittees } from '@/hooks/useCommittees'
 import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
@@ -23,30 +21,28 @@ import { Select } from '@/components/ui/Select'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
-import { CardSkeleton } from '@/components/ui/Skeleton'
+import { TableSkeleton } from '@/components/ui/Skeleton'
 import { StatCard } from '@/components/ui/StatCard'
-import { TASK_STATUS_META } from '@/components/ui/StatusBadge'
+import { TASK_STATUS_META, TaskStatusBadge } from '@/components/ui/StatusBadge'
 import { ActionMenu } from '@/components/ui/ActionMenu'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { Avatar } from '@/components/ui/Avatar'
 import { useToast } from '@/components/ui/Toast'
 import { TaskFormModal, type TaskFormSubmitValues } from './TaskFormModal'
 import { cn, extractErrorMessage, formatDate } from '@/lib/utils'
 import type { Task, TaskStatus } from '@/types'
 
-/** أيقونة أكبر لكل حالة (شارة الحالة الصغيرة بـ StatusBadge.tsx بحجم 13px فقط، غير قابلة لإعادة التحجيم). */
-const TASK_STATUS_ICON: Record<TaskStatus, LucideIcon> = {
-  todo: ListTodo,
-  in_progress: PlayCircle,
-  on_hold: PauseCircle,
-  completed: CheckCircle2,
-}
-
-/** نص الحالة الملوّن أسفل عنوان البطاقة — Tailwind يحتاج أسماء classes حرفية (لا يدعم `text-${tone}` الديناميكي). */
-const TASK_STATUS_TEXT_CLASS: Record<TaskStatus, string> = {
-  todo: 'text-neutral',
-  in_progress: 'text-info',
-  on_hold: 'text-warning',
-  completed: 'text-success',
+/**
+ * نسبة تقدّم تقريبية لكل حالة — لعرضها كشريط تقدّم بصفوف قائمة المهام
+ * فقط (لا حقل progress فعلي بالباك-إند، Task.status هو مصدر الحقيقة
+ * الوحيد). "معلّقة" تبقى عند نفس نسبة "قيد التنفيذ" لأنها تفريع مؤقت
+ * عنها، بنفس مبدأ تبسيط TaskPipeline.tsx لأربع الحالات لثلاث محطات.
+ */
+const TASK_STATUS_PROGRESS: Record<TaskStatus, number> = {
+  todo: 0,
+  in_progress: 55,
+  on_hold: 55,
+  completed: 100,
 }
 
 /**
@@ -232,7 +228,9 @@ export function TasksPage() {
             key={stat.label}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
+            whileHover={{ y: -3 }}
             transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+            className="transition-shadow duration-200 hover:shadow-md rounded-md"
           >
             <StatCard label={stat.label} value={stat.value} icon={stat.icon} tone={stat.tone} />
           </motion.div>
@@ -296,11 +294,9 @@ export function TasksPage() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <CardSkeleton key={i} />
-          ))}
-        </div>
+        <Card className="overflow-hidden p-0">
+          <TableSkeleton rows={6} cols={4} />
+        </Card>
       ) : isError ? (
         <ErrorState onRetry={() => refetch()} />
       ) : filtered.length === 0 ? (
@@ -324,32 +320,75 @@ export function TasksPage() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((task, i) => {
-            const meta = TASK_STATUS_META[task.status]
-            const StatusIcon = TASK_STATUS_ICON[task.status]
-            const canManageTask = manageableCommitteeIds.has(task.committee_id)
-            const isCompleted = task.status === 'completed'
+        <Card className="p-0">
+          <div className="hidden items-center gap-4 rounded-t-md border-b border-border-default bg-table-header-bg px-4 py-2.5 text-xs font-semibold text-text-muted sm:flex">
+            <span className="flex-1">المهمة</span>
+            <span className="w-36 shrink-0">المسؤول</span>
+            <span className="w-32 shrink-0">التقدّم</span>
+            <span className="w-28 shrink-0">الحالة</span>
+          </div>
+          <div className="divide-y divide-border-default">
+            {filtered.map((task, i) => {
+              const meta = TASK_STATUS_META[task.status]
+              const canManageTask = manageableCommitteeIds.has(task.committee_id)
+              const isCompleted = task.status === 'completed'
+              const progress = TASK_STATUS_PROGRESS[task.status]
 
-            return (
-              <motion.div
-                key={task.task_id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
-              >
-                <Card
-                  interactive
+              return (
+                <motion.div
+                  key={task.task_id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2, delay: Math.min(i * 0.02, 0.3) }}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => navigate(`/tasks/${task.task_id}`)}
-                  style={{ backgroundColor: `var(--status-${meta.tone}-bg)` }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      navigate(`/tasks/${task.task_id}`)
+                    }
+                  }}
+                  className="flex cursor-pointer flex-col gap-3 border-r-[3px] px-4 py-3.5 transition-colors hover:bg-table-hover-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent sm:flex-row sm:items-center sm:gap-4"
+                  style={{ borderRightColor: `color-mix(in srgb, var(--status-${meta.tone}-main) 55%, transparent)` }}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-white"
-                      style={{ backgroundColor: `var(--status-${meta.tone}-main)` }}
-                    >
-                      <StatusIcon size={17} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-text-primary">{task.title}</p>
+                    <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
+                      <span className="flex items-center gap-1.5">
+                        <Building2 size={12} />
+                        {committeeNameById.get(task.committee_id) ?? 'لجنة غير معروفة'}
+                      </span>
+                      <span className="text-text-muted">
+                        {formatDate(task.start_date)} — {formatDate(task.end_date)}
+                      </span>
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2 sm:w-36">
+                    <Avatar firstName={task.assignee.first_name} lastName={task.assignee.last_name} size={26} />
+                    <span className="truncate text-xs font-medium text-text-secondary">
+                      {task.assignee.first_name} {task.assignee.last_name}
+                    </span>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2 sm:w-32">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-elevated">
+                      <motion.div
+                        className="h-full rounded-full"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${progress}%` }}
+                        transition={{ duration: 0.6, delay: Math.min(i * 0.02, 0.3) + 0.1, ease: 'easeOut' }}
+                        style={{ backgroundColor: `var(--status-${meta.tone}-main)` }}
+                      />
                     </div>
+                    <span className="w-8 shrink-0 text-left text-[11px] font-semibold tabular-nums text-text-muted">
+                      {progress}%
+                    </span>
+                  </div>
+
+                  <div className="flex shrink-0 items-center justify-between gap-2 sm:w-28 sm:justify-start">
+                    <TaskStatusBadge status={task.status} />
                     {canManageTask && (
                       <div onClick={(e) => e.stopPropagation()}>
                         <ActionMenu
@@ -383,25 +422,11 @@ export function TasksPage() {
                       </div>
                     )}
                   </div>
-                  <h3 className="mt-3 text-sm font-semibold text-text-primary">{task.title}</h3>
-                  <p className={`mt-0.5 text-xs font-semibold ${TASK_STATUS_TEXT_CLASS[task.status]}`}>
-                    {meta.label}
-                  </p>
-                  <p className="mt-2 flex items-center gap-1.5 text-xs text-text-secondary">
-                    <Building2 size={13} />
-                    {committeeNameById.get(task.committee_id) ?? 'لجنة غير معروفة'}
-                  </p>
-                  <p className="mt-1 text-xs text-text-secondary">
-                    المسؤول: {task.assignee.first_name} {task.assignee.last_name}
-                  </p>
-                  <p className="mt-1 text-xs text-text-secondary">
-                    التنفيذ: {formatDate(task.start_date)} — {formatDate(task.end_date)}
-                  </p>
-                </Card>
-              </motion.div>
-            )
-          })}
-        </div>
+                </motion.div>
+              )
+            })}
+          </div>
+        </Card>
       )}
 
       <TaskFormModal
