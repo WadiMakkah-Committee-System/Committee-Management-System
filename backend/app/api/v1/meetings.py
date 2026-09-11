@@ -32,15 +32,12 @@ from fastapi import (
     HTTPException,
     Response,
     UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
     status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import agora_client, storage_client
-from app.core.dependencies import CurrentUser, CurrentUserWS
-from app.core.meeting_realtime import connection_manager
+from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.schemas.committee import CommitteeMemberUserOut
 from app.schemas.meeting import (
@@ -62,8 +59,23 @@ from app.schemas.meeting_extracted_item import (
     ExtractedItemManualCreate,
     MeetingExtractedItemOut,
 )
-from app.services import meeting_chat_service, meeting_service, notification_service
+from app.schemas.meeting_minutes import (
+    MeetingMinutesOut,
+    MinutesSection,
+    MinutesTemplateOut,
+    ReviewDecisionIn,
+    SelectTemplateIn,
+    SignMinutesIn,
+    UpdateSectionsIn,
+)
+from app.services import meeting_chat_service, meeting_minutes_service, meeting_service, notification_service
 from app.services.meeting_chat_service import MeetingChatForbiddenError, MeetingChatNotFoundError
+from app.services.meeting_minutes_service import (
+    MinutesForbiddenError,
+    MinutesInvalidStateError,
+    MinutesNotFoundError,
+    MinutesValidationError,
+)
 from app.services.decision_service import (
     DecisionForbiddenError,
     DecisionInvalidStateError,
@@ -107,18 +119,22 @@ _SERVICE_ERRORS = (
     DecisionForbiddenError,
     DecisionInvalidStateError,
     DecisionValidationError,
+    MinutesNotFoundError,
+    MinutesForbiddenError,
+    MinutesInvalidStateError,
+    MinutesValidationError,
 )
 
 
 def _handle_errors(exc: Exception) -> Exception:
     """يترجم استثناءات طبقة الخدمة إلى استجابات HTTP مناسبة، مركزيًا."""
-    if isinstance(exc, (MeetingNotFoundError, AgendaItemNotFoundError, AttachmentNotFoundError, RecordingNotFoundError, DraftNotFoundError, ExtractedItemNotFoundError)):
+    if isinstance(exc, (MeetingNotFoundError, AgendaItemNotFoundError, AttachmentNotFoundError, RecordingNotFoundError, DraftNotFoundError, ExtractedItemNotFoundError, MinutesNotFoundError)):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    if isinstance(exc, (MeetingForbiddenError, TaskForbiddenError, DecisionForbiddenError)):
+    if isinstance(exc, (MeetingForbiddenError, TaskForbiddenError, DecisionForbiddenError, MinutesForbiddenError)):
         return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    if isinstance(exc, (MeetingInvalidStateError, TaskInvalidStateError, DecisionInvalidStateError)):
+    if isinstance(exc, (MeetingInvalidStateError, TaskInvalidStateError, DecisionInvalidStateError, MinutesInvalidStateError)):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
-    if isinstance(exc, (MeetingValidationError, DocumentValidationError, TaskValidationError, DecisionValidationError, ValueError)):
+    if isinstance(exc, (MeetingValidationError, DocumentValidationError, TaskValidationError, DecisionValidationError, MinutesValidationError, ValueError)):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if isinstance(exc, storage_client.StorageError):
         return HTTPException(
@@ -748,10 +764,225 @@ async def assign_extracted_item_as_decision(
 
 
 
-# ============================== القناة اللحظية (WebSocket) ==============================
+# ============================== المحاضر (Minutes) ==============================
+# SRS §7 — راجعي رأس app/services/meeting_minutes_service.py للتصميم
+# الكامل (آلة الحالة، القوالب الثابتة، التفويض). التحرير التعاوني اللحظي
+# (FR-MIN-005) يُبث عبر حدث "minutes.updated" على نفس قناة WebSocket
+# لغرفة الاجتماع أدناه — وليس عبر Polling على هذي الراوتات.
+
+
+def _minutes_out(minutes) -> MeetingMinutesOut:
+    return MeetingMinutesOut(
+        minutes_id=minutes.minutes_id,
+        meeting_id=minutes.meeting_id,
+        template_id=minutes.template_id,
+        stage=minutes.stage.value,
+        owner=CommitteeMemberUserOut.model_validate(minutes.owner) if minutes.owner else None,
+        sections=[MinutesSection.model_validate(s) for s in minutes.sections],
+        reviewers=[
+            {
+                "reviewer_id": r.reviewer_id,
+                "user": CommitteeMemberUserOut.model_validate(r.user),
+                "status": r.status.value,
+                "comment": r.comment,
+                "reviewed_at": r.reviewed_at,
+            }
+            for r in minutes.reviewers
+        ],
+        signatures=[
+            {
+                "signature_id": s.signature_id,
+                "user": CommitteeMemberUserOut.model_validate(s.user),
+                "signed": s.signed_at is not None,
+                "signed_at": s.signed_at,
+            }
+            for s in minutes.signatures
+        ],
+        sent_to_review_at=minutes.sent_to_review_at,
+        approved_at=minutes.approved_at,
+        sent_for_signature_at=minutes.sent_for_signature_at,
+        completed_at=minutes.completed_at,
+        created_at=minutes.created_at,
+        updated_at=minutes.updated_at,
+    )
+
+
+@router.get("/{meeting_id}/minutes/templates", response_model=list[MinutesTemplateOut])
+async def list_minutes_templates(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[MinutesTemplateOut]:
+    """FR-MIN-003: عرض قوالب المحاضر المعتمدة — نفس صلاحية عرض المحضر
+    (minutes.templates.view يُتحقَّق منه ضمنيًا عبر minutes.view هنا
+    لأن القائمة نفسها ثابتة بالكود بلا بيانات حساسة؛ الاختيار الفعلي
+    محمي بـminutes.templates.select أدناه)."""
+    try:
+        templates = await meeting_minutes_service.list_templates_for_meeting(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return [MinutesTemplateOut(**t) for t in templates]
+
+
+@router.get("/{meeting_id}/minutes", response_model=MeetingMinutesOut)
+async def get_meeting_minutes(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.get_or_create_minutes(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/template", response_model=MeetingMinutesOut)
+async def select_minutes_template(
+    meeting_id: uuid.UUID,
+    payload: SelectTemplateIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.select_template(
+            db, meeting_id=meeting_id, actor=current_user, template_id=payload.template_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.put("/{meeting_id}/minutes/sections", response_model=MeetingMinutesOut)
+async def update_minutes_sections(
+    meeting_id: uuid.UUID,
+    payload: UpdateSectionsIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    """حفظ (Autosave) — الفرونت يرسل القائمة الكاملة بعد كل تعديل محلي؛
+    البث اللحظي لبقية الحاضرين مسؤولية اتصال WebSocket المنفصل (حدث
+    minutes.updated)، وليس استجابة هذا الراوت."""
+    try:
+        minutes = await meeting_minutes_service.update_sections(
+            db,
+            meeting_id=meeting_id,
+            actor=current_user,
+            sections=[s.model_dump() for s in payload.sections],
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/review/approve", response_model=MeetingMinutesOut)
+async def approve_minutes_review(
+    meeting_id: uuid.UUID,
+    payload: ReviewDecisionIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.submit_review(
+            db, meeting_id=meeting_id, actor=current_user, approve=True, comment=payload.comment
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/review/return", response_model=MeetingMinutesOut)
+async def return_minutes_review(
+    meeting_id: uuid.UUID,
+    payload: ReviewDecisionIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.submit_review(
+            db, meeting_id=meeting_id, actor=current_user, approve=False, comment=payload.comment
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/approve", response_model=MeetingMinutesOut)
+async def approve_meeting_minutes(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.approve_minutes(db, meeting_id=meeting_id, actor=current_user)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/return", response_model=MeetingMinutesOut)
+async def return_minutes_for_edit(
+    meeting_id: uuid.UUID,
+    payload: ReviewDecisionIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.return_for_edit(
+            db, meeting_id=meeting_id, actor=current_user, comment=payload.comment
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/signature/send", response_model=MeetingMinutesOut)
+async def send_minutes_for_signature(
+    meeting_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.send_for_signature(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    meeting = await meeting_minutes_service.load_meeting(db, meeting_id)
+    background_tasks.add_task(
+        notification_service.notify_minutes_sent_for_signature,
+        minutes,
+        meeting,
+        actor_user_id=current_user.user_id,
+    )
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/sign", response_model=MeetingMinutesOut)
+async def sign_meeting_minutes(
+    meeting_id: uuid.UUID,
+    payload: SignMinutesIn,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.sign_minutes(
+            db, meeting_id=meeting_id, actor=current_user, signature_image=payload.signature_image
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    if minutes.stage.value == "completed":
+        meeting = await meeting_minutes_service.load_meeting(db, meeting_id)
+        background_tasks.add_task(notification_service.notify_minutes_completed, minutes, meeting)
+    return _minutes_out(minutes)
+
+
+# ============================== القناة اللحظية (Socket.IO) ==============================
 # محادثة الاجتماع + رفع اليد + بث "بند الأجندة قيد المناقشة الآن" —
-# راجعي رأس app/core/meeting_realtime.py وdb/migrations/0026_meeting_realtime.sql
-# للتصميم الكامل والقرار الموثّق (WebSocket حقيقي بدل Polling، 2026-09-06).
+# تحديث 2026-09-10: انتقلت من WebSocket خام (@router.websocket هنا سابقًا)
+# إلى Socket.IO — راجعي app/core/socketio_server.py (معالجات connect/
+# chat.send/hand.raise/...) وapp/main.py (تركيب socketio.ASGIApp) للتصميم
+# الكامل الجديد، وdb/migrations/0026_meeting_realtime.sql للسياق التاريخي.
 
 
 @router.get("/{meeting_id}/chat/messages", response_model=list[MeetingChatMessageOut])
@@ -759,7 +990,7 @@ async def get_meeting_chat_messages(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[MeetingChatMessageOut]:
     """تحميل تاريخ المحادثة عند فتح لوحة "المحادثة" — الرسائل الجديدة بعدها
-    تصل عبر WebSocket (meeting_live_socket أدناه) لا عبر Polling على هذا
+    تصل عبر Socket.IO (app/core/socketio_server.py) لا عبر Polling على هذا
     الراوت. يتطلب meetings.join (نفس صلاحية الانضمام للاجتماع)."""
     try:
         messages = await meeting_chat_service.list_messages(
@@ -770,114 +1001,3 @@ async def get_meeting_chat_messages(
     except MeetingChatForbiddenError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     return [MeetingChatMessageOut.model_validate(m) for m in messages]
-
-
-@router.websocket("/{meeting_id}/live")
-async def meeting_live_socket(
-    websocket: WebSocket,
-    meeting_id: uuid.UUID,
-    current_user: CurrentUserWS,
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """القناة اللحظية لغرفة الاجتماع — راجعي app/core/meeting_realtime.py.
-    المصادقة عبر Query Param (?token=...، راجعي app/core/dependencies.py::
-    get_current_user_ws) لأن اتصال WebSocket من المتصفح لا يقدر يحمل
-    Authorization Header مخصص. رفع اليد وبند الأجندة الحالي أحداث عابرة
-    فقط (تُبث ولا تُحفَظ بقاعدة البيانات — راجعي تعليق meeting_realtime.py)،
-    بخلاف رسائل المحادثة (تُحفَظ فعليًا عبر meeting_chat_service.send_message).
-
-    ملاحظة أداء موثّقة عمدًا: جلسة db تبقى مفتوحة طوال عمر الاتصال (قد
-    يكون طول الاجتماع كاملًا) — مقبول بحجم هذا المشروع (عملية Backend
-    واحدة، اجتماعات بعدد مشاركين محدود)؛ لو كبر الحجم لاحقًا يحتاج فتح
-    جلسة قصيرة العمر فقط عند كل حدث كتابة (رسالة محادثة) بدل جلسة واحدة
-    ثابتة طوال الاتصال.
-    """
-    try:
-        await meeting_chat_service.require_realtime_access(
-            db, actor=current_user, meeting_id=meeting_id
-        )
-    except (MeetingChatNotFoundError, MeetingChatForbiddenError):
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    await connection_manager.connect(meeting_id, websocket)
-    await connection_manager.broadcast(
-        meeting_id,
-        {
-            "type": "presence.joined",
-            "user_id": str(current_user.user_id),
-            "full_name": current_user.full_name,
-        },
-    )
-
-    try:
-        while True:
-            try:
-                data = await websocket.receive_json()
-            except WebSocketDisconnect:
-                break
-            except Exception:
-                # حمولة غير صالحة (JSON تالف مثلًا) — تُتجاهَل ويستمر الاتصال،
-                # بدل قطعه بالكامل بسبب رسالة واحدة سيئة.
-                continue
-
-            event_type = data.get("type") if isinstance(data, dict) else None
-
-            if event_type == "chat.send":
-                body = str(data.get("body", "")).strip()
-                if not body:
-                    continue
-                try:
-                    message = await meeting_chat_service.send_message(
-                        db, actor=current_user, meeting_id=meeting_id, body=body
-                    )
-                except ValueError:
-                    continue
-                await connection_manager.broadcast(
-                    meeting_id,
-                    {
-                        "type": "chat.message",
-                        "message": MeetingChatMessageOut.model_validate(message).model_dump(
-                            mode="json"
-                        ),
-                    },
-                )
-
-            elif event_type == "hand.raise":
-                await connection_manager.broadcast(
-                    meeting_id,
-                    {
-                        "type": "hand.raised",
-                        "user_id": str(current_user.user_id),
-                        "full_name": current_user.full_name,
-                    },
-                )
-
-            elif event_type == "hand.lower":
-                await connection_manager.broadcast(
-                    meeting_id,
-                    {"type": "hand.lowered", "user_id": str(current_user.user_id)},
-                )
-
-            elif event_type == "agenda.discussing":
-                agenda_item_id = data.get("agenda_item_id")
-                title = data.get("title")
-                if agenda_item_id and title:
-                    await connection_manager.broadcast(
-                        meeting_id,
-                        {
-                            "type": "agenda.discussing",
-                            "agenda_item_id": agenda_item_id,
-                            "title": title,
-                        },
-                    )
-    finally:
-        connection_manager.disconnect(meeting_id, websocket)
-        await connection_manager.broadcast(
-            meeting_id,
-            {
-                "type": "presence.left",
-                "user_id": str(current_user.user_id),
-                "full_name": current_user.full_name,
-            },
-        )

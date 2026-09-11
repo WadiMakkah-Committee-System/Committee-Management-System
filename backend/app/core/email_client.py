@@ -48,11 +48,31 @@ async def send_email(*, to: list[str], subject: str, html_body: str) -> None:
     sender_email = settings.SMTP_FROM_EMAIL or settings.SMTP_USER
     from_header = f"{settings.SMTP_FROM_NAME} <{sender_email}>" if settings.SMTP_FROM_NAME else sender_email
 
+    # تحديث 2026-09-10 (تشخيص بلاغ لاما — صفحة المحضر/الاجتماعات تعلّق
+    # بالكامل بضع دقائق ثم ترجع، رغم تجربة NullPool وQueuePool معًا بدون
+    # فرق حقيقي): تبيّن عبر فحص مباشر لـpg_stat_activity إن الجلسات
+    # العالقة "idle in transaction"/"active" كانت بانتظار العميل (Python)
+    # لا القاعدة (wait_event=ClientRead دائمًا) — يعني التعليق ليس بسبب
+    # الـ Pool أو WebSocket إطلاقًا، بل كود الطلب نفسه ما يرجع يُغلق
+    # جلسته. السبب: send_email تُستدعى دائمًا عبر BackgroundTasks (صح)،
+    # لكن FastAPI توثّق رسميًا إن تنظيف Dependency ذات yield (get_db هنا)
+    # ينتظر انتهاء BackgroundTasks أولًا قبل ما يُغلق الجلسة ويُعيدها
+    # للـ Pool — فأي طلب ينشئ/يعدّل اجتماع أو طلب لجنة (كلها تُرسِل بريدًا)
+    # يُبقي جلسته محجوزة طوال مدة محاولة الاتصال بسيرفر SMTP. وaiosmtplib
+    # بلا timeout صريح هنا (الافتراضي 60 ثانية نظريًا، لكن معروف بتوثيقه
+    # إنه لا يُطبَّق بشكل موثوق دائمًا على مرحلة connect() تحديدًا ببعض
+    # الحالات الشبكية — راجعي github.com/cole/aiosmtplib/issues/50) —
+    # فلو SMTP_HOST محجوب/غير قابل للوصول من شبكة الجهاز (شائع جدًا)،
+    # الاتصال يعلّق لدقائق بدل ما يفشل بسرعة، ويسحب معه جلسة DB الطلب
+    # الأصلي كامل هذي المدة. الحل هنا: timeout=10 صريح يجبر فشلًا سريعًا
+    # بدل تعليق غير محدود — لا يحل مشكلة الشبكة نفسها إن كانت SMTP فعلًا
+    # محجوبة، لكن يحدّ الضرر لـ١٠ ثوانٍ كحد أقصى بدل دقائق.
     try:
         async with aiosmtplib.SMTP(
             hostname=settings.SMTP_HOST,
             port=settings.SMTP_PORT,
             start_tls=settings.SMTP_USE_TLS,
+            timeout=10,
         ) as smtp:
             if settings.SMTP_USER:
                 await smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)

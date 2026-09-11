@@ -632,6 +632,8 @@ export type MeetingRealtimeEvent =
   | { type: 'agenda.discussing'; agenda_item_id: string; title: string }
   | { type: 'presence.joined'; user_id: string; full_name: string }
   | { type: 'presence.left'; user_id: string; full_name: string }
+  | { type: 'minutes.editing'; user_id: string; full_name: string; section_id: string }
+  | { type: 'minutes.updated'; user_id: string; full_name: string; sections: MinutesSection[] }
 
 /**
  * التسجيل الصوتي + المسودة بالذكاء الاصطناعي (Gemini) — راجعي رأس
@@ -699,6 +701,62 @@ export interface MeetingExtractedItem {
   linked_task_id: string | null
   linked_decision_id: string | null
   created_by: CommitteeMemberUser
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * وحدة "المحاضر" (SRS §7) — راجعي رأس backend/app/services/
+ * meeting_minutes_service.py للتصميم الكامل (آلة الحالة، القوالب
+ * الثابتة). التحرير التعاوني اللحظي عبر نفس WebSocket المستخدَم للمحادثة
+ * (useMeetingRealtime.ts) — أحداث minutes.editing/minutes.updated.
+ */
+export type MeetingMinutesStage = 'none' | 'preparing' | 'review' | 'approval' | 'signature' | 'completed'
+export type MeetingMinutesReviewStatus = 'pending' | 'approved' | 'returned'
+export type MinutesTemplateId = 'executive' | 'formal' | 'detailed'
+
+export interface MinutesSection {
+  id: string
+  title: string
+  body: string
+  order: number
+}
+
+export interface MinutesTemplate {
+  id: MinutesTemplateId
+  name: string
+  description: string
+  sections: string[]
+}
+
+export interface MinutesReviewer {
+  reviewer_id: string
+  user: CommitteeMemberUser
+  status: MeetingMinutesReviewStatus
+  comment: string | null
+  reviewed_at: string | null
+}
+
+export interface MinutesSignature {
+  signature_id: string
+  user: CommitteeMemberUser
+  signed: boolean
+  signed_at: string | null
+}
+
+export interface MeetingMinutes {
+  minutes_id: string
+  meeting_id: string
+  template_id: MinutesTemplateId | null
+  stage: MeetingMinutesStage
+  owner: CommitteeMemberUser | null
+  sections: MinutesSection[]
+  reviewers: MinutesReviewer[]
+  signatures: MinutesSignature[]
+  sent_to_review_at: string | null
+  approved_at: string | null
+  sent_for_signature_at: string | null
+  completed_at: string | null
   created_at: string
   updated_at: string
 }
@@ -900,4 +958,58 @@ export interface NotificationPage {
 
 export interface UnreadCount {
   unread_count: number
+}
+
+/**
+ * أنواع وحدة "لوحة التحكم" — مطابقة تمامًا لـ backend/app/schemas/dashboard.py.
+ * راجعي رأس app/services/dashboard_service.py: كل عدّاد (`*_count`) يعكس
+ * الإجمالي الفعلي، وليس طول قائمة `*_preview` (تُقتصر على عدد قليل للعرض
+ * السريع فقط). "التقارير" (حالة استخدام رابعة بالـSRS) مؤجَّلة عمدًا —
+ * قرار صريح من صاحبة المشروع 2026-09-08.
+ */
+export interface DashboardCommitteeItem {
+  committee_id: string
+  name: string
+}
+
+export interface DashboardMeetingItem {
+  meeting_id: string
+  title: string
+  scheduled_at: string
+  mode: MeetingMode
+  committee_name: string
+}
+
+export interface DashboardDecisionItem {
+  decision_id: string
+  title: string
+  committee_name: string
+  voting_deadline: string | null
+}
+
+export interface DashboardTaskItem {
+  task_id: string
+  title: string
+  status: TaskStatus
+  end_date: string
+  committee_name: string
+}
+
+export interface DashboardDocumentItem {
+  document_id: string
+  title: string
+  created_at: string
+}
+
+export interface DashboardSummary {
+  committees_count: number
+  committees_preview: DashboardCommitteeItem[]
+  upcoming_meetings_count: number
+  upcoming_meetings_preview: DashboardMeetingItem[]
+  pending_votes_count: number
+  pending_votes_preview: DashboardDecisionItem[]
+  open_tasks_count: number
+  open_tasks_preview: DashboardTaskItem[]
+  documents_count: number
+  recent_documents_preview: DashboardDocumentItem[]
 }

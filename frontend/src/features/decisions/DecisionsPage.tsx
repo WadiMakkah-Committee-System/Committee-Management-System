@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { CheckCircle2, Clock3, Eye, Gavel, Plus, Trash2, Vote } from 'lucide-react'
 import { useCommittees } from '@/hooks/useCommittees'
-import { useCreateDecision, useDecisions, useDeleteDecision } from '@/hooks/useDecisions'
+import { useCreateDecision, useDecisions, useDeleteDecision, useOpenVoting } from '@/hooks/useDecisions'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -30,6 +30,7 @@ export function DecisionsPage() {
   const { data: decisions, isLoading, isError, refetch } = useDecisions()
   const { data: committees } = useCommittees()
   const createMutation = useCreateDecision()
+  const openVotingMutation = useOpenVoting()
   const deleteMutation = useDeleteDecision()
   const { showToast } = useToast()
 
@@ -73,16 +74,41 @@ export function DecisionsPage() {
     }
   }, [decisions])
 
-  function handleCreate(values: DecisionFormSubmitValues) {
+  /**
+   * بلاغ خطأ 2026-09-08: إنشاء قرار "خاضع للتصويت" ثم الحاجة للتنقّل
+   * لصفحة تفاصيل منفصلة وفتح قسم "طرح للتصويت" هناك يدويًا كان يُحسّ
+   * "خطوة زايدة" — الآن خطوة واحدة من نظر المستخدمة: إنشاء القرار، ثم
+   * (لو أُدخلت خيارات تصويت بنفس النموذج) طرحه للتصويت تلقائيًا خلف
+   * الكواليس بنداء ثانٍ متسلسل. فشل النداء الثاني لا يُلغي الأول (القرار
+   * منشأ فعلًا بحالة pending) — تُعرض رسالة توضيحية وتُفتَح صفحة التفاصيل
+   * بأي الحالتين ليكمل المستخدم يدويًا لو احتاج.
+   */
+  async function handleCreate(values: DecisionFormSubmitValues) {
     setFormError(null)
-    createMutation.mutate(values, {
-      onSuccess: (created) => {
-        setFormOpen(false)
+    const { votingOptions, ...payload } = values
+    try {
+      const created = await createMutation.mutateAsync(payload)
+      if (votingOptions && votingOptions.length >= 2) {
+        try {
+          await openVotingMutation.mutateAsync({
+            decisionId: created.decision_id,
+            payload: { options: votingOptions, voting_deadline: null },
+          })
+          showToast('تم إنشاء القرار وطرحه للتصويت بنجاح', 'success')
+        } catch (err) {
+          showToast(
+            `تم إنشاء القرار، لكن تعذّر طرحه للتصويت تلقائيًا: ${extractErrorMessage(err)}`,
+            'error',
+          )
+        }
+      } else {
         showToast('تم إنشاء القرار بنجاح', 'success')
-        navigate(`/decisions/${created.decision_id}`)
-      },
-      onError: (err) => setFormError(extractErrorMessage(err)),
-    })
+      }
+      setFormOpen(false)
+      navigate(`/decisions/${created.decision_id}`)
+    } catch (err) {
+      setFormError(extractErrorMessage(err))
+    }
   }
 
   function handleDeleteConfirm() {
@@ -205,18 +231,28 @@ export function DecisionsPage() {
                   >
                     <Eye size={16} />
                   </button>
-                  <button
-                    onClick={() => {
-                      setDeleteError(null)
-                      setDeleteTarget(decision)
-                    }}
-                    disabled={decision.status !== 'pending'}
-                    className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-danger-bg hover:text-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-text-muted"
-                    aria-label="حذف القرار"
-                    title={decision.status === 'pending' ? 'حذف القرار' : 'لا يمكن الحذف بعد فتح التصويت أو الاعتماد'}
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {/*
+                    بلاغ خطأ 2026-09-08: زر الحذف كان يعتمد فقط على حالة
+                    القرار (pending)، بدون فحص هل المستخدم فعليًا يديره —
+                    الباك-إند كان يرفض المحاولة (403) لكن الزر نفسه ما كان
+                    يجب أن يظهر أصلًا لغير من يقدر على decisions.delete.
+                    chairableCommittees أعلاه تعكس هذا تحديدًا (رئيسة
+                    اللجنة، أو من يملك النطاق 'all' نظاميًا).
+                  */}
+                  {decision.status === 'pending' &&
+                    chairableCommittees.some((c) => c.committee_id === decision.committee_id) && (
+                      <button
+                        onClick={() => {
+                          setDeleteError(null)
+                          setDeleteTarget(decision)
+                        }}
+                        className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+                        aria-label="حذف القرار"
+                        title="حذف القرار"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                 </div>
               </Card>
             </motion.div>
@@ -229,7 +265,7 @@ export function DecisionsPage() {
         onClose={() => setFormOpen(false)}
         committees={chairableCommittees}
         onSubmit={handleCreate}
-        loading={createMutation.isPending}
+        loading={createMutation.isPending || openVotingMutation.isPending}
         serverError={formError}
       />
 

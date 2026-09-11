@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ClipboardList,
   CheckCircle2,
+  FileSignature,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -40,7 +41,7 @@ interface NavItem {
 
 /** ترتيب التنقل الموثّق في §15 — العناصر غير المبنية بعد تظهر معطّلة ("قريبًا") بدل إخفائها. */
 const NAV_ITEMS: NavItem[] = [
-  { label: 'لوحة التحكم', icon: LayoutDashboard, comingSoon: true },
+  { label: 'لوحة التحكم', icon: LayoutDashboard, path: '/dashboard' },
   {
     label: 'المستخدمين',
     icon: Users,
@@ -70,6 +71,11 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   { label: 'الاجتماعات', icon: CalendarDays, path: '/meetings', requiredPermission: ['meetings.view'] },
+  // قسم مستقل بالقائمة الجانبية (طلب لاما 2026-09-08) — لا علاقة له بمسار
+  // "الاجتماعات ← اختيار اجتماع ← زر محضر" القائم أصلًا بصفحة تفاصيل
+  // الاجتماع (أُبقي كما هو تمامًا بناءً على طلبها الصريح). راجعي
+  // MinutesListPage.tsx وhasMinutesMembershipBypass بـProtectedRoute.tsx.
+  { label: 'المحاضر', icon: FileSignature, path: '/minutes', requiredPermission: ['minutes.view'] },
   { label: 'المهام', icon: ListChecks, path: '/tasks', requiredPermission: ['tasks.view'] },
   { label: 'القرارات', icon: Gavel, path: '/decisions', requiredPermission: ['decisions.view'] },
   {
@@ -148,6 +154,10 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
     // نفس المبدأ لوحدة "المهام" — راجعي نفس الملاحظة أعلاه.
     if (user?.has_any_committee_membership && !base.includes('tasks.view')) {
       base = [...base, 'tasks.view']
+    }
+    // نفس المبدأ لوحدة "المحاضر" (طلب لاما 2026-09-08) — راجعي نفس الملاحظة أعلاه.
+    if (user?.has_any_committee_membership && !base.includes('minutes.view')) {
+      base = [...base, 'minutes.view']
     }
     return base
   }, [user])

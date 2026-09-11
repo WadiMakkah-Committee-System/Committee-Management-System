@@ -17,6 +17,18 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null)
 
+/**
+ * جسر لاستدعاء showToast من كود خارج شجرة React (مثل apiClient.ts —
+ * interceptor محوري عادي، ما يقدر يستخدم useContext). ToastProvider
+ * يسجّل نفسه هنا بالـrender، وnotify() تتجاهل الاستدعاء بأمان لو ما فيه
+ * Provider جاهز بعد (نادرًا — أول تحميل للصفحة قبل mount).
+ */
+let externalShowToast: ((message: string, variant?: ToastVariant) => void) | null = null
+
+export function notify(message: string, variant: ToastVariant = 'info'): void {
+  externalShowToast?.(message, variant)
+}
+
 const VARIANT_STYLES: Record<ToastVariant, { icon: typeof CheckCircle2; classes: string }> = {
   success: { icon: CheckCircle2, classes: 'border-success-border/30 text-success bg-success-bg' },
   error: { icon: AlertCircle, classes: 'border-danger-border/30 text-danger bg-danger-bg' },
@@ -37,6 +49,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const dismiss = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id))
+
+  externalShowToast = showToast
 
   return (
     <ToastContext.Provider value={{ showToast }}>

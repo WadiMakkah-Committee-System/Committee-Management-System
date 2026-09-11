@@ -21,6 +21,13 @@ from app.models.meeting_chat import MeetingChatMessage
 from app.models.document_chat import DocumentChatConversation, DocumentChatMessage
 from app.models.meeting_draft import MeetingDraft, MeetingDraftStatus, MeetingRecording
 from app.models.meeting_extracted_item import MeetingExtractedItem, MeetingExtractedItemStatus
+from app.models.meeting_minutes import (
+    MeetingMinutes,
+    MeetingMinutesReviewer,
+    MeetingMinutesReviewStatus,
+    MeetingMinutesSignature,
+    MeetingMinutesStage,
+)
 from app.models.notification import Notification
 from app.models.password_reset_token import PasswordResetToken
 from app.models.role import Permission, Role
@@ -49,6 +56,11 @@ __all__ = [
     "MeetingDraftStatus",
     "MeetingExtractedItem",
     "MeetingExtractedItemStatus",
+    "MeetingMinutes",
+    "MeetingMinutesReviewer",
+    "MeetingMinutesReviewStatus",
+    "MeetingMinutesSignature",
+    "MeetingMinutesStage",
     "MeetingMode",
     "MeetingRecording",
     "MeetingStatus",

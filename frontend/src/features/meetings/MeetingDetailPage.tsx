@@ -476,6 +476,11 @@ export function MeetingDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {meetingEnded && (
+            <Button variant="secondary" icon={<FileText size={15} />} onClick={() => navigate(`/minutes/${meetingId}`)}>
+              محضر الاجتماع
+            </Button>
+          )}
           {isMeetingLive && (
             <button
               type="button"

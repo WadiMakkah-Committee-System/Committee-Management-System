@@ -32,7 +32,7 @@ Role (own/department/all، من دور المستخدم العام) **أو** ص�
 
 تحديث 2026-09-05/06 (قرارات موثّقة مع لاما — تكامل الفيديو + الإشعارات):
 - scheduled_end_at إلزامي عند الإنشاء، ويقود التحويل التلقائي لحالة
-  الاجتماع (upcoming/ongoing/finished) — راجعي _maybe_transition_status.
+  الاجتماع (upcoming/ongoing/finished) — راجعي sync_meeting_status.
 - update_meeting/delete_meeting يُعيدان الاجتماع (بعد commit) لتستخدمه
   طبقة الـAPI بإرسال إشعار بريدي لأعضاء اللجنة (راجعي notification_service.py
   وapp/api/v1/meetings.py) — عند التعديل فقط لو تغيّر أحد "الحقول
@@ -149,7 +149,7 @@ async def _load_committee(db: AsyncSession, committee_id: uuid.UUID) -> Committe
     return committee
 
 
-def _maybe_transition_status(meeting: Meeting) -> None:
+def sync_meeting_status(meeting: Meeting) -> None:
     """
     تحويل كسول (Lazy) لحالة الاجتماع من الوقت الفعلي مقابل
     (scheduled_at, scheduled_end_at) — بدل Scheduler/Cron منفصل (لا حاجة
@@ -168,6 +168,21 @@ def _maybe_transition_status(meeting: Meeting) -> None:
     db/migrations/0018). لا يمس started_at/ended_at (حضور Agora فعلي، مفهوم
     منفصل تمامًا) ولا يمس status == recorded أبدًا (محجوزة لمرحلة تسجيل
     Teams مستقبلية).
+
+    إصلاح 2026-09-09 (بلاغ لاما — فتحت اجتماعًا انتهى وقته المجدول من قسم
+    المحاضر وظل يظهر "الاجتماع لم ينتهِ بعد"): كانت الدالة private
+    (باسم _maybe_transition_status) ومستدعاة فقط داخل هذا الملف، بينما
+    meeting_minutes_service._load_meeting (نسخة محلية منفصلة لجلب
+    الاجتماع، بنفس نمط meeting_chat_service._load_meeting_and_committee)
+    كانت تقرأ العمود status الخام من القاعدة مباشرة بلا أي تحويل — فتبقى
+    عالقة على upcoming/ongoing حتى يمر طلب كتابة آخر على نفس الاجتماع
+    (تعديل/انضمام...) يُشغّل هذه الدالة صدفة. حُوِّلت الآن لدالة عامة
+    (بلا _) عمدًا لتصبح قابلة للاستيراد والاستدعاء من أي ملف خدمة آخر
+    يحمّل Meeting ويعتمد على status الزمني — بدأ فعليًا بـ
+    meeting_minutes_service._load_meeting (راجعيها). أي ملف مستقبلي
+    يحمّل Meeting ويحتاج status صحيحًا زمنيًا (وليس فقط القيمة الخام
+    بالقاعدة) يجب أن يستدعيها أيضًا بدل تكرار المنطق أو تجاهله — هذا
+    بالضبط الفخ اللي وقعنا فيه هنا.
     """
     if meeting.scheduled_end_at is None:
         return
@@ -188,7 +203,7 @@ async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
     meeting = result.scalar_one_or_none()
     if meeting is None or meeting.is_deleted:
         raise MeetingNotFoundError("الاجتماع غير موجود")
-    _maybe_transition_status(meeting)
+    sync_meeting_status(meeting)
     return meeting
 
 
@@ -312,7 +327,7 @@ async def list_meetings(db: AsyncSession, *, actor: User) -> list[Meeting]:
     result = await db.execute(stmt)
     meetings = list(result.scalars().unique().all())
     for m in meetings:
-        _maybe_transition_status(m)
+        sync_meeting_status(m)
     return meetings
 
 

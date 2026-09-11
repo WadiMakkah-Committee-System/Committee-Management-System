@@ -24,7 +24,26 @@ import redis.asyncio as redis
 
 from app.core.config import settings
 
-redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+# مهلة صريحة إلزامية (2026-09-09 — بلاغ لاما: صفحة بيضاء عالقة بكل
+# النظام عند فتح أي شاشة تفاصيل، مش بس المحاضر/الاجتماعات): بدون
+# socket_connect_timeout/socket_timeout هنا، عميل redis.asyncio ينتظر
+# استجابة Redis بلا أي حد أقصى — لو Redis محليًا توقف أو صار غير قادر
+# على الاستجابة (تعطّل الخدمة، توقفت بعد نوم الجهاز، ...)، أي طلب محمي
+# (get_current_user يستدعي is_session_valid/touch_session لكل طلب) يعلّق
+# للأبد بلا أي خطأ يظهر بالفرونت — وبما إن جلسة قاعدة البيانات
+# (get_db) بنفس الطلب فُتحت أصلًا قبل استدعاء Redis، تبقى محجوزة "idle
+# in transaction" للأبد معه، فيستنزف pool الاتصالات تدريجيًا مع كل طلب
+# عالق جديد (تأكدنا من هذا فعليًا عبر فحص pg_stat_activity مباشرة).
+# بالمهلة هنا، انقطاع Redis يفشل بسرعة (خطأ 500 واضح للمستخدمة) بدل ما
+# يعلّق الطلب للأبد، وجلسة DB تُغلق تلقائيًا مع الاستثناء (get_db أدناه
+# يمسك أي Exception ويعمل rollback قبل إعادة رفعه) — لا مزيد من تسرّب
+# اتصالات صامت بسبب Redis تحديدًا.
+redis_client = redis.from_url(
+    settings.REDIS_URL,
+    decode_responses=True,
+    socket_connect_timeout=3,
+    socket_timeout=3,
+)
 
 _SESSION_KEY_PREFIX = "session:"
 

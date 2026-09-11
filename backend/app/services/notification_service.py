@@ -46,6 +46,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.committee_request import CommitteeFormationRequest
 from app.models.decision import Decision
 from app.models.meeting import Meeting
+from app.models.meeting_minutes import MeetingMinutes
 from app.models.notification import Notification
 from app.models.role import Permission, RolePermission
 from app.models.task import Task, TaskStatus
@@ -673,3 +674,35 @@ async def mark_all_as_read(db: AsyncSession, *, actor: User) -> int:
     if unread:
         await db.commit()
     return len(unread)
+
+
+async def notify_minutes_sent_for_signature(
+    minutes: MeetingMinutes, meeting: Meeting, *, actor_user_id: uuid.UUID
+) -> None:
+    """إرسال المحضر للتوقيع (SRS §7.2) → إشعار كل موقّع متوقَّع (صفوف
+    meeting_minutes_signatures، مملوءة تلقائيًا بكل أعضاء اللجنة لحظة
+    الإرسال — راجعي meeting_minutes_service.send_for_signature)."""
+    await _notify_many(
+        [s.user_id for s in minutes.signatures],
+        event_type="minutes_sent_for_signature",
+        title=f"محضر بانتظار توقيعك: {meeting.title}",
+        body="راجعي محضر الاجتماع ووقّعيه إلكترونيًا.",
+        related_entity_type="meeting",
+        related_entity_id=meeting.meeting_id,
+        exclude_user_id=actor_user_id,
+    )
+
+
+async def notify_minutes_completed(minutes: MeetingMinutes, meeting: Meeting) -> None:
+    """اكتملت كل التوقيعات (اعتماد وأرشفة تلقائيان) → إشعار كل موقّع.
+    بدون actor_user_id (بخلاف الدالة أعلاه) عمدًا: هذا حدث آلي عند
+    اكتمال آخر توقيع، لا فاعل واحد منطقي يُستثنى منه (نفس منطق
+    notify_decision_rejected أعلاه)."""
+    await _notify_many(
+        [s.user_id for s in minutes.signatures],
+        event_type="minutes_completed",
+        title=f"اكتملت توقيعات المحضر: {meeting.title}",
+        body="أصبح المحضر وثيقة رسمية معتمدة ومؤرشفة.",
+        related_entity_type="meeting",
+        related_entity_id=meeting.meeting_id,
+    )

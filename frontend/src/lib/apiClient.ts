@@ -1,4 +1,5 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import { notify } from '@/components/ui/Toast'
 import { useAuthStore } from '@/store/authStore'
 import type { TokenResponse } from '@/types'
 
@@ -67,6 +68,7 @@ apiClient.interceptors.response.use(
 
     const { refreshToken, setTokens, logout } = useAuthStore.getState()
     if (!refreshToken) {
+      notify('انتهت جلستك — سجّلي الدخول مرة أخرى', 'error')
       logout()
       return Promise.reject(error)
     }
@@ -97,6 +99,12 @@ apiClient.interceptors.response.use(
       return apiClient(originalRequest)
     } catch (refreshError) {
       flushQueue(refreshError, null)
+      // تحديث 2026-09-10 (بلاغ لاما — "زر الحفظ ما يشتغل"): تبيّن إن
+      // السبب كان انتهاء الجلسة فعليًا (فشل تجديد التوكن) — logout() كان
+      // يصير صامتًا بدون أي رسالة، فيبدو للمستخدمة إن الزر ببساطة "ما
+      // يستجيب" رغم إن التحويل لصفحة الدخول صار فعليًا. هذا التنبيه يوضّح
+      // السبب الحقيقي قبل التحويل.
+      notify('انتهت جلستك — سجّلي الدخول مرة أخرى', 'error')
       logout()
       return Promise.reject(refreshError)
     } finally {
