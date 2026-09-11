@@ -40,9 +40,23 @@ from sqlalchemy.orm import aliased
 
 from app.models.committee import Committee, committee_members
 from app.models.role import Permission, RolePermission
-from app.models.task import Task, TaskAssignmentHistory, TaskStatus
+from app.models.task import Task, TaskAssignmentHistory, TaskPriority, TaskStatus
 from app.models.user import User
+from app.schemas.committee import CommitteeMemberUserOut
+from app.schemas.task import TaskActivityEntry
 from app.services import audit_service, committee_service
+
+_STATUS_LABELS_AR: dict[TaskStatus, str] = {
+    TaskStatus.todo: "للقيام",
+    TaskStatus.in_progress: "جارية",
+    TaskStatus.on_hold: "معلّقة",
+    TaskStatus.completed: "مكتملة",
+}
+_PRIORITY_LABELS_AR: dict[TaskPriority, str] = {
+    TaskPriority.low: "منخفضة",
+    TaskPriority.medium: "متوسطة",
+    TaskPriority.high: "عالية",
+}
 
 _CREATE = "tasks.create"
 _UPDATE = "tasks.update"
@@ -179,6 +193,8 @@ async def create_task(
     start_date: date,
     end_date: date,
     assignee_user_id: uuid.UUID,
+    priority: TaskPriority = TaskPriority.medium,
+    reminder_offset_days: int = 1,
 ) -> Task:
     """FR-TASK-001/002: إنشاء مباشر من واجهة المهام، مسؤول واحد فقط."""
     committee = await _load_committee(db, committee_id)
@@ -194,6 +210,8 @@ async def create_task(
         end_date=end_date,
         assignee_user_id=assignee_user_id,
         created_by=actor.user_id,
+        priority=priority,
+        reminder_offset_days=reminder_offset_days,
     )
     db.add(task)
     await db.flush()
@@ -232,6 +250,86 @@ async def get_task(db: AsyncSession, task_id: uuid.UUID, *, actor: User) -> Task
         "يمكنك عرض المهام المسندة إليك فقط",
     )
     return task
+
+
+async def get_task_activity(
+    db: AsyncSession, *, actor: User, task_id: uuid.UUID
+) -> list[TaskActivityEntry]:
+    """
+    مسار المهمة الموحَّد (طلب صاحبة المشروع 2026-09-11، بعد بحث بالأنظمة
+    العالمية) — يدمج task_assignment_history (إعادة الإسناد) مع
+    audit_logs (تغيير الحالة/الأولوية/بيانات أخرى) بخط زمني واحد مرتَّب
+    تصاعديًا. نفس صلاحية عرض المهمة (get_task) تُفرض هنا أولًا.
+    """
+    task = await get_task(db, task_id, actor=actor)
+
+    entries: list[TaskActivityEntry] = []
+
+    for h in task.assignment_history:
+        if h.from_user is None:
+            label = f"الإسناد الأول إلى {h.to_user.first_name} {h.to_user.last_name}"
+        else:
+            label = (
+                f"إعادة إسناد من {h.from_user.first_name} {h.from_user.last_name} "
+                f"إلى {h.to_user.first_name} {h.to_user.last_name}"
+            )
+        entries.append(
+            TaskActivityEntry(
+                entry_type="reassigned",
+                label=label,
+                actor=CommitteeMemberUserOut.model_validate(h.changer),
+                occurred_at=h.changed_at,
+            )
+        )
+
+    audit_logs, _ = await audit_service.list_audit_logs(
+        db, target_type="task", target_id=task_id, limit=200
+    )
+    for log in audit_logs:
+        meta = log.metadata_ or {}
+        action = meta.get("action")
+        actor_out = CommitteeMemberUserOut.model_validate(log.actor) if log.actor else None
+
+        if action == "status_update":
+            raw_status = meta.get("status")
+            try:
+                status_label = _STATUS_LABELS_AR[TaskStatus(raw_status)]
+            except ValueError:
+                status_label = str(raw_status)
+            entries.append(
+                TaskActivityEntry(
+                    entry_type="status_changed",
+                    label=f"تحديث الحالة إلى {status_label}",
+                    actor=actor_out,
+                    occurred_at=log.created_at,
+                )
+            )
+        elif action == "task_updated":
+            if "priority_to" in meta:
+                try:
+                    priority_label = _PRIORITY_LABELS_AR[TaskPriority(meta["priority_to"])]
+                except ValueError:
+                    priority_label = str(meta["priority_to"])
+                entries.append(
+                    TaskActivityEntry(
+                        entry_type="priority_changed",
+                        label=f"تحديث الأولوية إلى {priority_label}",
+                        actor=actor_out,
+                        occurred_at=log.created_at,
+                    )
+                )
+            if meta.get("other_fields_changed"):
+                entries.append(
+                    TaskActivityEntry(
+                        entry_type="details_updated",
+                        label="تعديل بيانات المهمة (العنوان أو فترة التنفيذ أو التذكير)",
+                        actor=actor_out,
+                        occurred_at=log.created_at,
+                    )
+                )
+
+    entries.sort(key=lambda e: e.occurred_at)
+    return entries
 
 
 async def list_tasks(db: AsyncSession, *, actor: User) -> list[Task]:
@@ -290,6 +388,8 @@ async def update_task(
     title: str | None,
     start_date: date | None,
     end_date: date | None,
+    priority: TaskPriority | None = None,
+    reminder_offset_days: int | None = None,
 ) -> Task:
     task = await _load_task(db, task_id)
     committee = await _load_committee(db, task.committee_id)
@@ -303,12 +403,40 @@ async def update_task(
     if effective_end < effective_start:
         raise TaskValidationError("تاريخ نهاية المهمة يجب أن يكون بعد تاريخ البداية أو يساويه")
 
+    old_priority = task.priority
+    other_field_changed = False
+
     if title is not None:
         task.title = title
+        other_field_changed = True
     if start_date is not None:
         task.start_date = start_date
+        other_field_changed = True
     if end_date is not None:
+        # تمديد/تقديم الموعد يعيد ضبط "ساعة" التذكير والتأخر — تُرسَل
+        # التذكيرات من جديد على الموعد الجديد، ولو كانت متأخرة فعليًا
+        # ورُفع الموعد لاحقًا (تمديد)، يُسمح بتنبيه تأخر جديد لاحقًا لو
+        # تأخرت مرة أخرى عن الموعد الممدَّد (طلب صاحبة المشروع 2026-09-11).
         task.end_date = end_date
+        task.reminder_sent_at = None
+        task.overdue_notified_at = None
+        other_field_changed = True
+    if reminder_offset_days is not None:
+        task.reminder_offset_days = reminder_offset_days
+        other_field_changed = True
+    if priority is not None:
+        task.priority = priority
+
+    # ميتاداتا مفصّلة لمسار المهمة الموحَّد (راجعي get_task_activity) —
+    # الأولوية بحقل مخصَّص لأنها الحقل اللي طلبت صاحبة المشروع تتبّعه
+    # بمسار المهمة تحديدًا (2026-09-11)، وباقي الحقول (عنوان/تواريخ/
+    # تذكير) تُجمَّع بعلم عام واحد بدل تفصيل كل حقل — كفاية لحجم النظام.
+    audit_metadata: dict[str, object] = {"action": "task_updated"}
+    if priority is not None and priority != old_priority:
+        audit_metadata["priority_from"] = old_priority.value
+        audit_metadata["priority_to"] = priority.value
+    if other_field_changed:
+        audit_metadata["other_fields_changed"] = True
 
     await audit_service.log_action(
         db,
@@ -316,6 +444,7 @@ async def update_task(
         action_type="update",
         target_type="task",
         target_id=task.task_id,
+        metadata=audit_metadata,
     )
     await db.commit()
     return await _load_task(db, task.task_id)

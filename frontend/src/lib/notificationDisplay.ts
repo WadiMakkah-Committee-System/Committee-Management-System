@@ -39,6 +39,8 @@ const EVENT_TONE: Record<string, NotificationTone> = {
   task_created: 'info',
   task_reassigned: 'info',
   task_status_changed: 'info',
+  task_reminder: 'warning',
+  task_overdue: 'danger',
   committee_request_submitted: 'warning',
   committee_request_returned_to_admin: 'warning',
   committee_request_returned_to_office: 'warning',

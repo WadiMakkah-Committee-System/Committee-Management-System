@@ -1,6 +1,7 @@
 import { apiClient } from '@/lib/apiClient'
 import type {
   Task,
+  TaskActivityEntry,
   TaskCreatePayload,
   TaskReassignPayload,
   TaskStatus,
@@ -22,6 +23,11 @@ export async function fetchTasks(): Promise<Task[]> {
 
 export async function fetchTask(taskId: string): Promise<Task> {
   const { data } = await apiClient.get<Task>(`/tasks/${taskId}`)
+  return data
+}
+
+export async function fetchTaskActivity(taskId: string): Promise<TaskActivityEntry[]> {
+  const { data } = await apiClient.get<TaskActivityEntry[]>(`/tasks/${taskId}/activity`)
   return data
 }
 

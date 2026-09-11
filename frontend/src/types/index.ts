@@ -810,6 +810,8 @@ export interface DecisionOpenVotingPayload {
  */
 export type TaskStatus = 'todo' | 'in_progress' | 'on_hold' | 'completed'
 
+export type TaskPriority = 'low' | 'medium' | 'high'
+
 export interface TaskAssignmentHistoryEntry {
   history_id: string
   from_user: CommitteeMemberUser | null
@@ -823,8 +825,11 @@ export interface Task {
   committee_id: string
   title: string
   status: TaskStatus
+  priority: TaskPriority
   start_date: string
   end_date: string
+  /** عدد الأيام قبل end_date لإرسال تذكير للمسؤول عن المهمة — افتراضي 1. */
+  reminder_offset_days: number
   assignee: CommitteeMemberUser
   creator: CommitteeMemberUser
   assignment_history: TaskAssignmentHistoryEntry[]
@@ -838,12 +843,16 @@ export interface TaskCreatePayload {
   start_date: string
   end_date: string
   assignee_user_id: string
+  priority?: TaskPriority
+  reminder_offset_days?: number
 }
 
 export interface TaskUpdatePayload {
   title?: string
   start_date?: string
   end_date?: string
+  priority?: TaskPriority
+  reminder_offset_days?: number
 }
 
 export interface TaskStatusUpdatePayload {
@@ -852,6 +861,14 @@ export interface TaskStatusUpdatePayload {
 
 export interface TaskReassignPayload {
   assignee_user_id: string
+}
+
+/** سطر واحد بمسار المهمة الموحَّد (إعادة إسناد + تغييرات حالة/أولوية/بيانات) — مطابق لـ TaskActivityEntry بالباك-إند. */
+export interface TaskActivityEntry {
+  entry_type: 'reassigned' | 'status_changed' | 'priority_changed' | 'details_updated'
+  label: string
+  actor: CommitteeMemberUser | null
+  occurred_at: string
 }
 
 /**

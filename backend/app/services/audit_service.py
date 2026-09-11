@@ -49,19 +49,25 @@ async def list_audit_logs(
     db: AsyncSession,
     *,
     target_type: str | None = None,
+    target_id: uuid.UUID | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[AuditLog], int]:
     """
     سجل النشاط (Activity Log) — لعرض "من فعل ماذا ومتى" لمستخدم غير تقني
     بدون الحاجة للوصول لقاعدة البيانات مباشرة. يرجع (السجلات، العدد الكلي)
-    لدعم Pagination في الواجهة.
+    لدعم Pagination في الواجهة. target_id (اختياري، يُستخدم مع target_type)
+    يقيّد السجلات لكيان واحد بذاته — راجعي task_service.get_task_activity
+    لمثال استخدام (مسار المهمة الموحَّد).
     """
     base_stmt = select(AuditLog)
     count_stmt = select(func.count()).select_from(AuditLog)
     if target_type is not None:
         base_stmt = base_stmt.where(AuditLog.target_type == target_type)
         count_stmt = count_stmt.where(AuditLog.target_type == target_type)
+    if target_id is not None:
+        base_stmt = base_stmt.where(AuditLog.target_id == target_id)
+        count_stmt = count_stmt.where(AuditLog.target_id == target_id)
 
     total = (await db.execute(count_stmt)).scalar_one()
 

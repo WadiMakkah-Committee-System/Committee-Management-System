@@ -23,7 +23,13 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { TableSkeleton } from '@/components/ui/Skeleton'
 import { StatCard } from '@/components/ui/StatCard'
-import { TASK_STATUS_META, TaskStatusBadge } from '@/components/ui/StatusBadge'
+import {
+  TASK_STATUS_META,
+  TaskOverdueBadge,
+  TaskPriorityBadge,
+  TaskStatusBadge,
+  isTaskOverdue,
+} from '@/components/ui/StatusBadge'
 import { ActionMenu } from '@/components/ui/ActionMenu'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { Avatar } from '@/components/ui/Avatar'
@@ -169,7 +175,13 @@ export function TasksPage() {
     updateMutation.mutate(
       {
         taskId: editTarget.task_id,
-        payload: { title: values.title, start_date: values.start_date, end_date: values.end_date },
+        payload: {
+          title: values.title,
+          start_date: values.start_date,
+          end_date: values.end_date,
+          priority: values.priority,
+          reminder_offset_days: values.reminder_offset_days,
+        },
       },
       {
         onSuccess: () => {
@@ -333,6 +345,7 @@ export function TasksPage() {
               const canManageTask = manageableCommitteeIds.has(task.committee_id)
               const isCompleted = task.status === 'completed'
               const progress = TASK_STATUS_PROGRESS[task.status]
+              const overdue = isTaskOverdue(task)
 
               return (
                 <motion.div
@@ -350,16 +363,24 @@ export function TasksPage() {
                     }
                   }}
                   className="flex cursor-pointer flex-col gap-3 border-r-[3px] px-4 py-3.5 transition-colors hover:bg-table-hover-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent sm:flex-row sm:items-center sm:gap-4"
-                  style={{ borderRightColor: `color-mix(in srgb, var(--status-${meta.tone}-main) 55%, transparent)` }}
+                  style={{
+                    borderRightColor: overdue
+                      ? 'color-mix(in srgb, var(--status-danger-main) 55%, transparent)'
+                      : `color-mix(in srgb, var(--status-${meta.tone}-main) 55%, transparent)`,
+                  }}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-text-primary">{task.title}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-text-primary">{task.title}</p>
+                      <TaskPriorityBadge priority={task.priority} />
+                      {overdue && <TaskOverdueBadge />}
+                    </div>
                     <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
                       <span className="flex items-center gap-1.5">
                         <Building2 size={12} />
                         {committeeNameById.get(task.committee_id) ?? 'لجنة غير معروفة'}
                       </span>
-                      <span className="text-text-muted">
+                      <span className={overdue ? 'font-semibold text-danger' : 'text-text-muted'}>
                         {formatDate(task.start_date)} — {formatDate(task.end_date)}
                       </span>
                     </p>

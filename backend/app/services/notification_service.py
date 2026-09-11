@@ -386,6 +386,46 @@ async def notify_task_status_changed(task: Task, *, actor_user_id: uuid.UUID) ->
     )
 
 
+async def notify_task_reminder(task: Task) -> None:
+    """
+    تذكير للمسؤول عن المهمة قبل الاستحقاق بـ reminder_offset_days —
+    تُستدعى من المهمة المجدولة فقط (app/core/scheduler.py)، لا من راوتات
+    الـAPI (لا "فاعل" بشري هنا، النظام نفسه يُطلقها).
+    """
+    await _notify_user(
+        task.assignee_user_id,
+        event_type="task_reminder",
+        title=f"تذكير: اقترب موعد استحقاق مهمة {task.title}",
+        body=f"موعد الاستحقاق: {task.end_date.strftime('%Y-%m-%d')}.",
+        related_entity_type="task",
+        related_entity_id=task.task_id,
+    )
+
+
+async def notify_task_overdue(task: Task) -> None:
+    """
+    تنبيه فوري لرئيس اللجنة لحظة أول تأخر فعلي للمهمة (نفس يوم فوات
+    الموعد، بدون انتظار) — طلب صاحبة المشروع 2026-09-11 بعد بحث في
+    الأنظمة العالمية (Escalation). تُستدعى من المهمة المجدولة فقط
+    (app/core/scheduler.py)، مرة واحدة فقط لكل تأخر (يُمنع التكرار
+    بـ overdue_notified_at بطبقة الـscheduler). لا رئيس للجنة
+    (chair_user_id فارغ) = لا إشعار.
+    """
+    if task.committee.chair_user_id is None:
+        return
+    await _notify_user(
+        task.committee.chair_user_id,
+        event_type="task_overdue",
+        title=f"مهمة متأخرة: {task.title}",
+        body=(
+            f"تجاوزت موعد الاستحقاق ({task.end_date.strftime('%Y-%m-%d')}) "
+            "والمسؤول عنها لم يُنهها بعد. يمكنك تمديد الموعد، إعادة إسنادها، أو تعليقها."
+        ),
+        related_entity_type="task",
+        related_entity_id=task.task_id,
+    )
+
+
 # =====================================================================
 # طلبات تكوين اللجان — راجعي app/services/committee_service.py
 # =====================================================================
