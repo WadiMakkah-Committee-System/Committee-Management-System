@@ -24,6 +24,7 @@ from fastapi import Depends, HTTPException, Query, WebSocketException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import perf_probe
 from app.core.redis_client import is_session_valid, touch_session
 from app.core.security import InvalidTokenError, decode_token
 from app.db.session import AsyncSessionLocal, get_db
@@ -54,13 +55,19 @@ async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    try:
-        payload = decode_token(token, expected_type="access")
-    except InvalidTokenError as exc:
-        raise unauthorized from exc
+    # تحقيق أداء لاما 2026-09-12: هذه الدالة تُنفَّذ لكل طلب مُصادَق عليه
+    # وحيد — كل مرحلة هنا مقيسة على حدة بدل الافتراض إن "المصادقة" كتلة
+    # واحدة. مؤقت، يُحذف بعد التحقيق.
+    with perf_probe.timed("auth.decode_token"):
+        try:
+            payload = decode_token(token, expected_type="access")
+        except InvalidTokenError as exc:
+            raise unauthorized from exc
 
     session_id: str | None = payload.get("sid")
-    if session_id is None or not await is_session_valid(session_id):
+    with perf_probe.timed("auth.redis_is_session_valid"):
+        session_ok = session_id is not None and await is_session_valid(session_id)
+    if not session_ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="انتهت صلاحية الجلسة، يرجى تسجيل الدخول مرة أخرى",
@@ -70,7 +77,8 @@ async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
     if user_id is None:
         raise unauthorized
 
-    user = await user_service.get_user(db, user_id)
+    with perf_probe.timed("auth.db_get_user"):
+        user = await user_service.get_user(db, user_id)
     if user is None:
         raise unauthorized
 
@@ -80,7 +88,8 @@ async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
         )
 
     # تجديد مدة الجلسة (Sliding Expiration) عند كل طلب ناجح
-    await touch_session(session_id)
+    with perf_probe.timed("auth.redis_touch_session"):
+        await touch_session(session_id)
 
     return user
 

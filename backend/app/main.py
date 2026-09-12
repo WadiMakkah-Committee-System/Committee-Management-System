@@ -9,16 +9,21 @@
 - توفير مسار /health بسيط للتحقق من أن الخدمة تعمل (Health Check).
 """
 
+import time as _perf_time
 from contextlib import asynccontextmanager
 
 import socketio
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.gzip import GZipMiddleware
 
 from app.api.v1.router import api_router
+from app.core import perf_probe
 from app.core.config import settings
 from app.core.scheduler import start_scheduler
+from app.db.session import get_db
 
 
 @asynccontextmanager
@@ -60,6 +65,53 @@ app.include_router(api_router)
 async def health_check() -> dict[str, str]:
     """فحص بسيط للتأكد من أن الخدمة تعمل — لا يتحقق من الاتصال بقاعدة البيانات."""
     return {"status": "ok", "environment": settings.ENVIRONMENT}
+
+
+# ============================================================
+# تحقيق أداء لاما 2026-09-12 — Middleware + نقطتان مؤقتتان معزولتان
+# ============================================================
+# الهدف الوحيد: قياس فعلي (لا افتراض) لمكان الـ20-30 ثانية الملحوظة
+# بالمتصفح. كل شيء بهذا القسم مؤقت ويُحذف فور تحديد السبب الجذري.
+
+
+@app.middleware("http")
+async def perf_trace_middleware(request: Request, call_next):
+    """يلف كل طلب HTTP: يبدأ تتبّع المراحل (perf_probe.start_trace)،
+    ويقيس الزمن الكلي من استلام الطلب حتى جهوز الاستجابة (قبل أي
+    buffering/تشفير إضافي من Render/الشبكة نفسها — هذا الفرق تحديدًا هو
+    ما يحدد هل العائق داخل تطبيقنا أو خارجه بالطبقات الأدنى: proxy/
+    keep-alive/cold start). يطبع سطر PERF واحد بـstdout (يظهر بـRender
+    Logs مباشرة) + يرجع X-Perf-Trace/X-Perf-Total-Ms كـheaders."""
+    perf_probe.start_trace()
+    t0 = _perf_time.perf_counter()
+    response = await call_next(request)
+    total_ms = round((_perf_time.perf_counter() - t0) * 1000, 1)
+    trace_str = perf_probe.trace_summary()
+    response.headers["X-Perf-Total-Ms"] = str(total_ms)
+    if trace_str:
+        response.headers["X-Perf-Trace"] = trace_str[:4000]
+    print(
+        f"[PERF] {request.method} {request.url.path} total={total_ms}ms | {trace_str}",
+        flush=True,
+    )
+    return response
+
+
+@app.get("/performance-test", tags=["Perf-Debug"])
+async def performance_test() -> dict[str, str]:
+    """بدون DB/Redis/Auth إطلاقًا — يعزل HTTP overhead المحض + سلوك
+    Render/proxy/cold-start عن أي طبقة أخرى بالتطبيق. إن كان هذا وحده
+    بطيئًا، فالسبب خارج منطق تطبيقنا كليًا (شبكة/proxy/worker/cold start)."""
+    return {"status": "ok"}
+
+
+@app.get("/performance-db-test", tags=["Perf-Debug"])
+async def performance_db_test(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
+    """بدون Auth/Redis — استعلام SELECT 1 وحيد فقط. يعزل وقت الحصول على
+    اتصال قاعدة بيانات + تنفيذ أبسط استعلام ممكن عن أي منطق عمل فعلي."""
+    with perf_probe.timed("db_test.select_1"):
+        await db.execute(text("SELECT 1"))
+    return {"status": "ok"}
 
 
 # تحديث 2026-09-10 (قرار لاما — استبدال قناة الاجتماع/المحضر اللحظية

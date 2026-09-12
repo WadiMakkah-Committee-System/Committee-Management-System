@@ -71,14 +71,17 @@ SQLAlchemy (async) + asyncpg كـ driver، app.core.config لقراءة DATABASE
    طلبته لاما 2026-09-09.
 """
 
+import time as _perf_time
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 
+from app.core import perf_probe
 from app.core.config import settings
 
 engine = create_async_engine(
@@ -125,6 +128,43 @@ engine = create_async_engine(
         "server_settings": {"idle_in_transaction_session_timeout": "30000"},
     },
 )
+
+# ============================================================
+# تحقيق أداء لاما 2026-09-12 — Event Hooks على مستوى الـ Engine نفسه
+# ============================================================
+# بدل تعديل كل خدمة على حدة لقياس كل استعلام يدويًا: هذي event hooks
+# رسمية بتوثيق SQLAlchemy (before/after_cursor_execute لكل جملة SQL
+# فعلية تُنفَّذ عبر هذا الـ engine، وconnect/checkout على مستوى الـ Pool
+# نفسه) — تلتقط تلقائيًا كل استعلام بأي طلب يمر عبر هذا الملف، بدون لمس
+# منطق أي خدمة. مؤقتة، تُحذف بعد التحقيق.
+
+
+@event.listens_for(engine.sync_engine, "before_cursor_execute")
+def _perf_before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    context._perf_query_t0 = _perf_time.perf_counter()
+
+
+@event.listens_for(engine.sync_engine, "after_cursor_execute")
+def _perf_after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    t0 = getattr(context, "_perf_query_t0", None)
+    if t0 is None:
+        return
+    dur_ms = round((_perf_time.perf_counter() - t0) * 1000, 1)
+    short_sql = " ".join(statement.split())[:70]
+    perf_probe.mark(f"sql: {short_sql}", dur_ms=dur_ms)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _perf_on_new_physical_connection(dbapi_conn, connection_record):
+    # يفتح فقط لما يُنشَأ اتصال TCP/TLS فعلي جديد بالكامل (Pool ما عنده
+    # اتصال جاهز مُعاد استخدامه) — أبطأ حالة ممكنة لاتصال قاعدة بيانات.
+    perf_probe.mark("db.NEW_PHYSICAL_CONNECTION_CREATED")
+
+
+@event.listens_for(engine.sync_engine.pool, "checkout")
+def _perf_on_pool_checkout(dbapi_conn, connection_record, connection_proxy):
+    perf_probe.mark("db.pool_checkout")
+
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
