@@ -42,6 +42,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.email_client import send_email
+from app.core.redis_client import redis_client
 from app.db.session import AsyncSessionLocal
 from app.models.committee_request import CommitteeFormationRequest
 from app.models.decision import Decision
@@ -258,6 +259,7 @@ async def _notify_user(
             }
         ]
     )
+    await _invalidate_unread_count(recipient_user_id)
 
 
 async def _notify_many(
@@ -290,6 +292,8 @@ async def _notify_many(
             for uid in unique_ids
         ]
     )
+    for uid in unique_ids:
+        await _invalidate_unread_count(uid)
 
 
 async def _notify_permission_holders(
@@ -628,15 +632,56 @@ async def list_notifications(
     return items, total
 
 
+_UNREAD_COUNT_CACHE_TTL_SECONDS = 5
+_UNREAD_COUNT_KEY_PREFIX = "unread_count:"
+
+
+def _unread_count_key(user_id: uuid.UUID) -> str:
+    return f"{_UNREAD_COUNT_KEY_PREFIX}{user_id}"
+
+
+async def _invalidate_unread_count(user_id: uuid.UUID) -> None:
+    """يُستدعى فور كتابة إشعار جديد أو تعليمه كمقروء، حتى لا ينتظر
+    الجرس بالـTopbar انتهاء الـTTL ليعكس التغيير."""
+    try:
+        await redis_client.delete(_unread_count_key(user_id))
+    except Exception:
+        logger.exception("فشل إبطال عداد الإشعارات المخزَّن بـRedis")
+
+
 async def get_unread_count(db: AsyncSession, *, actor: User) -> int:
-    """عداد جرس الإشعارات بالـTopbar."""
+    """
+    عداد جرس الإشعارات بالـTopbar — يُستدعى بشكل متكرر (polling) من كل
+    صفحة. تحديث 2026-09-12 (تشخيص بطء الأداء): الاستعلام نفسه تافه (COUNT
+    مفهرس)، لكن كل استدعاء كان يفتح اتصال DB جديدًا كاملًا (المشكلة
+    موثّقة بـdb/session.py)، فالتكلفة الفعلية بالكامل كانت "فتح الاتصال"
+    لا "تنفيذ الاستعلام". نخزّن الناتج بـRedis لثوانٍ قليلة بدل ما نضرب
+    قاعدة البيانات بكل استدعاء — يُبطَل فورًا عند تغيّر فعلي (راجعي
+    _invalidate_unread_count)، فأسوأ سيناريو هو تأخر عرض بمقدار الـTTL
+    فقط في حالة نادرة، لا أكثر.
+    """
+    cache_key = _unread_count_key(actor.user_id)
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached is not None:
+            return int(cached)
+    except Exception:
+        logger.exception("فشل قراءة عداد الإشعارات من Redis — نكمل بالاستعلام المباشر")
+
     result = await db.execute(
         select(func.count()).select_from(Notification).where(
             Notification.recipient_user_id == actor.user_id,
             Notification.is_read.is_(False),
         )
     )
-    return result.scalar_one()
+    count = result.scalar_one()
+
+    try:
+        await redis_client.set(cache_key, str(count), ex=_UNREAD_COUNT_CACHE_TTL_SECONDS)
+    except Exception:
+        logger.exception("فشل تخزين عداد الإشعارات بـRedis")
+
+    return count
 
 
 async def _load_own_notification(db: AsyncSession, *, actor: User, notification_id: uuid.UUID) -> Notification:
@@ -655,6 +700,7 @@ async def mark_as_read(db: AsyncSession, *, actor: User, notification_id: uuid.U
         notification.read_at = datetime.now(UTC)
         await db.commit()
         await db.refresh(notification)
+        await _invalidate_unread_count(actor.user_id)
     return notification
 
 
@@ -673,6 +719,7 @@ async def mark_all_as_read(db: AsyncSession, *, actor: User) -> int:
         notification.read_at = now
     if unread:
         await db.commit()
+        await _invalidate_unread_count(actor.user_id)
     return len(unread)
 
 
