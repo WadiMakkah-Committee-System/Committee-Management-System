@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.committee import Committee
 from app.models.meeting import Meeting, MeetingStatus
@@ -34,6 +35,7 @@ from app.models.meeting_minutes import (
     MeetingMinutesSignature,
     MeetingMinutesStage,
 )
+from app.models.role import Role, RolePermission
 from app.models.user import User
 from app.services import committee_service, meeting_service
 
@@ -179,8 +181,37 @@ def _require_meeting_finished(meeting: Meeting) -> None:
         raise MinutesInvalidStateError("لا يمكن إعداد محضر الاجتماع إلا بعد انتهائه")
 
 
+# تحقيق أداء لاما 2026-09-12 — إصلاح N+1 (مؤكَّد بقياس فعلي: 47 استعلام
+# متسلسل، 17.5 ثانية إجمالًا على /minutes حقيقي). owner/reviewers/
+# signatures وما يتفرّع منها (user → role → role_permission_links →
+# permission، وuser → job_title) كلها lazy="selectin" بالموديلات — هذا
+# يمنع N+1 فقط لو الوالد تحمّل ضمن استعلام واحد مجمّع (selectinload
+# صريح). بدونه (كالحالة السابقة هنا) كل reviewer/signature يتحمّل لحاله
+# ثم user لحاله ثم role لحاله... سلسلة متداخلة. الحل: تحميل كل شيء عبر
+# .options() بنفس الاستعلام الأصلي فيتحوّل لعدد صغير وثابت من الدفعات
+# (batch واحد لكل مستوى علاقة) بدل واحد لكل عضو/مراجع/موقّع.
+def _user_eager_options(user_relationship):
+    return (
+        user_relationship.selectinload(User.role).selectinload(Role.role_permission_links).selectinload(RolePermission.permission),
+        user_relationship.selectinload(User.job_title),
+    )
+
+
 async def _load_minutes_row(db: AsyncSession, meeting_id: uuid.UUID) -> MeetingMinutes | None:
-    result = await db.execute(select(MeetingMinutes).where(MeetingMinutes.meeting_id == meeting_id))
+    stmt = (
+        select(MeetingMinutes)
+        .where(MeetingMinutes.meeting_id == meeting_id)
+        .options(
+            *_user_eager_options(selectinload(MeetingMinutes.owner)),
+            *_user_eager_options(
+                selectinload(MeetingMinutes.reviewers).selectinload(MeetingMinutesReviewer.user)
+            ),
+            *_user_eager_options(
+                selectinload(MeetingMinutes.signatures).selectinload(MeetingMinutesSignature.user)
+            ),
+        )
+    )
+    result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
 
