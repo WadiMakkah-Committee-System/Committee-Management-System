@@ -18,6 +18,7 @@
 - كل محاولة دخول فاشلة/ناجحة تُسجَّل في audit_logs.
 """
 
+import asyncio
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -62,7 +63,7 @@ async def authenticate(
     if user.status == UserStatus.suspended:
         raise AuthError("الحساب موقوف — تواصل مع مسؤول النظام")
 
-    if not verify_password(password, user.password_hash):
+    if not await asyncio.to_thread(verify_password, password, user.password_hash):
         user.failed_login_attempts += 1
         if user.failed_login_attempts >= settings.MAX_FAILED_LOGIN_ATTEMPTS:
             user.locked_until = datetime.now(timezone.utc) + timedelta(
@@ -127,7 +128,7 @@ async def request_password_reset(db: AsyncSession, *, email: str) -> str | None:
     otp_code = f"{secrets.randbelow(1_000_000):06d}"
     token = PasswordResetToken(
         user_id=user.user_id,
-        otp_code_hash=hash_password(otp_code),
+        otp_code_hash=await asyncio.to_thread(hash_password, otp_code),
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
     )
     db.add(token)
@@ -153,10 +154,12 @@ async def reset_password(
     )
     token = result.scalars().first()
 
-    if token is None or token.is_expired or not verify_password(otp_code, token.otp_code_hash):
+    if token is None or token.is_expired or not await asyncio.to_thread(
+        verify_password, otp_code, token.otp_code_hash
+    ):
         raise AuthError("رمز التحقق غير صحيح أو منتهي الصلاحية")
 
-    user.password_hash = hash_password(new_password)
+    user.password_hash = await asyncio.to_thread(hash_password, new_password)
     user.must_change_password = False
     token.used_at = datetime.now(timezone.utc)
 
@@ -176,10 +179,10 @@ async def change_password(
     db: AsyncSession, *, user: User, current_password: str, new_password: str
 ) -> None:
     """تغيير كلمة المرور من داخل الحساب (يتطلب معرفة كلمة المرور الحالية)."""
-    if not verify_password(current_password, user.password_hash):
+    if not await asyncio.to_thread(verify_password, current_password, user.password_hash):
         raise AuthError("كلمة المرور الحالية غير صحيحة")
 
-    user.password_hash = hash_password(new_password)
+    user.password_hash = await asyncio.to_thread(hash_password, new_password)
     user.must_change_password = False
 
     await audit_service.log_action(

@@ -17,6 +17,7 @@ FR-UM-021 → FR-UM-022 (إنشاء، عرض، تعديل، حذف، إيقاف�
   (dep_id مفرد، وليس علاقة متعددة).
 """
 
+import asyncio
 import uuid
 
 from sqlalchemy import func, or_, select
@@ -113,7 +114,7 @@ async def create_user(
         last_name=last_name,
         username=username,
         email=email,
-        password_hash=hash_password(password),
+        password_hash=await asyncio.to_thread(hash_password, password),
         role_id=role_id,
         dep_id=dep_id,
         job_title_id=job_title_id,
