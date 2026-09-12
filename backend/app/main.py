@@ -9,18 +9,31 @@
 - توفير مسار /health بسيط للتحقق من أن الخدمة تعمل (Health Check).
 """
 
+from contextlib import asynccontextmanager
+
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.scheduler import start_scheduler
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # المهمة المجدولة لتذكيرات المهام وتنبيهات التأخر (راجعي app/core/scheduler.py)
+    scheduler_task = start_scheduler()
+    yield
+    scheduler_task.cancel()
+
 from app.core.socketio_server import sio
 
 app = FastAPI(
     title="نظام إدارة اللجان والاجتماعات - API",
     description="Committee & Meeting Management System — Backend API",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS: مفتوح بالتطوير، ومقيَّد بالإنتاج لنطاقات settings.CORS_ORIGINS

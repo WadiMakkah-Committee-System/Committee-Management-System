@@ -19,9 +19,24 @@ import {
   Vote,
   PlayCircle,
   ListTodo,
+  ArrowUp,
+  ArrowDown,
+  Minus,
+  AlertTriangle,
 } from 'lucide-react'
 import { cn, roleLabel } from '@/lib/utils'
-import type { CommitteeRequestStatus, CommitteeRoleSlug, DecisionStatus, MeetingStatus, RoleSummary, SystemRoleName, TaskStatus, UserStatus } from '@/types'
+import type {
+  CommitteeRequestStatus,
+  CommitteeRoleSlug,
+  DecisionStatus,
+  MeetingStatus,
+  RoleSummary,
+  SystemRoleName,
+  Task,
+  TaskPriority,
+  TaskStatus,
+  UserStatus,
+} from '@/types'
 
 type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
@@ -185,6 +200,42 @@ export function TaskStatusBadge({ status }: { status: TaskStatus }) {
   return (
     <Badge tone={meta.tone} icon={meta.icon}>
       {meta.label}
+    </Badge>
+  )
+}
+
+/** تسميات وألوان أولوية المهمة — تطابق TaskPriority (راجعي types/index.ts). */
+export const TASK_PRIORITY_META: Record<TaskPriority, { label: string; tone: BadgeTone; icon: ReactNode }> = {
+  low: { label: 'منخفضة', tone: 'neutral', icon: <ArrowDown size={13} /> },
+  medium: { label: 'متوسطة', tone: 'info', icon: <Minus size={13} /> },
+  high: { label: 'عالية', tone: 'danger', icon: <ArrowUp size={13} /> },
+}
+
+export function TaskPriorityBadge({ priority }: { priority: TaskPriority }) {
+  const meta = TASK_PRIORITY_META[priority]
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  )
+}
+
+/**
+ * "متأخرة" محسوبة وليست مخزَّنة (بحث في الأنظمة العالمية — راجعي
+ * db/migrations/0031_task_priority_reminder.sql): end_date فات + الحالة
+ * لسه غير completed. تُستخدم بقائمة المهام وصفحة التفاصيل معًا.
+ */
+export function isTaskOverdue(task: Pick<Task, 'status' | 'end_date'>): boolean {
+  if (task.status === 'completed') return false
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return new Date(task.end_date) < today
+}
+
+export function TaskOverdueBadge() {
+  return (
+    <Badge tone="danger" icon={<AlertTriangle size={13} />}>
+      متأخرة
     </Badge>
   )
 }

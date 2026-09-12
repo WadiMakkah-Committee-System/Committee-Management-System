@@ -2,14 +2,20 @@ import { useEffect, useMemo } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { CalendarRange, FileText, Save, UserCheck } from 'lucide-react'
+import { AlertTriangle, Bell, CalendarRange, FileText, Save, UserCheck } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { Avatar } from '@/components/ui/Avatar'
 import { cn } from '@/lib/utils'
-import type { Committee, Task } from '@/types'
+import type { Committee, Task, TaskPriority } from '@/types'
+
+const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
+  { value: 'low', label: 'منخفضة' },
+  { value: 'medium', label: 'متوسطة' },
+  { value: 'high', label: 'عالية' },
+]
 
 const schema = z
   .object({
@@ -18,6 +24,12 @@ const schema = z
     start_date: z.string().min(1, 'يجب تحديد تاريخ البداية'),
     end_date: z.string().min(1, 'يجب تحديد تاريخ النهاية'),
     assignee_user_id: z.string().min(1, 'يجب اختيار مسؤول المهمة'),
+    priority: z.enum(['low', 'medium', 'high']),
+    reminder_offset_days: z
+      .number()
+      .int('يجب أن يكون رقمًا صحيحًا')
+      .min(0, 'لا يمكن أن يكون سالبًا')
+      .max(30, 'الحد الأقصى 30 يومًا'),
   })
   .refine((v) => v.end_date >= v.start_date, {
     message: 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية أو يساويه',
@@ -32,6 +44,8 @@ export interface TaskFormSubmitValues {
   start_date: string
   end_date: string
   assignee_user_id: string
+  priority: TaskPriority
+  reminder_offset_days: number
 }
 
 interface TaskFormModalProps {
@@ -88,6 +102,8 @@ export function TaskFormModal({
         start_date: task?.start_date ?? '',
         end_date: task?.end_date ?? '',
         assignee_user_id: task?.assignee.user_id ?? '',
+        priority: task?.priority ?? 'medium',
+        reminder_offset_days: task?.reminder_offset_days ?? 1,
       })
     }
   }, [open, task, committees, reset])
@@ -177,6 +193,44 @@ export function TaskFormModal({
               {...register('end_date')}
             />
           </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 border-b border-border-default pb-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-xs bg-brand-primary/10 text-brand-primary">
+              <AlertTriangle size={13} />
+            </span>
+            <h3 className="text-xs font-bold uppercase tracking-wide text-text-secondary">
+              الأولوية والتذكير
+            </h3>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Controller
+              control={control}
+              name="priority"
+              render={({ field }) => (
+                <Select
+                  label="الأولوية"
+                  options={PRIORITY_OPTIONS}
+                  error={errors.priority?.message}
+                  {...field}
+                />
+              )}
+            />
+            <Input
+              type="number"
+              min={0}
+              max={30}
+              label="تذكير قبل الاستحقاق (بالأيام)"
+              hint="اختياري — الافتراضي يوم واحد قبل موعد الاستحقاق"
+              error={errors.reminder_offset_days?.message}
+              {...register('reminder_offset_days', { valueAsNumber: true })}
+            />
+          </div>
+          <p className="flex items-center gap-1.5 text-xs text-text-muted">
+            <Bell size={12} />
+            يصل التذكير للمسؤول عن المهمة فقط.
+          </p>
         </div>
 
         <div className="flex flex-col gap-3">

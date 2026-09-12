@@ -704,12 +704,13 @@ async def assign_extracted_item_as_task(
     item_id: uuid.UUID,
     payload: ExtractedItemAssignAsTask,
     current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingExtractedItemOut:
     """FR-TASK-010/011/UC7/UC8: تعيين البند كمهمة — ينشئ Task حقيقيًا عبر
     task_service.create_task (tasks.create)."""
     try:
-        item = await meeting_service.assign_extracted_item_as_task(
+        item, task = await meeting_service.assign_extracted_item_as_task(
             db,
             actor=current_user,
             item_id=item_id,
@@ -720,6 +721,12 @@ async def assign_extracted_item_as_task(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    # إشعار المُسنَد إليه — بنفس استدعاء POST /tasks تمامًا (راجعي
+    # docstring meeting_service.assign_extracted_item_as_task: هذا
+    # المسار كان يتخطى tasks.py فيفوّت الإشعار قبل هذا الإصلاح).
+    background_tasks.add_task(
+        notification_service.notify_task_created, task, actor_user_id=current_user.user_id
+    )
     return _extracted_item_out(item)
 
 
@@ -732,13 +739,14 @@ async def assign_extracted_item_as_decision(
     item_id: uuid.UUID,
     payload: ExtractedItemAssignAsDecision,
     current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingExtractedItemOut:
     """FR-DEC-004/UC7: تعيين البند كقرار — ينشئ Decision حقيقيًا عبر
     decision_service.create_decision (decisions.create)، مربوطًا
     بالاجتماع المصدر تلقائيًا."""
     try:
-        item = await meeting_service.assign_extracted_item_as_decision(
+        item, decision = await meeting_service.assign_extracted_item_as_decision(
             db,
             actor=current_user,
             item_id=item_id,
@@ -749,6 +757,9 @@ async def assign_extracted_item_as_decision(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    background_tasks.add_task(
+        notification_service.notify_decision_created, decision, actor_user_id=current_user.user_id
+    )
     return _extracted_item_out(item)
 
 

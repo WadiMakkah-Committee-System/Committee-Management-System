@@ -57,10 +57,11 @@ from app.models.meeting import (
     MeetingMode,
     MeetingStatus,
 )
-from app.models.decision import DecisionClassification
+from app.models.decision import Decision, DecisionClassification
 from app.models.meeting_draft import MeetingDraft, MeetingDraftStatus, MeetingRecording
 from app.models.meeting_extracted_item import MeetingExtractedItem, MeetingExtractedItemStatus
 from app.models.role import Permission, RolePermission
+from app.models.task import Task
 from app.models.user import User
 from app.services import audit_service, committee_service, decision_service, document_service, task_service
 
@@ -1136,10 +1137,18 @@ async def assign_extracted_item_as_task(
     start_date,
     end_date,
     assignee_user_id: uuid.UUID,
-) -> MeetingExtractedItem:
+) -> tuple[MeetingExtractedItem, Task]:
     """FR-TASK-010/011/UC7/UC8: يحوّل البند إلى مهمة حقيقية عبر
     task_service.create_task (يتحقق من tasks.create والعضوية بنفسه، ويرجع
-    المهمة المُنشأة مباشرة)، ثم يربط البند بها."""
+    المهمة المُنشأة مباشرة)، ثم يربط البند بها.
+
+    تُرجع (البند، المهمة) معًا — وليس البند فقط — عشان طبقة الـAPI
+    (meetings.assign_extracted_item_as_task) تقدر تُطلِق
+    notification_service.notify_task_created على المهمة المُنشأة، بنفس
+    ما يصير بمسار الإنشاء العادي POST /tasks؛ هذا المسار (تعيين بند
+    كمهمة) كان يتخطى tasks.py بالكامل فيفوّت الإشعار قبل هذا الإصلاح
+    (قرار موثّق مع لجينـ 2026-09-09).
+    """
     item = await _load_extracted_item(db, item_id)
     if item.status != MeetingExtractedItemStatus.pending:
         raise MeetingValidationError("هذا البند مُصنَّف مسبقًا")
@@ -1158,7 +1167,7 @@ async def assign_extracted_item_as_task(
     item.linked_task_id = task.task_id
     await db.commit()
     await db.refresh(item)
-    return item
+    return item, task
 
 
 async def assign_extracted_item_as_decision(
@@ -1170,11 +1179,14 @@ async def assign_extracted_item_as_decision(
     classification: DecisionClassification,
     start_date,
     end_date,
-) -> MeetingExtractedItem:
+) -> tuple[MeetingExtractedItem, Decision]:
     """FR-DEC-004/UC7: يحوّل البند إلى قرار حقيقي عبر
     decision_service.create_decision (يتحقق من decisions.create بنفسه،
     ويرجع القرار المُنشأ مباشرة)، مربوطًا بالاجتماع المصدر تلقائيًا
-    (meeting_id)، ثم يربط البند به."""
+    (meeting_id)، ثم يربط البند به.
+
+    تُرجع (البند، القرار) معًا — لنفس سبب assign_extracted_item_as_task
+    أعلاه بالضبط (تمكين notify_decision_created بطبقة الـAPI)."""
     item = await _load_extracted_item(db, item_id)
     if item.status != MeetingExtractedItemStatus.pending:
         raise MeetingValidationError("هذا البند مُصنَّف مسبقًا")
@@ -1194,4 +1206,4 @@ async def assign_extracted_item_as_decision(
     item.linked_decision_id = decision.decision_id
     await db.commit()
     await db.refresh(item)
-    return item
+    return item, decision

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.schemas.task import (
+    TaskActivityEntry,
     TaskCreate,
     TaskOut,
     TaskReassign,
@@ -64,6 +65,8 @@ async def create_task(
             start_date=payload.start_date,
             end_date=payload.end_date,
             assignee_user_id=payload.assignee_user_id,
+            priority=payload.priority,
+            reminder_offset_days=payload.reminder_offset_days,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
@@ -90,6 +93,17 @@ async def get_task(
     return TaskOut.model_validate(task)
 
 
+@router.get("/{task_id}/activity", response_model=list[TaskActivityEntry])
+async def get_task_activity(
+    task_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[TaskActivityEntry]:
+    """مسار المهمة الموحَّد (إعادة إسناد + تغييرات حالة/أولوية/بيانات) — راجعي task_service.get_task_activity."""
+    try:
+        return await task_service.get_task_activity(db, actor=current_user, task_id=task_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+
+
 @router.patch("/{task_id}", response_model=TaskOut)
 async def update_task(
     task_id: uuid.UUID,
@@ -105,6 +119,8 @@ async def update_task(
             title=payload.title,
             start_date=payload.start_date,
             end_date=payload.end_date,
+            priority=payload.priority,
+            reminder_offset_days=payload.reminder_offset_days,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc

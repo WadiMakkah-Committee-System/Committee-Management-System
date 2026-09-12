@@ -5,6 +5,7 @@ import type { TaskCreatePayload, TaskStatus, TaskUpdatePayload } from '@/types'
 export const tasksKeys = {
   all: ['tasks'] as const,
   detail: (taskId: string) => ['tasks', taskId] as const,
+  activity: (taskId: string) => ['tasks', taskId, 'activity'] as const,
 }
 
 export function useTasks() {
@@ -19,10 +20,20 @@ export function useTaskDetail(taskId: string | undefined) {
   })
 }
 
+/** مسار المهمة الموحَّد (إعادة إسناد + تغييرات حالة/أولوية/بيانات) — راجعي app/services/task_service.get_task_activity بالباك-إند. */
+export function useTaskActivity(taskId: string | undefined) {
+  return useQuery({
+    queryKey: tasksKeys.activity(taskId ?? ''),
+    queryFn: () => tasksApi.fetchTaskActivity(taskId as string),
+    enabled: !!taskId,
+  })
+}
+
 function invalidateTaskQueries(queryClient: ReturnType<typeof useQueryClient>, taskId?: string) {
   queryClient.invalidateQueries({ queryKey: tasksKeys.all })
   if (taskId) {
     queryClient.invalidateQueries({ queryKey: tasksKeys.detail(taskId) })
+    queryClient.invalidateQueries({ queryKey: tasksKeys.activity(taskId) })
   }
 }
 
