@@ -7,8 +7,12 @@ export const rolesKeys = {
   permissions: ['permissions'] as const,
 }
 
-export function useRoles() {
-  return useQuery({ queryKey: rolesKeys.all, queryFn: rolesApi.fetchRoles })
+export function useRoles(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: rolesKeys.all,
+    queryFn: rolesApi.fetchRoles,
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function usePermissionsCatalog() {

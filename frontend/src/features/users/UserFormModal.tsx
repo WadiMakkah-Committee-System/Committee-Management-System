@@ -71,8 +71,16 @@ export function UserFormModal({
   serverError,
 }: UserFormModalProps) {
   const isEdit = !!user
-  const { data: roles } = useRoles()
-  const { data: jobTitles } = useJobTitles()
+  // تحديث 2026-09-12 (بلاغ لاما — بطء ملحوظ بكل الصفحات): هذا المودال
+  // يُركَّب (mount) ضمن شجرة UsersPage/MeetingFormModal بشكل دائم — كان
+  // useRoles/useJobTitles يجلبان بياناتهما فورًا عند التركيب، حتى لو
+  // المودال مغلق (open=false) وما حد فاتحه أصلًا، وحتى لو المستخدم
+  // الحالي ما عنده صلاحية رؤيتها (403 متكرر بلا فايدة — راجعي شبكة
+  // Chrome لصفحات اللجان/الاجتماعات/المهام/القرارات، يطلعان فيها رغم
+  // عدم فتح هذا المودال إطلاقًا). enabled: open يمنع الجلب إلا لما
+  // المودال يُفتح فعليًا.
+  const { data: roles } = useRoles({ enabled: open })
+  const { data: jobTitles } = useJobTitles({ enabled: open })
   const createJobTitleMutation = useCreateJobTitle()
   // مراجعة لاما 2026-08-31 ("أدوار اللجان"): "رئيس اللجنة"/"عضو اللجنة" لا
   // يظهران هنا إطلاقًا — ليسا من System Roles، ولا يُسندان كـuser.role_id

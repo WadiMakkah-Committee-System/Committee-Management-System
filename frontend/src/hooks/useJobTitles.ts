@@ -7,8 +7,12 @@ export const jobTitlesKeys = {
   all: ['job-titles'] as const,
 }
 
-export function useJobTitles() {
-  return useQuery({ queryKey: jobTitlesKeys.all, queryFn: jobTitlesApi.fetchJobTitles })
+export function useJobTitles(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: jobTitlesKeys.all,
+    queryFn: jobTitlesApi.fetchJobTitles,
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useCreateJobTitle() {
