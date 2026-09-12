@@ -23,10 +23,12 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS: يُقيَّد لاحقًا لنطاقات الواجهة الأمامية الفعلية فقط عند النشر
+# CORS: مفتوح بالتطوير، ومقيَّد بالإنتاج لنطاقات settings.CORS_ORIGINS
+# (تحديث 2026-09-12 — نشر المنصة على استضافة عامة: كانت القائمة هنا
+# فارغة تمامًا بالإنتاج قبل هذا التحديث، أي كل الطلبات كانت تُرفض).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.ENVIRONMENT == "development" else [],
+    allow_origins=["*"] if settings.ENVIRONMENT == "development" else settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

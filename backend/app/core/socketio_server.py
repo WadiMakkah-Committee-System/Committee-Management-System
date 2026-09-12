@@ -39,6 +39,7 @@ from typing import Any
 
 import socketio
 
+from app.core.config import settings
 from app.core.redis_client import is_session_valid, touch_session
 from app.core.security import InvalidTokenError, decode_token
 from app.db.session import AsyncSessionLocal
@@ -47,7 +48,12 @@ from app.schemas.meeting_chat import MeetingChatMessageOut
 from app.services import meeting_chat_service, user_service
 from app.services.meeting_chat_service import MeetingChatForbiddenError, MeetingChatNotFoundError
 
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+# تحديث 2026-09-12 (نشر المنصة): نفس تقييد main.py CORSMiddleware —
+# مفتوح بالتطوير فقط، ومقيَّد بالإنتاج لنطاقات settings.CORS_ORIGINS.
+sio = socketio.AsyncServer(
+    async_mode="asgi",
+    cors_allowed_origins="*" if settings.ENVIRONMENT == "development" else settings.cors_origins_list,
+)
 
 
 def _room(meeting_id: str) -> str:

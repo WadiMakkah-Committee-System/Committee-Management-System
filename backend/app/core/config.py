@@ -92,5 +92,16 @@ class Settings(BaseSettings):
     # --- عام ---
       ENVIRONMENT: str = "development"
 
+    # --- CORS (تحديث 2026-09-12 — قرار لاما: نشر المنصة على
+    # استضافة عامة): قائمة نطاقات الواجهة الأمامية المسموح لها بالاتصال
+    # بالـAPI، مفصولة بفواصل بدون مسافات — إلزامية فعليًا بالإنتاج لأن
+    # CORSMiddleware بـmain.py يمنع كل شي افتراضيًا لو ENVIRONMENT != development
+    # (مثال: https://committee-app.vercel.app,https://custom-domain.com). ---
+      CORS_ORIGINS: str = ""
+
+      @property
+      def cors_origins_list(self) -> list[str]:
+          return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
 
 settings = Settings()
