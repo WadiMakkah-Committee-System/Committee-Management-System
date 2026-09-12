@@ -288,7 +288,7 @@ async def create_meeting(
 
 async def get_meeting(db: AsyncSession, meeting_id: uuid.UUID, *, actor: User) -> Meeting:
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.view", "ليست لديك صلاحية لعرض هذا الاجتماع"
     )
@@ -360,7 +360,7 @@ async def update_meeting(
     المهمة فقط"، لتفادي إشعار بكل تعديل سطحي كتصحيح خطأ إملائي بالعنوان).
     """
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.update", "ليست لديك صلاحية تعديل هذا الاجتماع"
     )
@@ -427,7 +427,7 @@ async def delete_meeting(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     لأعضاء اللجنة (راجعي notification_service.py).
     """
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.delete", "ليست لديك صلاحية حذف هذا الاجتماع"
     )
@@ -479,7 +479,7 @@ async def join_meeting(
     System Role/Committee Role في كل عمليات هذا الملف). يصدر Token عبر
     app.core.agora_client، ويسجّل سطر حضور جديد بـmeeting_attendance."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.join", "ليست لديك صلاحية الانضمام لهذا الاجتماع"
     )
@@ -522,7 +522,7 @@ async def leave_meeting(
     تبويب/جهاز ثاني بالخطأ). فلترة user_id == actor.user_id بالتحديث أدناه
     تمنع إقفال حضور غيره أصلًا، بصرف النظر عن أي فحص صلاحية إضافي."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.join", "ليست لديك صلاحية مغادرة هذا الاجتماع"
     )
@@ -576,7 +576,7 @@ async def add_agenda_item(
 ) -> MeetingAgendaItem:
     """FR-MEET §3.1.3: إضافة بند لجدول الأعمال — يتطلب meetings.agenda.item.add."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -615,7 +615,7 @@ async def update_agenda_item(
 ) -> MeetingAgendaItem:
     item = await _load_agenda_item(db, agenda_item_id)
     meeting = await _load_meeting(db, item.meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -638,7 +638,7 @@ async def update_agenda_item(
 async def delete_agenda_item(db: AsyncSession, *, actor: User, agenda_item_id: uuid.UUID) -> None:
     item = await _load_agenda_item(db, agenda_item_id)
     meeting = await _load_meeting(db, item.meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -677,7 +677,7 @@ async def add_attachment(
 ) -> tuple[Document, datetime]:
     """يتطلب meetings.attachments.add — يخزّن الملف كوثيقة ثم يربطها بالاجتماع."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -720,7 +720,7 @@ async def list_attachments(
 ) -> list[tuple[Document, str, datetime]]:
     """يتطلب meetings.attachments.view. يرجع (الوثيقة، kind، تاريخ الربط) لكل مرفق."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -755,7 +755,7 @@ async def delete_attachment(
 ) -> None:
     """يتطلب meetings.attachments.delete — يحذف الوثيقة نفسها (Soft Delete)، وليس الربط فقط."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -786,7 +786,7 @@ async def get_attachment_download(
     عبر GET /documents، لأن ذلك يتطلب صلاحية documents.download المنفصلة
     التي لا يملكها أعضاء اللجنة غالبًا)."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -848,7 +848,7 @@ async def upload_recording(
     (راجعي تعليق الجدول بالـmigration) — أحدث تسجيل هو المعتمَد ضمنيًا
     عند توليد المسودة (get_latest_recording أدناه)."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -881,7 +881,7 @@ async def get_latest_recording(db: AsyncSession, *, actor: User, meeting_id: uui
     """يتطلب meetings.record_audio — نفس صلاحية الرفع (من يقدر يسجّل يقدر
     يراجع/يحمّل التسجيل الخام)."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.record_audio", "ليست لديك صلاحية الوصول لتسجيل هذا الاجتماع"
     )
@@ -913,7 +913,7 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     مقصود لتبسيط هذي المرحلة الأولى؛ قابل للتحويل لاحقًا لو صارت مدة
     الانتظار مزعجة بالواجهة لاجتماعات طويلة جدًا."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -983,7 +983,7 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
 async def get_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingDraft:
     """يتطلب meetings.draft.view."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض مسودة هذا الاجتماع"
     )
@@ -1027,7 +1027,7 @@ async def list_extracted_items(
 ) -> list[MeetingExtractedItem]:
     """يتطلب meetings.draft.view."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض بنود هذا الاجتماع"
     )
@@ -1042,7 +1042,7 @@ async def extract_meeting_items(
     بدون حذف/دمج مع البنود السابقة — لا يوجد شرط Idempotency موثّق بـSRS؛
     رئيس اللجنة يحذف يدويًا أي بند مكرر (FR-TASK-009)."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -1078,7 +1078,7 @@ async def add_manual_extracted_item(
 ) -> MeetingExtractedItem:
     """FR-TASK-007/UC4: إضافة بند يدوي لقائمة البنود المعروضة."""
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,
@@ -1114,7 +1114,7 @@ async def delete_extracted_item(db: AsyncSession, *, actor: User, item_id: uuid.
     متاح فقط طالما البند لم يُعيَّن بعد (pending)."""
     item = await _load_extracted_item(db, item_id)
     meeting = await _load_meeting(db, item.meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
         actor,

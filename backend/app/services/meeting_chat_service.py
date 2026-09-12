@@ -57,10 +57,10 @@ async def _load_meeting_and_committee(
     if meeting is None or meeting.is_deleted:
         raise MeetingChatNotFoundError("الاجتماع غير موجود")
 
-    committee_result = await db.execute(
-        select(Committee).where(Committee.committee_id == meeting.committee_id)
-    )
-    committee = committee_result.scalar_one_or_none()
+    # committee.lazy="selectin" على Meeting.committee يعني الصف محمَّل فعليًا
+    # ضمن نفس استعلام meeting أعلاه — استعلام committee منفصل هنا كان round
+    # trip إضافي بلا داعٍ (نفس النمط المُصلَح بـmeeting_minutes_service.py).
+    committee = meeting.committee
     if committee is None or committee.is_deleted:
         raise MeetingChatNotFoundError("اللجنة المرتبطة غير موجودة")
     return meeting, committee

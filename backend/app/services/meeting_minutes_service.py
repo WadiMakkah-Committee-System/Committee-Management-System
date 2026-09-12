@@ -165,7 +165,11 @@ async def _require_access(
 
 async def _load_meeting_and_committee(db: AsyncSession, meeting_id: uuid.UUID) -> tuple[Meeting, Committee]:
     meeting = await _load_meeting(db, meeting_id)
-    committee = await _load_committee(db, meeting.committee_id)
+    # committee.lazy="selectin" على Meeting.committee يعني أن الصف محمَّل
+    # فعليًا ضمن نفس الاستعلام الذي جلب meeting أعلاه (batched select) — استعلام
+    # منفصل هنا كان round trip إضافي بلا داعٍ لكل استدعاء (9 مواقع استخدام في
+    # هذا الملف)، يتضاعف أثره مع بُعد قاعدة البيانات جغرافيًا (Supabase Ireland).
+    committee = meeting.committee
     return meeting, committee
 
 

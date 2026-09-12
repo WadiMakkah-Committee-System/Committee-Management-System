@@ -318,7 +318,7 @@ async def get_decision(
     notify_decision_rejected مرة واحدة بالضبط عند حدوثه فعليًا.
     """
     decision = await _load_decision(db, decision_id)
-    committee = await _load_committee(db, decision.committee_id)
+    committee = decision.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(
         db, actor, committee, "decisions.view", "ليست لديك صلاحية لعرض هذا القرار"
     )
@@ -375,7 +375,7 @@ async def list_decisions(
     changed = False
     redacted: list[Decision] = []
     for decision in decisions:
-        committee = await _load_committee(db, decision.committee_id)
+        committee = decision.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
         if decision.status == DecisionStatus.pending and not await _can_see_pending_decision(
             db, actor, committee
         ):
@@ -401,7 +401,7 @@ async def update_decision(
 ) -> Decision:
     """FR-017: تعديل — متاح فقط بحالة pending (قبل فتح التصويت أو الاعتماد المباشر)."""
     decision = await _load_decision(db, decision_id)
-    committee = await _load_committee(db, decision.committee_id)
+    committee = decision.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(
         db, actor, committee, "decisions.update", "ليست لديك صلاحية تعديل هذا القرار"
     )
@@ -444,7 +444,7 @@ async def update_decision(
 async def delete_decision(db: AsyncSession, *, actor: User, decision_id: uuid.UUID) -> None:
     """FR-018: حذف — متاح فقط بحالة pending (Soft Delete)."""
     decision = await _load_decision(db, decision_id)
-    committee = await _load_committee(db, decision.committee_id)
+    committee = decision.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(
         db, actor, committee, "decisions.delete", "ليست لديك صلاحية حذف هذا القرار"
     )
@@ -484,7 +484,7 @@ async def open_voting(
     يُتحقَّق من عدم تكرار label بين الخيارات (منعًا لالتباس عند التصويت).
     """
     decision = await _load_decision(db, decision_id)
-    committee = await _load_committee(db, decision.committee_id)
+    committee = decision.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(
         db, actor, committee, "decisions.vote.open", "ليست لديك صلاحية طرح هذا القرار للتصويت"
     )
@@ -535,7 +535,7 @@ async def cast_vote(
     التصويت ويرفض القرار في نفس هذا الاستدعاء تحديدًا).
     """
     decision = await _load_decision(db, decision_id)
-    committee = await _load_committee(db, decision.committee_id)
+    committee = decision.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(
         db, actor, committee, "decisions.vote.cast", "ليست لديك صلاحية التصويت على هذا القرار"
     )
@@ -576,7 +576,7 @@ async def approve_decision(db: AsyncSession, *, actor: User, decision_id: uuid.U
     الاستدعاء الصريح من رئيس اللجنة (أو من يملك الصلاحية).
     """
     decision = await _load_decision(db, decision_id)
-    committee = await _load_committee(db, decision.committee_id)
+    committee = decision.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(
         db, actor, committee, "decisions.approve", "ليست لديك صلاحية اعتماد هذا القرار"
     )

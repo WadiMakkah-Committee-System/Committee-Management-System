@@ -239,7 +239,7 @@ async def create_task(
 
 async def get_task(db: AsyncSession, task_id: uuid.UUID, *, actor: User) -> Task:
     task = await _load_task(db, task_id)
-    committee = await _load_committee(db, task.committee_id)
+    committee = task.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_object_scoped_access(
         db,
         actor,
@@ -392,7 +392,7 @@ async def update_task(
     reminder_offset_days: int | None = None,
 ) -> Task:
     task = await _load_task(db, task_id)
-    committee = await _load_committee(db, task.committee_id)
+    committee = task.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(db, actor, committee, _UPDATE, "ليست لديك صلاحية تعديل هذه المهمة")
 
     if task.status == TaskStatus.completed:
@@ -452,7 +452,7 @@ async def update_task(
 
 async def delete_task(db: AsyncSession, *, actor: User, task_id: uuid.UUID) -> None:
     task = await _load_task(db, task_id)
-    committee = await _load_committee(db, task.committee_id)
+    committee = task.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(db, actor, committee, _DELETE, "ليست لديك صلاحية حذف هذه المهمة")
 
     if task.status == TaskStatus.completed:
@@ -478,7 +478,7 @@ async def update_status(
 ) -> Task:
     """FR-TASK-013/016: المسؤول الحالي يحدّث حالة مهامه فقط؛ رئيس اللجنة يحدّث أي مهمة بلجنته."""
     task = await _load_task(db, task_id)
-    committee = await _load_committee(db, task.committee_id)
+    committee = task.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_object_scoped_access(
         db,
         actor,
@@ -516,7 +516,7 @@ async def reassign_task(
     المسؤول الحالي).
     """
     task = await _load_task(db, task_id)
-    committee = await _load_committee(db, task.committee_id)
+    committee = task.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_service.py)
     await _require_access(
         db, actor, committee, _UPDATE, "ليست لديك صلاحية إعادة إسناد هذه المهمة"
     )
