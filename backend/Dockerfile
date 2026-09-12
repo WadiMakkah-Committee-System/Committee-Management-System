@@ -4,7 +4,7 @@
 # نقطة التشغيل الفعلية هي socket_app (تغليف Socket.IO لتطبيق FastAPI)،
 # وليس app مباشرة — تفصيل موثّق بتعليق app/main.py نفسه.
 
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
