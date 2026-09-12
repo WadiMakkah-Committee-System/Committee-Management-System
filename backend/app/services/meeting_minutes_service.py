@@ -198,6 +198,13 @@ def _user_eager_options(user_relationship):
 
 
 async def _load_minutes_row(db: AsyncSession, meeting_id: uuid.UUID) -> MeetingMinutes | None:
+    # علامة تحقّق مؤقتة (تحقيق أداء لاما 2026-09-12): تثبت إن هذا الإصدار
+    # فعليًا هو اللي يشتغل بالإنتاج، لا نفترض بس من "Live" باللوحة —
+    # نفس درس الكاش القديم اللي صار بالتحقيق السابق.
+    from app.core import perf_probe as _perf_probe
+
+    _perf_probe.mark("minutes.eager_load_v2_active")
+
     stmt = (
         select(MeetingMinutes)
         .where(MeetingMinutes.meeting_id == meeting_id)
