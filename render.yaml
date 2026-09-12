@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: committee-backend-fra
+    runtime: docker
+    region: frankfurt
+    plan: free
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: committee-redis-fra
+          property: connectionString
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: AGORA_APP_ID
+        sync: false
+      - key: AGORA_APP_CERTIFICATE
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: CORS_ORIGINS
+        value: https://committee-management-system-murex.vercel.app
+
+  - type: keyvalue
+    name: committee-redis-fra
+    region: frankfurt
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere
