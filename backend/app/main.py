@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -46,6 +47,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# تحديث 2026-09-12: ضغط الاستجابات (gzip) لأي استجابة أكبر من 1KB —
+# يقلل حجم البيانات المنقولة عبر الشبكة (خصوصًا قوائم JSON الطويلة)،
+# تحسين بسيط وآمن تمامًا، لا يمس أي منطق عمل.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(api_router)
 
