@@ -36,7 +36,7 @@ from fastapi import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import agora_client, storage_client
+from app.core import agora_client, perf_probe, storage_client
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.schemas.committee import CommitteeMemberUserOut
@@ -828,13 +828,25 @@ async def list_minutes_templates(
 async def get_meeting_minutes(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> MeetingMinutesOut:
-    try:
-        minutes = await meeting_minutes_service.get_or_create_minutes(
-            db, meeting_id=meeting_id, actor=current_user
-        )
-    except _SERVICE_ERRORS as exc:
-        raise _handle_errors(exc) from exc
-    return _minutes_out(minutes)
+    # تحقيق أداء لاما 2026-09-13 (المرحلة النهائية — طلبت تفصيلًا: Auth /
+    # SQL execution / Serialization / Total): auth.* uses مقاسة أصلًا
+    # بـcore/dependencies.py قبل الوصول لهذا الراوت أصلًا، وكل استعلام SQL
+    # مقاس أصلًا بـdb/session.py event hooks (dur_ms لكل "sql: ..." بالتتبع
+    # هو زمن الرحلة الشبكية+التنفيذ سويةً وليس تنفيذ Postgres وحده — نفس
+    # الاستنتاج الموثّق سابقًا: هذا الرقم تهيمن عليه رحلة الشبكة العابرة
+    # للمنطقة (Render↔Supabase) لا تنفيذ الاستعلام الفعلي بالسيرفر). ما
+    # كان ناقصًا فقط: قياس صريح لمرحلة التسلسل (serialization/Pydantic)
+    # بعد انتهاء كل استعلامات القاعدة — تضاف هنا فقط، بلا أي تغيير على
+    # منطق الخدمة أو شكل الاستجابة.
+    with perf_probe.timed("api.get_minutes.db_phase"):
+        try:
+            minutes = await meeting_minutes_service.get_or_create_minutes(
+                db, meeting_id=meeting_id, actor=current_user
+            )
+        except _SERVICE_ERRORS as exc:
+            raise _handle_errors(exc) from exc
+    with perf_probe.timed("api.get_minutes.serialization"):
+        return _minutes_out(minutes)
 
 
 @router.post("/{meeting_id}/minutes/template", response_model=MeetingMinutesOut)

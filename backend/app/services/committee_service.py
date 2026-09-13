@@ -657,13 +657,33 @@ async def get_committee_role_permission_codes(
     # decisions/chat/tasks/committees/minutes — كلها تستهلك النتيجة فقط،
     # لا أحد يلمس كائن CommitteeMember نفسه) — فـ.user بكامل سلسلته غير
     # مُستخدَم إطلاقًا. noload صريح يمنع هذا التحميل التلقائي للجميع.
+    #
+    # v6 (2026-09-13، مرحلة "قلّلي round trips الفعلية لا الـN+1 فقط"):
+    # v5 أعلاه كان لا يزال 3 round trips منفصلة لكل استدعاء واحد لهذي
+    # الدالة (1: committee_members+committee_role مُدمَجة بـJOIN، 2:
+    # role_permission_links عبر selectin، 3: permission عبر selectin
+    # تالٍ) — رغم إن السلسلة الثلاثية كلها scalar/collection صغيرة جدًا
+    # لعضوية لجنة واحدة فقط (صف CommitteeMember واحد → دور لجنة واحد →
+    # عادة أقل من 10 صلاحيات). لا داعٍ إطلاقًا لهذا التقسيم — role
+    # (many-to-one) → role_permission_links (one-to-many صغير جدًا) →
+    # permission (many-to-one لكل صف) تندمج بأمان كاملةً بـJOIN واحد
+    # ضمن نفس استعلام committee_members (سلسلة JOINs متداخلة قياسية
+    # بتوثيق SQLAlchemy: contains_eager/joinedload على مستويات متعددة).
+    # الاحتياط الوحيد المطلوب هنا: .unique() على النتيجة، لأن
+    # role_permission_links collection مُحمَّلة بـjoinedload تحت مستوى
+    # آخر (committee_role) — بدونها SQLAlchemy يرمي خطأ صراحةً لاحتمال
+    # تكرار صف CommitteeMember الواحد بعدد صلاحيات دوره الخام من الـJOIN
+    # (نفس النمط المطبَّق فعليًا بـuser_service.get_user لسلسلة
+    # User.role→role_permission_links→permission — مُختبَر ويعمل هناك).
+    # النتيجة: round trip واحد فقط بدل 3 لهذي الدالة، بلا أي تغيير على
+    # الشكل المُرجَع (لا يزال set[str] فقط) ولا على أي سلوك تفويض.
     from app.core import perf_probe as _perf_probe
 
-    _perf_probe.mark("committee_role.eager_load_v5_joined_scalar_active")
+    _perf_probe.mark("committee_role.eager_load_v6_fully_joined_active")
 
     with _perf_probe.caller(
         "committee_service.get_committee_role_permission_codes"
-        "[v5: joined committee_role (scalar) + selectin role_permission_links->permission, noload(.user)]"
+        "[v6: fully joined committee_role->role_permission_links->permission (single round trip), noload(.user)]"
     ):
         result = await db.execute(
             select(CommitteeMember)
@@ -672,18 +692,13 @@ async def get_committee_role_permission_codes(
                 CommitteeMember.user_id == user_id,
             )
             .options(
-                # تحسين إضافي 2026-09-13: committee_role نفسها scalar بحتة
-                # (many-to-one) — joinedload تدمجها بنفس استعلام
-                # committee_members عبر JOIN واحد بدل round trip منفصل.
-                # role_permission_links تبقى selectinload لأنها collection
-                # (تجنّبًا لتكرار الصفوف).
                 joinedload(CommitteeMember.committee_role)
-                .selectinload(Role.role_permission_links)
-                .selectinload(RolePermission.permission),
+                .joinedload(Role.role_permission_links)
+                .joinedload(RolePermission.permission),
                 noload(CommitteeMember.user),
             )
         )
-    membership = result.scalar_one_or_none()
+    membership = result.unique().scalar_one_or_none()
     if membership is None:
         return set()
     return membership.committee_role.permission_codes

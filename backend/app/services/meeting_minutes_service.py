@@ -297,33 +297,54 @@ async def _load_minutes_row(db: AsyncSession, meeting_id: uuid.UUID) -> MeetingM
     # نفس درس الكاش القديم اللي صار بالتحقيق السابق.
     from app.core import perf_probe as _perf_probe
 
-    _perf_probe.mark("minutes.eager_load_v5_joined_scalars_active")
+    _perf_probe.mark("minutes.eager_load_v6_single_round_trip_active")
 
-    # تحسين إضافي 2026-09-13: owner scalar بحتة — joinedload تدمجها بنفس
-    # استعلام meeting_minutes. reviewers/signatures تبقيان selectinload
-    # (collections، تفاديًا لتكرار صفوف meeting_minutes نفسها)، لكن .user
-    # الخاص بكل صف منها scalar بحتة أيضًا (many-to-one) — joinedload هنا
-    # تدمجه بنفس استعلام selectin الفرعي لتلك الدفعة (reviewer/signature +
-    # مستخدمه بـJOIN واحد) بدل round trip ثالث منفصل، بلا أي خطر تكرار
-    # (كل صف reviewer/signature له مستخدم واحد بالضبط).
+    # تحسين إضافي 2026-09-13 (v5): owner scalar بحتة — joinedload تدمجها
+    # بنفس استعلام meeting_minutes. reviewers/signatures كانتا selectinload
+    # (round trip منفصل لكل واحدة)، لكن .user الخاص بكل صف منها scalar
+    # بحتة أيضًا (many-to-one) — joinedload هنا تدمجه بنفس استعلام selectin
+    # الفرعي لتلك الدفعة (reviewer/signature + مستخدمه بـJOIN واحد) بدل
+    # round trip ثالث منفصل، بلا أي خطر تكرار (كل صف reviewer/signature
+    # له مستخدم واحد بالضبط). النتيجة وقتها: 3 round trips (رئيسي +
+    # reviewers+user + signatures+user).
+    #
+    # v6 (2026-09-13، مرحلة "قلّلي round trips الفعلية لا الـN+1 فقط" —
+    # طلب لاما الصريح: لا تكتفي بإخفاء N+1 خلف batching، قلّلي الرحلات
+    # نفسها): محضر واحد بالضبط لكل اجتماع (meeting_id فريد)، وreviewers/
+    # signatures عادة عدد صغير جدًا (أعضاء لجنة واحدة، عادة أقل من 10-15
+    # لكل منهما) — لا داعٍ إطلاقًا لبقائهما كـselectinload (رحلتان
+    # منفصلتان). تحويلهما لـjoinedload يدمج الكل (المحضر + مالكه +
+    # المراجعون ومستخدموهم + الموقّعون ومستخدموهم) بـJOIN واحد ضمن
+    # round trip واحد فقط. الاحتياط المطلوب: joinedload لمجموعتين شقيقتين
+    # (reviewers وsignatures) بنفس المستوى ينتج ضربًا ديكارتيًا جزئيًا
+    # بعدد الصفوف الخام (عدد المراجعين × عدد الموقّعين) — SQLAlchemy يزيل
+    # هذا التكرار بأمان ويعيد بناء كلتا المجموعتين بشكل صحيح طالما استُخدم
+    # .unique() على النتيجة (نفس النمط الموثّق والمُختبَر فعليًا بمشروعنا
+    # بـcommittee_service.get_committee_role_permission_codes وuser_service.
+    # get_user لسلسلة role→role_permission_links). الترتيب (order_by
+    # المعرَّف على مستوى العلاقة بالموديل) يبقى محفوظًا لأن SQLAlchemy
+    # يطبّق ORDER BY الخاص بكل علاقة داخل نفس الاستعلام المُدمَج تلقائيًا.
+    # الحجم الإضافي المنقول (تكرار أعمدة meeting_minutes/owner بعدد صفوف
+    # الضرب الديكارتي) مقبول جدًا هنا مقابل إلغاء 2 round trip كاملين
+    # (~700-800ms) لكل عرض محضر واحد.
     stmt = (
         select(MeetingMinutes)
         .where(MeetingMinutes.meeting_id == meeting_id)
         .options(
             *_user_eager_options(joinedload(MeetingMinutes.owner)),
             *_user_eager_options(
-                selectinload(MeetingMinutes.reviewers).joinedload(MeetingMinutesReviewer.user)
+                joinedload(MeetingMinutes.reviewers).joinedload(MeetingMinutesReviewer.user)
             ),
             *_user_eager_options(
-                selectinload(MeetingMinutes.signatures).joinedload(MeetingMinutesSignature.user)
+                joinedload(MeetingMinutes.signatures).joinedload(MeetingMinutesSignature.user)
             ),
         )
     )
     with _perf_probe.caller(
-        "_load_minutes_row[v5: joinedload owner+per-row user, noload role/job_title]"
+        "_load_minutes_row[v6: single round trip — owner+reviewers+user+signatures+user all joined]"
     ):
         result = await db.execute(stmt)
-    return result.scalar_one_or_none()
+    return result.unique().scalar_one_or_none()
 
 
 async def _load_minutes_or_404(db: AsyncSession, meeting_id: uuid.UUID) -> MeetingMinutes:
