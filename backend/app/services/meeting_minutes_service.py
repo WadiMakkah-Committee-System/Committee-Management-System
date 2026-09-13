@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.models.committee import Committee
 from app.models.meeting import Meeting, MeetingStatus
@@ -35,7 +35,6 @@ from app.models.meeting_minutes import (
     MeetingMinutesSignature,
     MeetingMinutesStage,
 )
-from app.models.role import Role, RolePermission
 from app.models.user import User
 from app.services import committee_service, meeting_service
 
@@ -113,45 +112,74 @@ async def _load_committee(db: AsyncSession, committee_id: uuid.UUID) -> Committe
     return committee
 
 
-async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
+async def _load_meeting(
+    db: AsyncSession,
+    meeting_id: uuid.UUID,
+    *,
+    with_committee_members: bool = False,
+    with_agenda_items: bool = False,
+) -> Meeting:
     # تحقيق أداء لاما 2026-09-13 — إصلاح N+1 الثاني (بعد _load_minutes_row
     # بتاريخ 2026-09-12): committee وchair/members الفرعيين كانوا يُحمَّلون
-    # عبر lazy="selectin" الافتراضي بدون تنسيق استعلام واحد وقت الجلب —
-    # التعليق القديم على _load_meeting_and_committee أدناه كان يفترض خطأً
-    # أن lazy="selectin" يعني تحميل committee ضمن نفس استعلام meeting
-    # (batched تلقائيًا) — هذا غير صحيح: lazy="selectin" كإستراتيجية
-    # افتراضية (بدون .options(selectinload(...)) وقت الاستعلام) يُطلق
-    # round trip منفصل خاص به عند أول وصول لـmeeting.committee، ثم كل
-    # علاقة فرعية تُلمَس بعده (chair، members) تُطلق round trip خاص بها
-    # أيضًا — بالضبط نفس آلية N+1 المؤكَّدة سابقًا على owner/reviewers/
-    # signatures، لكن هنا على مسار التحقق من الصلاحية الذي يمر منه كل
-    # استدعاء لهذه الدالة (9 مواقع استخدام). الحل: .options(selectinload)
-    # صريح هنا لـchair فقط.
+    # عبر lazy="selectin" الافتراضي بدون تنسيق استعلام واحد وقت الجلب.
+    # الحل: .options(selectinload) صريح هنا لـchair.
     #
-    # تراجع 2026-09-13: كان فيه selectinload(Committee.members) هنا
-    # أيضًا (لأجل _all_committee_members بدوال ثانية) لكن قياس فعلي
-    # أثبت أنها زادت الحمل على مسار GET /minutes نفسه (لا يحتاج
-    # committee.members إطلاقًا) من 18.2s/40 استعلام إلى 25.7-30.1s/65
-    # استعلام بثبات عبر 3 تكرارات. رجعتها.
+    # إصلاح 2026-09-13 (الجذري، بعد إثبات كامل بالـinstrumentation الجديد —
+    # راجعي تقرير caller-tagged trace): تبيّن إن lazy="selectin" مو مجرد
+    # "يحتاج .options() صريح ليتجمّع" — هي أصلًا EAGER STRATEGY افتراضية
+    # على مستوى الـModel نفسه (User.role، User.job_title، Committee.members،
+    # Committee.member_roles، Meeting.creator، Meeting.participants،
+    # Meeting.agenda_items...) تنطلق تلقائيًا بمجرد تحميل أي Meeting/
+    # Committee/User، بغض النظر عن .options() الصريحة اللي تغطي بس المسار
+    # المطلوب ولا توقف الباقي. النتيجة المُثبَتة بالتتبّع: هذا الاستعلام
+    # الواحد كان يجرّ تلقائيًا creator + participants + agenda_items +
+    # committee.members + committee.member_roles + سلسلة role/job_title/
+    # permissions كاملة لكل من: الرئيس، المُنشئ، وكل عضو لجنة — 30 استعلام
+    # إضافي من أصل 32 بهذه الدالة وحدها، ولا شيء منها يُستخدَم فعليًا
+    # بمسار GET /minutes (تحقّقتُ: _system_scope_allows تلمس فقط
+    # committee.chair.dep_id، عمود خام لا علاقة).
+    #
+    # هذه دالة مشتركة بـ9 مواقع استخدام (راجعي grep _load_meeting_and_
+    # committee) — قبل حذف أي شيء تحققتُ من كل موقع: _all_committee_members
+    # (تستخدمها select_template وsend_for_signature فقط) تحتاج فعليًا
+    # committee.members وcommittee.chair — لذا with_committee_members
+    # صار معامل صريح يفعّلها بس لمن يحتاجها. list_templates_for_meeting
+    # وحدها تحتاج meeting.agenda_items — with_agenda_items لنفس السبب.
+    # لا أحد يلمس .chair.role أو .chair.job_title أو .creator أو
+    # .participants أو .member_roles بأي مكان بهذا الملف (تحقّقتُ بـgrep
+    # على الملف كامل) — noload صريح وآمن لكل هذي بكل الحالات.
     from app.core import perf_probe as _perf_probe
 
-    _perf_probe.mark("meeting.eager_load_v3_active")
+    _perf_probe.mark("meeting.eager_load_v4_no_cascade_active")
 
-    # تشخيص 2026-09-13: caller صريح حول استعلام Meeting الرئيسي — إثبات
-    # مباشر إن كل استعلام selectin تلقائي يظهر بالتتبّع بنفس هذا الاسم
-    # (حتى لو على علاقات لم تُطلب صراحة هنا مثل creator/participants/
-    # agenda_items/committee.members/committee.member_roles) هو فعليًا
-    # جزء من نفس await db.execute() هذا، وليس من دالة أخرى — يثبت أو
-    # ينفي فرضية "cascade تلقائي" بدل التخمين.
+    committee_load = selectinload(Meeting.committee)
+    chair_load = committee_load.selectinload(Committee.chair)
+
+    options = [
+        chair_load,
+        chair_load.noload(User.role),
+        chair_load.noload(User.job_title),
+        committee_load.noload(Committee.member_roles),
+        noload(Meeting.creator),
+        noload(Meeting.participants),
+    ]
+    if with_committee_members:
+        options.append(committee_load.selectinload(Committee.members))
+    else:
+        options.append(committee_load.noload(Committee.members))
+    if with_agenda_items:
+        options.append(selectinload(Meeting.agenda_items))
+    else:
+        options.append(noload(Meeting.agenda_items))
+
     with _perf_probe.caller(
-        "_load_meeting[explicit selectinload: Meeting.committee->Committee.chair ONLY]"
+        f"_load_meeting[no-cascade v4; with_committee_members={with_committee_members}, "
+        f"with_agenda_items={with_agenda_items}]"
     ):
         result = await db.execute(
             select(Meeting)
             .where(Meeting.meeting_id == meeting_id)
-            .options(
-                selectinload(Meeting.committee).selectinload(Committee.chair),
-            )
+            .options(*options)
         )
     meeting = result.scalar_one_or_none()
     if meeting is None or meeting.is_deleted:
@@ -203,12 +231,25 @@ async def _require_access(
         raise MinutesForbiddenError(message)
 
 
-async def _load_meeting_and_committee(db: AsyncSession, meeting_id: uuid.UUID) -> tuple[Meeting, Committee]:
+async def _load_meeting_and_committee(
+    db: AsyncSession,
+    meeting_id: uuid.UUID,
+    *,
+    with_committee_members: bool = False,
+    with_agenda_items: bool = False,
+) -> tuple[Meeting, Committee]:
     # تصحيح 2026-09-13: التعليق القديم هنا كان يفترض أن committee تُحمَّل
     # ضمن نفس استعلام meeting تلقائيًا بمجرد lazy="selectin" — تبيّن بالقياس
-    # الفعلي إن هذا غير صحيح (نفس مفهوم N+1 المكتشف بـ_load_minutes_row).
-    # الإصلاح الحقيقي الآن داخل _load_meeting نفسها عبر selectinload صريح.
-    meeting = await _load_meeting(db, meeting_id)
+    # الفعلي إن هذا غير صحيح. الإصلاح الحقيقي داخل _load_meeting نفسها.
+    # with_committee_members/with_agenda_items يُمرَّران لمن يحتاجهما فعليًا
+    # (select_template تحتاج الاثنين، send_for_signature تحتاج الأول فقط) —
+    # راجعي التعليق الكامل بـ_load_meeting.
+    meeting = await _load_meeting(
+        db,
+        meeting_id,
+        with_committee_members=with_committee_members,
+        with_agenda_items=with_agenda_items,
+    )
     committee = meeting.committee
     return meeting, committee
 
@@ -221,17 +262,26 @@ def _require_meeting_finished(meeting: Meeting) -> None:
 
 # تحقيق أداء لاما 2026-09-12 — إصلاح N+1 (مؤكَّد بقياس فعلي: 47 استعلام
 # متسلسل، 17.5 ثانية إجمالًا على /minutes حقيقي). owner/reviewers/
-# signatures وما يتفرّع منها (user → role → role_permission_links →
-# permission، وuser → job_title) كلها lazy="selectin" بالموديلات — هذا
-# يمنع N+1 فقط لو الوالد تحمّل ضمن استعلام واحد مجمّع (selectinload
-# صريح). بدونه (كالحالة السابقة هنا) كل reviewer/signature يتحمّل لحاله
-# ثم user لحاله ثم role لحاله... سلسلة متداخلة. الحل: تحميل كل شيء عبر
-# .options() بنفس الاستعلام الأصلي فيتحوّل لعدد صغير وثابت من الدفعات
-# (batch واحد لكل مستوى علاقة) بدل واحد لكل عضو/مراجع/موقّع.
+# signatures كلها lazy="selectin" بالموديلات — هذا كان يسبب N+1 قبل
+# 2026-09-12 (كل reviewer/signature يتحمّل لحاله بدل دفعة واحدة).
+#
+# إصلاح 2026-09-13 (الجذري): الإصلاح الأول (2026-09-12) كان يضيف
+# selectinload صريح لسلسلة user → role → role_permission_links →
+# permission وuser → job_title لكل من owner/reviewers/signatures —
+# هذا صحّح التجميع (batching)، لكن تحقّقتُ الآن من app/api/v1/meetings.py
+# (_minutes_out) وapp/schemas/meeting_minutes.py: الاستجابة تستخدم
+# CommitteeMemberUserOut حصرًا لهذي الحقول الثلاثة — وهو schema يحتوي
+# فقط user_id/first_name/middle_name/last_name/email، بلا أي حقل دور
+# أو مسمى وظيفي أو صلاحية. يعني كامل سلسلة role/job_title هذي محمَّلة
+# دومًا بلا أي استهلاك فعلي بأي مسار من مسارات /minutes (تحقّقتُ: كل
+# نقاط GET/POST/PUT الخاصة بالمحاضر بـmeetings.py ترجع نفس MeetingMinutesOut
+# عبر نفس _minutes_out). الحل: noload صريح بدل selectinload — يمنع
+# التحميل التلقائي (lazy="selectin" الافتراضي بالموديل) كليًا لهذا
+# المسار، بدل تحسين تجميعه فقط.
 def _user_eager_options(user_relationship):
     return (
-        user_relationship.selectinload(User.role).selectinload(Role.role_permission_links).selectinload(RolePermission.permission),
-        user_relationship.selectinload(User.job_title),
+        user_relationship.noload(User.role),
+        user_relationship.noload(User.job_title),
     )
 
 
@@ -327,7 +377,13 @@ async def select_template(
     if template_id not in MINUTES_TEMPLATES:
         raise MinutesValidationError("قالب غير معروف")
 
-    meeting, committee = await _load_meeting_and_committee(db, meeting_id)
+    # يحتاج committee.members (لتعبئة المراجعين عبر _all_committee_members
+    # أدناه) وmeeting.agenda_items (لبناء أقسام القالب "detailed" عبر
+    # _build_sections_from_template) — لذا يفعّل الاثنين صراحة، بخلاف
+    # باقي دوال هذا الملف.
+    meeting, committee = await _load_meeting_and_committee(
+        db, meeting_id, with_committee_members=True, with_agenda_items=True
+    )
     _require_meeting_finished(meeting)
     await _require_access(
         db, actor, committee, "minutes.templates.select", "ليست لديك صلاحية اختيار قالب المحضر"
@@ -487,7 +543,10 @@ async def return_for_edit(
 
 
 async def send_for_signature(db: AsyncSession, *, meeting_id: uuid.UUID, actor: User) -> MeetingMinutes:
-    meeting, committee = await _load_meeting_and_committee(db, meeting_id)
+    # يحتاج committee.members (لتعبئة الموقّعين عبر _all_committee_members أدناه).
+    meeting, committee = await _load_meeting_and_committee(
+        db, meeting_id, with_committee_members=True
+    )
     await _require_access(db, actor, committee, "minutes.approve", "ليست لديك صلاحية إرسال المحضر للتوقيع")
 
     minutes = await _load_minutes_or_404(db, meeting_id)

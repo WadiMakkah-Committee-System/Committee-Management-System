@@ -55,7 +55,7 @@ from datetime import date
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased, noload, selectinload
 
 from app.models.committee import Committee, CommitteeMember, committee_members
 from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
@@ -644,22 +644,26 @@ async def get_committee_role_permission_codes(
     """
     # تحقيق أداء لاما 2026-09-13 — إصلاح N+1 الثالث (بعد _load_minutes_row
     # و_load_meeting/_load_meeting_and_committee): committee_role كان
-    # lazy="selectin" افتراضي بدون تنسيق استعلام واحد، فيُحمَّل بـround trip
-    # منفصل عند membership.committee_role، ثم role_permission_links بـround
-    # trip آخر (مجموعة الصلاحيات)، ثم .permission على *كل صف* منها بـround
-    # trip مستقل — نفس الآلية بالضبط المؤكَّدة سابقًا على owner/reviewers/
-    # signatures، وهذه الدالة بالذات مشتركة بين 6 مواقع استخدام بالمشروع
-    # (meetings، decisions، chat، tasks، committees، minutes) فيتضاعف
-    # أثرها. selectinload صريح هنا يجمّع السلسلة كاملة (committee_role ثم
-    # role_permission_links ثم permission لكل صف) في 3 استعلامات مجمّعة
-    # ثابتة بدل واحد لكل صلاحية يملكها الدور.
+    # lazy="selectin" افتراضي بدون تنسيق استعلام واحد. selectinload صريح
+    # هنا يجمّع السلسلة (committee_role ثم role_permission_links ثم
+    # permission) بدفعات ثابتة بدل واحد لكل صلاحية.
+    #
+    # إصلاح 2026-09-13 (الجذري، بعد إثبات بالـinstrumentation): تبيّن إن
+    # CommitteeMember.user (لا علاقة له بـcommittee_role) كان يتحمّل هو
+    # الآخر تلقائيًا (lazy="selectin" افتراضي بالموديل) بمجرد تحميل صف
+    # CommitteeMember هذا — ويجرّ معه بدوره .role/.job_title الخاصين
+    # بذاك المستخدم بالذات (لا علاقة بصلاحيات اللجنة المطلوبة). الدالة لا
+    # تُرجع سوى set[str] (راجعي كل الاستخدامات الستة بالمشروع — meetings/
+    # decisions/chat/tasks/committees/minutes — كلها تستهلك النتيجة فقط،
+    # لا أحد يلمس كائن CommitteeMember نفسه) — فـ.user بكامل سلسلته غير
+    # مُستخدَم إطلاقًا. noload صريح يمنع هذا التحميل التلقائي للجميع.
     from app.core import perf_probe as _perf_probe
 
-    _perf_probe.mark("committee_role.eager_load_v3_active")
+    _perf_probe.mark("committee_role.eager_load_v4_no_cascade_active")
 
     with _perf_probe.caller(
         "committee_service.get_committee_role_permission_codes"
-        "[explicit selectinload: CommitteeMember.committee_role->role_permission_links->permission]"
+        "[no-cascade v4: committee_role->role_permission_links->permission ONLY, noload(.user)]"
     ):
         result = await db.execute(
             select(CommitteeMember)
@@ -670,7 +674,8 @@ async def get_committee_role_permission_codes(
             .options(
                 selectinload(CommitteeMember.committee_role)
                 .selectinload(Role.role_permission_links)
-                .selectinload(RolePermission.permission)
+                .selectinload(RolePermission.permission),
+                noload(CommitteeMember.user),
             )
         )
     membership = result.scalar_one_or_none()

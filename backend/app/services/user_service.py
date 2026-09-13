@@ -22,7 +22,7 @@ import uuid
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload, noload, selectinload
 
 from app.core.security import hash_password
 from app.models.department import Department
@@ -168,10 +168,22 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
     (selectinload) في نفس الاستعلام — عشان UserOut يقدر يُرجع اسم الإدارة
     مباشرة بدون الحاجة لطلب API منفصل لصفحة الإدارات.
     """
+    # إصلاح 2026-09-13 (تحقيق أداء لاما — 6 استعلامات لـget_user وحدها
+    # على مسار المصادقة بكل طلب): department.manager هو User آخر (مدير
+    # الإدارة)، وUser.role/User.job_title كلاهما lazy="selectin" افتراضي
+    # بالموديل — يعني بمجرد تحميل manager تلقائيًا يتحمّل .role و.job_title
+    # الخاصين فيه (ثم .role يجرّ role_permission_links ثم permission).
+    # تحقّقتُ من app/schemas/department.py (DepartmentManagerOut): يحتوي
+    # فقط user_id/first_name/middle_name/last_name/email — بلا دور أو
+    # مسمى وظيفي إطلاقًا، بأي مكان يُستخدَم فيه get_user (المصادقة بكل
+    # طلب، وendpoints /users). noload صريح يمنع هذا التحميل التلقائي غير
+    # المُستهلَك. ملاحظة: user.job_title الخاص بالمستخدم نفسه (لا المدير)
+    # يبقى يتحمّل تلقائيًا كالمعتاد — UserOut.job_title يحتاجه فعليًا.
     result = await db.execute(
         select(User)
         .options(
-            joinedload(User.department).joinedload(Department.manager),
+            joinedload(User.department).joinedload(Department.manager).noload(User.role),
+            joinedload(User.department).joinedload(Department.manager).noload(User.job_title),
             joinedload(User.role).joinedload(Role.role_permission_links).joinedload(
                 RolePermission.permission
             ),
