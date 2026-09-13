@@ -11,16 +11,11 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
-      # 2026-09-13 (قرار لاما): استبدال Render Key Value (Redis) بـDragonfly
-      # Cloud (خدمة مُدارة خارجية) — نفس بروتوكول Redis (RESP)، والعميل هنا
-      # (redis.asyncio.from_url في app/core/redis_client.py) يعمل بلا أي
-      # تعديل كود، وكل الأوامر المستخدَمة فعليًا بالمشروع (SET/EXPIRE/
-      # EXISTS/DELETE/GET) مدعومة بالكامل من Dragonfly. بما إنها خدمة
-      # خارجية (مو Render Key Value)، ما تقدر تُربَط عبر fromService —
-      # القيمة تُدخَل يدويًا من لوحة Render (Environment) بعد إنشاء
-      # قاعدة Dragonfly Cloud ونسخ رابط الاتصال منها (عادة rediss://...).
       - key: REDIS_URL
-        sync: false
+        fromService:
+          type: keyvalue
+          name: committee-redis-fra
+          property: connectionString
       - key: SMTP_HOST
         sync: false
       - key: SMTP_USER
@@ -44,7 +39,11 @@ services:
       - key: CORS_ORIGINS
         value: https://committee-management-system-murex.vercel.app
 
-# خدمة committee-redis-fra (Render Key Value) أُزيلت من هنا بعد التبديل
-# لـDragonfly Cloud. لا تُحذف تلقائيًا بمجرد إزالتها من هذا الملف — احذفيها
-# يدويًا من لوحة Render بعد ما تتأكدين إن Dragonfly شغّال تمام، لتفادي فقدان
-# أي جلسات نشطة لو حصل خطأ بمنتصف التبديل.
+  - type: keyvalue
+    name: committee-redis-fra
+    region: frankfurt
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere
