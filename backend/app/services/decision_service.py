@@ -354,24 +354,31 @@ async def list_decisions(
     if meeting_id is not None:
         stmt = stmt.where(Decision.meeting_id == meeting_id)
 
-    if scope == "all":
-        pass
-    elif scope == "department":
-        if actor.dep_id is None:
-            return []
-        chair = aliased(User)
-        stmt = (
-            stmt.join(Committee, Decision.committee_id == Committee.committee_id)
-            .join(chair, Committee.chair_user_id == chair.user_id)
-            .where(chair.dep_id == actor.dep_id)
-        )
-    else:
+    # إصلاح 2026-09-13 (بلاغ لاما — رئيسة لجنة أنشأت قرارًا فظهر لها ولم
+    # يظهر لبقية الأعضاء): "department" كان حصريًا (elif) فيُقصي مسار
+    # Committee Role بالكامل — بنفس العلة المُصلَحة بـ
+    # meeting_service.list_meetings (راجعيها لتفصيل السبب الجذري). الحل
+    # نفسه: شرطان مستقلّان يُدمَجان بـOR بدل الإقصاء المتبادل.
+    if scope != "all":
+        conditions = []
+        if scope == "department" and actor.dep_id is not None:
+            chair = aliased(User)
+            dept_committee_ids = (
+                select(Committee.committee_id)
+                .join(chair, Committee.chair_user_id == chair.user_id)
+                .where(chair.dep_id == actor.dep_id)
+            )
+            conditions.append(Decision.committee_id.in_(dept_committee_ids))
+
         committee_ids = await _committee_ids_with_committee_role_code(
             db, actor, "decisions.view"
         )
-        if not committee_ids:
+        if committee_ids:
+            conditions.append(Decision.committee_id.in_(committee_ids))
+
+        if not conditions:
             return []
-        stmt = stmt.where(Decision.committee_id.in_(committee_ids))
+        stmt = stmt.where(or_(*conditions))
 
     result = await db.execute(stmt)
     decisions = list(result.scalars().unique().all())

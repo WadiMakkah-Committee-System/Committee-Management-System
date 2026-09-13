@@ -344,40 +344,47 @@ async def list_tasks(db: AsyncSession, *, actor: User) -> list[Task]:
     scope = actor.scope_for(_VIEW)
     stmt = select(Task).where(Task.deleted_at.is_(None)).order_by(Task.created_at.desc())
 
-    if scope == "all":
-        pass
-    elif scope == "department":
-        if actor.dep_id is None:
-            return []
-        chair = aliased(User)
-        stmt = (
-            stmt.join(Committee, Task.committee_id == Committee.committee_id)
-            .join(chair, Committee.chair_user_id == chair.user_id)
-            .where(chair.dep_id == actor.dep_id)
-        )
-    else:
-        committee_ids = await _committee_ids_with_role_code(db, actor, _VIEW)
-        if not committee_ids:
-            return []
-        chair_result = await db.execute(
-            select(Committee.committee_id).where(
-                Committee.committee_id.in_(committee_ids),
-                Committee.chair_user_id == actor.user_id,
-            )
-        )
-        chair_ids = set(chair_result.scalars().all())
-        member_only_ids = committee_ids - chair_ids
-
+    # إصلاح 2026-09-13 (بلاغ لاما — بنفس نمط meeting_service.list_meetings/
+    # decision_service.list_decisions المُصلَحين لنفس السبب): "department"
+    # كان حصريًا (elif) فيُقصي مسار Committee Role بالكامل — عضو مهمّة
+    # بلجنة يقودها رئيس من إدارة مختلفة لا يرى مهامه إطلاقًا. دُمج الشرطان
+    # بـOR بدل الإقصاء، مع الحفاظ الكامل على تمييز رئيس/عضو أدناه (رئيس
+    # اللجنة يرى كل مهام لجانه، العضو العادي يرى فقط مهامه المسندة له).
+    if scope != "all":
         conditions = []
-        if chair_ids:
-            conditions.append(Task.committee_id.in_(chair_ids))
-        if member_only_ids:
-            conditions.append(
-                and_(
-                    Task.committee_id.in_(member_only_ids),
-                    Task.assignee_user_id == actor.user_id,
+
+        if scope == "department" and actor.dep_id is not None:
+            chair = aliased(User)
+            dept_committee_ids = (
+                select(Committee.committee_id)
+                .join(chair, Committee.chair_user_id == chair.user_id)
+                .where(chair.dep_id == actor.dep_id)
+            )
+            conditions.append(Task.committee_id.in_(dept_committee_ids))
+
+        committee_ids = await _committee_ids_with_role_code(db, actor, _VIEW)
+        if committee_ids:
+            chair_result = await db.execute(
+                select(Committee.committee_id).where(
+                    Committee.committee_id.in_(committee_ids),
+                    Committee.chair_user_id == actor.user_id,
                 )
             )
+            chair_ids = set(chair_result.scalars().all())
+            member_only_ids = committee_ids - chair_ids
+
+            if chair_ids:
+                conditions.append(Task.committee_id.in_(chair_ids))
+            if member_only_ids:
+                conditions.append(
+                    and_(
+                        Task.committee_id.in_(member_only_ids),
+                        Task.assignee_user_id == actor.user_id,
+                    )
+                )
+
+        if not conditions:
+            return []
         stmt = stmt.where(or_(*conditions))
 
     result = await db.execute(stmt)

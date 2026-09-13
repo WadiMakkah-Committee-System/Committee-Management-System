@@ -43,7 +43,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -305,30 +305,43 @@ async def list_meetings(db: AsyncSession, *, actor: User) -> list[Meeting]:
     """
     عرض الاجتماعات (FR-MEET §3.1.2) — بنفس منطق الوصول المزدوج المطبَّق
     بـcommittees.py (System Role scope أو Committee Role permission).
+
+    إصلاح 2026-09-13 (بلاغ لاما — عضو لجنة لم يرَ اجتماعًا لجنته الفعلية
+    ولا وصله إشعار، بينما رئيس اللجنة رآه بشكل طبيعي): كان "department"
+    scope حصريًا (elif) — يستبعد بالكامل أي مسار Committee Role حتى لو
+    actor عضو فعلي بلجنة يقودها رئيس من إدارة مختلفة. هذا يخالف التصميم
+    الموثَّق أعلى الملف صراحةً ("الوصول = System Role scope **أو**
+    Committee Role permission") — get_meeting/_has_access تُطبّق الـOR
+    الصحيح لعنصر واحد، لكن هذه القائمة المجمَّعة (bulk) لم تكن تطبّقه.
+    الحل: بناء الاثنين كشرطين مستقلّين ودمجهما بـOR (لا إقصاء) — بنفس
+    نمط الإصلاح المطبَّق أيضًا بـdecision_service.list_decisions
+    وtask_service.list_tasks لنفس السبب بالضبط.
     """
     scope = actor.scope_for("meetings.view")
     stmt = select(Meeting).where(Meeting.deleted_at.is_(None)).order_by(
         Meeting.scheduled_at.desc()
     )
 
-    if scope == "all":
-        pass
-    elif scope == "department":
-        if actor.dep_id is None:
-            return []
-        chair = aliased(User)
-        stmt = (
-            stmt.join(Committee, Meeting.committee_id == Committee.committee_id)
-            .join(chair, Committee.chair_user_id == chair.user_id)
-            .where(chair.dep_id == actor.dep_id)
-        )
-    else:
+    if scope != "all":
+        conditions = []
+        if scope == "department" and actor.dep_id is not None:
+            chair = aliased(User)
+            dept_committee_ids = (
+                select(Committee.committee_id)
+                .join(chair, Committee.chair_user_id == chair.user_id)
+                .where(chair.dep_id == actor.dep_id)
+            )
+            conditions.append(Meeting.committee_id.in_(dept_committee_ids))
+
         committee_ids = await _committee_ids_with_committee_role_code(
             db, actor, "meetings.view"
         )
-        if not committee_ids:
+        if committee_ids:
+            conditions.append(Meeting.committee_id.in_(committee_ids))
+
+        if not conditions:
             return []
-        stmt = stmt.where(Meeting.committee_id.in_(committee_ids))
+        stmt = stmt.where(or_(*conditions))
 
     result = await db.execute(stmt)
     meetings = list(result.scalars().unique().all())
