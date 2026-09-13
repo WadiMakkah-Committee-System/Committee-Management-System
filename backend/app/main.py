@@ -96,7 +96,12 @@ async def perf_trace_middleware(request: Request, call_next):
         # خاطئة بفحص لاما رغم أن الكود الصحيح فعليًا كان يشتغل (تأكَّد هذا
         # من Render Logs الخام وقتها). رفع الحد هنا يخلي X-Perf-Trace
         # نفسه مطابقًا لما يُسجَّل بالـLogs لأي تتبّع معقول الحجم.
-        response.headers["X-Perf-Trace"] = trace_str[:15000]
+        # رفع إضافي 2026-09-13: نص كل استعلام بالتتبّع صار أطول الآن
+        # (200 حرف بدل 70 + معلومات caller/params لكل استعلام، راجعي
+        # app/db/session.py) — 15000 حرف صارت تقصّ تتبّع 65 استعلام
+        # قبل نهايته. 30000 كافية له مع هامش، ولا تزال أقل من حدود
+        # الـheader المعتادة عند أغلب البنى التحتية.
+        response.headers["X-Perf-Trace"] = trace_str[:30000]
     print(
         f"[PERF] {request.method} {request.url.path} total={total_ms}ms | {trace_str}",
         flush=True,

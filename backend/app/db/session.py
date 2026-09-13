@@ -72,6 +72,7 @@ SQLAlchemy (async) + asyncpg كـ driver، app.core.config لقراءة DATABASE
 """
 
 import time as _perf_time
+import traceback
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
@@ -139,6 +140,21 @@ engine = create_async_engine(
 # منطق أي خدمة. مؤقتة، تُحذف بعد التحقيق.
 
 
+def _perf_find_caller() -> str:
+    """تشخيص إضافي 2026-09-13 (بلاغ لاما — استعلامات SELECT permissions
+    متعددة رغم selectinload صريح، ما نعرف مصدرها الحقيقي بالكود): تمشي
+    بالـ stack الحالي (من داخل event hook متزامن يشتغل عبر جسر greenlet
+    الخاص بـSQLAlchemy async) وترجع أقرب إطار (frame) من كود التطبيق
+    نفسه (مجلد app/) وليس من sqlalchemy/greenlet الداخلية — عشان كل
+    استعلام بالتتبّع يُنسَب فعليًا للدالة اللي طلبته، بدل التخمين."""
+    for frame in reversed(traceback.extract_stack()):
+        fname = frame.filename.replace("\\", "/")
+        if "/app/" in fname and not fname.endswith("/app/db/session.py"):
+            short = fname.split("/app/", 1)[-1]
+            return f"app/{short}:{frame.lineno}:{frame.name}"
+    return "?"
+
+
 @event.listens_for(engine.sync_engine, "before_cursor_execute")
 def _perf_before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
     context._perf_query_t0 = _perf_time.perf_counter()
@@ -150,8 +166,31 @@ def _perf_after_cursor_execute(conn, cursor, statement, parameters, context, exe
     if t0 is None:
         return
     dur_ms = round((_perf_time.perf_counter() - t0) * 1000, 1)
-    short_sql = " ".join(statement.split())[:70]
-    perf_probe.mark(f"sql: {short_sql}", dur_ms=dur_ms)
+    # تشخيص إضافي 2026-09-13 (بلاغ لاما — لغز الـ26 permission): كان
+    # النص مقصوص لـ70 حرف بس (يخفي WHERE/IN)، وما فيه أي دليل هل الاستعلام
+    # يجيب صف واحد أو دفعة IN بعدة قيم، ولا مين استدعاه فعليًا. الآن:
+    # - نص SQL كامل لغاية 200 حرف (يبيّن IN (...) بوضوح).
+    # - عدد bound parameters الفعلي (len(parameters)) — دليل مباشر: IN
+    #   بـ26 قيمة يعطي param_count كبير بواحد استعلام؛ 26 استعلام منفصل
+    #   بصف واحد يعطي param_count صغير (1-2) مكرر 26 مرة بالتتبّع.
+    # - نوع الجملة (SELECT/INSERT/UPDATE).
+    # - أقرب دالة بكود التطبيق استدعت db.execute (عبر _perf_find_caller).
+    full_sql = " ".join(statement.split())[:200]
+    query_type = full_sql.split(" ", 1)[0].upper() if full_sql else "?"
+    if executemany:
+        try:
+            param_count = len(parameters)
+        except TypeError:
+            param_count = -1
+        param_note = f"executemany*{param_count}"
+    else:
+        try:
+            param_count = len(parameters) if parameters is not None else 0
+        except TypeError:
+            param_count = -1
+        param_note = f"params={param_count}"
+    caller = _perf_find_caller()
+    perf_probe.mark(f"sql: [{query_type} {param_note} by={caller}] {full_sql}", dur_ms=dur_ms)
 
 
 @event.listens_for(engine.sync_engine, "connect")

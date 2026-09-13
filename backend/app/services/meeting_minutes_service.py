@@ -126,8 +126,13 @@ async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
     # أيضًا — بالضبط نفس آلية N+1 المؤكَّدة سابقًا على owner/reviewers/
     # signatures، لكن هنا على مسار التحقق من الصلاحية الذي يمر منه كل
     # استدعاء لهذه الدالة (9 مواقع استخدام). الحل: .options(selectinload)
-    # صريح هنا يجمّع committee+chair+members في استعلامين ثابتين بدل
-    # تحميل كل علاقة لحالها عند أول استخدام لها لاحقًا بالكود.
+    # صريح هنا لـchair فقط.
+    #
+    # تراجع 2026-09-13: كان فيه selectinload(Committee.members) هنا
+    # أيضًا (لأجل _all_committee_members بدوال ثانية) لكن قياس فعلي
+    # أثبت أنها زادت الحمل على مسار GET /minutes نفسه (لا يحتاج
+    # committee.members إطلاقًا) من 18.2s/40 استعلام إلى 25.7-30.1s/65
+    # استعلام بثبات عبر 3 تكرارات. رجعتها.
     from app.core import perf_probe as _perf_probe
 
     _perf_probe.mark("meeting.eager_load_v3_active")
@@ -137,7 +142,6 @@ async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
         .where(Meeting.meeting_id == meeting_id)
         .options(
             selectinload(Meeting.committee).selectinload(Committee.chair),
-            selectinload(Meeting.committee).selectinload(Committee.members),
         )
     )
     meeting = result.scalar_one_or_none()
