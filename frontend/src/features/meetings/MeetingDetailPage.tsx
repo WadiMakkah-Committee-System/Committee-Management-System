@@ -9,6 +9,7 @@ import {
   Download,
   FileAudio,
   FileText,
+  Gavel,
   ListChecks,
   Mail,
   MapPin,
@@ -51,6 +52,7 @@ import {
   useUploadMeetingAttachment,
 } from '@/hooks/useMeetings'
 import { useCommitteeDetail } from '@/hooks/useCommittees'
+import { useMeetingDecisions } from '@/hooks/useDecisions'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -61,7 +63,7 @@ import { Spinner } from '@/components/ui/Spinner'
 import { Avatar } from '@/components/ui/Avatar'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ActionMenu } from '@/components/ui/ActionMenu'
-import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
+import { MeetingStatusBadge, DecisionStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
 import { AssignExtractedItemModal } from './AssignExtractedItemModal'
@@ -149,6 +151,9 @@ export function MeetingDetailPage() {
   const { data: meeting, isLoading, isError, refetch } = useMeetingDetail(meetingId)
   const { data: committee } = useCommitteeDetail(meeting?.committee_id)
   const { data: attachments, isLoading: attachmentsLoading } = useMeetingAttachments(meetingId)
+  // بلاغ لاما 2026-09-13: قرارات أُنشئت من داخل غرفة الاجتماع (DecisionsPanel)
+  // كانت لا تظهر أبدًا بصفحة تفاصيل الاجتماع بعد انتهائه — القسم أدناه يعرضها.
+  const { data: meetingDecisions, isLoading: decisionsLoading } = useMeetingDecisions(meetingId)
 
   const updateMeetingMutation = useUpdateMeeting()
   const deleteMeetingMutation = useDeleteMeeting()
@@ -873,6 +878,38 @@ export function MeetingDetailPage() {
           </div>
 
           {attachmentError && <p className="text-xs font-medium text-danger">{attachmentError}</p>}
+        </div>
+      </Card>
+
+      <Card id="decisions-section" className="scroll-mt-4 p-0">
+        <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <Gavel size={15} />
+            القرارات
+          </h2>
+        </div>
+
+        <div className="p-4">
+          {decisionsLoading ? (
+            <p className="py-4 text-center text-xs text-text-muted">جارِ التحميل...</p>
+          ) : !meetingDecisions?.length ? (
+            <p className="py-4 text-center text-xs text-text-muted">لا توجد قرارات لهذا الاجتماع بعد</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {meetingDecisions.map((d) => (
+                <li key={d.decision_id}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/decisions/${d.decision_id}`)}
+                    className="flex w-full items-center justify-between gap-2 rounded-sm border border-border-default px-3 py-2 text-start transition-colors hover:border-border-strong hover:bg-bg-elevated"
+                  >
+                    <span className="text-xs font-medium text-text-primary">{d.title}</span>
+                    <DecisionStatusBadge status={d.status} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </Card>
 

@@ -26,6 +26,7 @@ import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { SearchInput } from '@/components/ui/SearchInput'
+import { Select } from '@/components/ui/Select'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { CardSkeleton } from '@/components/ui/Skeleton'
@@ -117,6 +118,9 @@ export function MeetingsPage() {
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  // بلاغ لاما 2026-09-13: صفحة الاجتماعات تعرض كل الاجتماعات مجمّعة
+  // بلا فلترة حسب اللجنة — مزعج لعضو أكثر من لجنة. 'all' = بدون فلترة.
+  const [committeeFilter, setCommitteeFilter] = useState<string>('all')
   const [viewMode, setViewMode] = useState<'timeline' | 'calendar'>('timeline')
   const [formOpen, setFormOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -160,11 +164,31 @@ export function MeetingsPage() {
     )
   }, [meetings, search])
 
-  /** نتائج البحث + شريحة الحالة المختارة — أساس ما يُعرض فعليًا بالقائمة/التقويم. */
+  /** اللجان اللي فعليًا فيها اجتماع ضمن القائمة الحالية — مصدر خيارات فلتر اللجنة (بلا لجان بلا اجتماعات). */
+  const committeeOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const m of meetings ?? []) {
+      if (seen.has(m.committee_id)) continue
+      const name = committees?.find((c) => c.committee_id === m.committee_id)?.name ?? 'لجنة'
+      seen.set(m.committee_id, name)
+    }
+    return [
+      { value: 'all', label: 'كل اللجان' },
+      ...Array.from(seen.entries()).map(([value, label]) => ({ value, label })),
+    ]
+  }, [meetings, committees])
+
+  /** نتائج البحث + فلتر اللجنة — أساس عدّادات شرائح الحالة. */
+  const committeeFilteredMeetings = useMemo(() => {
+    if (committeeFilter === 'all') return searched
+    return searched.filter((m) => m.committee_id === committeeFilter)
+  }, [searched, committeeFilter])
+
+  /** نتائج البحث + اللجنة + شريحة الحالة المختارة — أساس ما يُعرض فعليًا بالقائمة/التقويم. */
   const visible = useMemo(() => {
-    if (statusFilter === 'all') return searched
-    return searched.filter((m) => m.status === statusFilter)
-  }, [searched, statusFilter])
+    if (statusFilter === 'all') return committeeFilteredMeetings
+    return committeeFilteredMeetings.filter((m) => m.status === statusFilter)
+  }, [committeeFilteredMeetings, statusFilter])
 
   const stats = useMemo(() => {
     const all = meetings ?? []
@@ -176,15 +200,15 @@ export function MeetingsPage() {
     }
   }, [meetings])
 
-  /** عدّادات شرائح الفلترة — حيّة (تتحدّث مع كل من البحث النصي والحالة الفعلية للاجتماعات). */
+  /** عدّادات شرائح الفلترة — حيّة (تتحدّث مع البحث النصي وفلتر اللجنة معًا). */
   const chipCounts = useMemo(() => {
     return {
-      all: searched.length,
-      upcoming: searched.filter((m) => m.status === 'upcoming').length,
-      ongoing: searched.filter((m) => m.status === 'ongoing').length,
-      finished: searched.filter((m) => m.status === 'finished').length,
+      all: committeeFilteredMeetings.length,
+      upcoming: committeeFilteredMeetings.filter((m) => m.status === 'upcoming').length,
+      ongoing: committeeFilteredMeetings.filter((m) => m.status === 'ongoing').length,
+      finished: committeeFilteredMeetings.filter((m) => m.status === 'finished').length,
     }
-  }, [searched])
+  }, [committeeFilteredMeetings])
 
   /** تجميع العرض الزمني حسب اليوم (توقيت المتصفح المحلي) — ترتيب تصاعدي كامل عبر كل المجموعات. */
   const timelineGroups = useMemo(() => {
@@ -338,6 +362,15 @@ export function MeetingsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex-1">
           <SearchInput value={search} onChange={setSearch} placeholder="ابحث بعنوان الاجتماع أو وصفه..." />
+        </div>
+
+        {/* فلتر اللجنة — بلاغ لاما 2026-09-13: القائمة كانت تعرض اجتماعات كل اللجان مجمّعة بلا تمييز. */}
+        <div className="w-full shrink-0 sm:w-56">
+          <Select
+            value={committeeFilter}
+            onChange={(e) => setCommitteeFilter(e.target.value)}
+            options={committeeOptions}
+          />
         </div>
 
         {/* مفتاح تبديل العرض — زمني (افتراضي) / تقويم. */}

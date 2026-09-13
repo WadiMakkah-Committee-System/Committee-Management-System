@@ -67,26 +67,70 @@ async def send_email(*, to: list[str], subject: str, html_body: str) -> None:
     # الأصلي كامل هذي المدة. الحل هنا: timeout=10 صريح يجبر فشلًا سريعًا
     # بدل تعليق غير محدود — لا يحل مشكلة الشبكة نفسها إن كانت SMTP فعلًا
     # محجوبة، لكن يحدّ الضرر لـ١٠ ثوانٍ كحد أقصى بدل دقائق.
-    try:
-        async with aiosmtplib.SMTP(
+    def _build_message(recipient: str) -> EmailMessage:
+        message = EmailMessage()
+        message["From"] = from_header
+        message["To"] = recipient
+        message["Subject"] = subject
+        message.set_content("هذه الرسالة بصيغة HTML — افتحيها بعارض بريد يدعم HTML.")
+        message.add_alternative(html_body, subtype="html")
+        return message
+
+    async def _connect() -> aiosmtplib.SMTP:
+        smtp = aiosmtplib.SMTP(
             hostname=settings.SMTP_HOST,
             port=settings.SMTP_PORT,
             start_tls=settings.SMTP_USE_TLS,
             timeout=10,
-        ) as smtp:
-            if settings.SMTP_USER:
-                await smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        )
+        await smtp.connect()
+        if settings.SMTP_USER:
+            await smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        return smtp
 
-            for recipient in recipients:
-                message = EmailMessage()
-                message["From"] = from_header
-                message["To"] = recipient
-                message["Subject"] = subject
-                message.set_content("هذه الرسالة بصيغة HTML — افتحيها بعارض بريد يدعم HTML.")
-                message.add_alternative(html_body, subtype="html")
-                try:
-                    await smtp.send_message(message)
-                except Exception:
-                    logger.exception("فشل إرسال بريد إشعار لـ %s (الموضوع: %s)", recipient, subject)
+    try:
+        smtp = await _connect()
     except Exception:
         logger.exception("فشل الاتصال بسيرفر SMTP — تم تجاوز إرسال البريد: %s", subject)
+        return
+
+    # إصلاح 2026-09-13 (بلاغ لاما — لايف: اجتماع بـ3 مستلمين، وصل البريد
+    # فقط لأول واحد بالقائمة/منشئ الاجتماع، الباقي لم يصلهم شيء إطلاقًا):
+    # الكود السابق كان يفتح اتصال SMTP واحد ويُعيد استخدامه لكل المستلمين
+    # بحلقة try/except منفصلة لكل واحد — لكن لو مزوّد SMTP أسقط/رفض
+    # الاتصال نفسه بعد أول رسالة (شائع مع Gmail/عدة مزوّدات: حد أقصى
+    # لعدد الرسائل بلا إعادة تفاوض على نفس القناة، أو timeout قصير بين
+    # الرسائل) — كل محاولات الإرسال التالية تفشل بصمت (استثناء مُسجَّل
+    # بالسجلات فقط، لا يظهر لأحد بالواجهة، والعملية الأصلية لا تُفشَل
+    # عمدًا). الحل: عند فشل إرسال لمستلم، نحاول مرة واحدة إضافية باتصال
+    # SMTP جديد مستقل تمامًا قبل التسليم بالفشل لهذا المستلم تحديدًا —
+    # يعالج انقطاع الاتصال منتصف الدفعة بلا تحويل التصميم بالكامل لاتصال
+    # منفصل لكل رسالة (يبقى اتصال واحد يُعاد استخدامه بالمسار السعيد).
+    try:
+        for recipient in recipients:
+            message = _build_message(recipient)
+            try:
+                await smtp.send_message(message)
+                continue
+            except Exception:
+                logger.exception(
+                    "فشل إرسال بريد لـ %s بالاتصال الحالي — إعادة محاولة باتصال جديد (الموضوع: %s)",
+                    recipient,
+                    subject,
+                )
+            try:
+                await smtp.quit()
+            except Exception:
+                pass
+            try:
+                smtp = await _connect()
+                await smtp.send_message(message)
+            except Exception:
+                logger.exception(
+                    "فشل إرسال بريد إشعار لـ %s حتى بعد إعادة المحاولة (الموضوع: %s)", recipient, subject
+                )
+    finally:
+        try:
+            await smtp.quit()
+        except Exception:
+            pass

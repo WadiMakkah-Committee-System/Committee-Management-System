@@ -114,6 +114,16 @@ export function useMeetingRealtime(meetingId: string | undefined) {
       pushActivity(`بدأت مناقشة: ${payload.title}`)
     })
 
+    // إصلاح 2026-09-13 (بلاغ لاما — عضو يفتح الاجتماع بعد غيره يرى البقية
+    // "غير متصلين" رغم اتصالهم الفعلي): presence.joined وحده لا يكفي —
+    // من يتصل الآن لا يعرف حالة الأعضاء المتصلين *قبله* أصلًا (أحداث
+    // انضمامهم بُثّت قبل وجوده). presence.roster (جديد، راجعي
+    // app/core/socketio_server.py::connect) يصل مرة واحدة فقط لهذا
+    // الاتصال عند فتحه، بصورة كاملة لكل من هو متصل بالغرفة حاليًا.
+    socket.on('presence.roster', (payload: { user_ids: string[] }) => {
+      setOnlineUserIds((prev) => new Set([...prev, ...payload.user_ids]))
+    })
+
     socket.on('presence.joined', (payload: { user_id: string; full_name: string }) => {
       setOnlineUserIds((prev) => new Set(prev).add(payload.user_id))
       pushActivity(`انضم ${payload.full_name} إلى الاجتماع`)

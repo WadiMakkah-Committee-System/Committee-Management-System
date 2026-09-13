@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { ClipboardList, Loader2, TimerOff } from 'lucide-react'
 import { useMeetingDetail } from '@/hooks/useMeetings'
+import { useCommittees } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
 import { useMeetingRealtime } from '@/hooks/useMeetingRealtime'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -20,6 +21,7 @@ import { AttachmentsPanel } from './room/panels/AttachmentsPanel'
 import { ChatPanel } from './room/panels/ChatPanel'
 import { ActivityPanel } from './room/panels/ActivityPanel'
 import { RecordingPanel } from './room/panels/RecordingPanel'
+import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
 
 /** كل كم مللي ثانية تُحدَّث تفاصيل الاجتماع (الحالة تحديدًا) أثناء بقاء
@@ -58,6 +60,12 @@ export function MeetingRoom({
   // Polling أثناء بقاء الغرفة مفتوحة فقط (راجعي useMeetingDetail) — يكشف
   // انتهاء وقت الاجتماع (status → finished) بدون حاجة لإعادة فتح الصفحة.
   const meetingQuery = useMeetingDetail(meetingId, { refetchIntervalMs: MEETING_STATUS_POLL_MS })
+  // بلاغ لاما 2026-09-13 (لايف): زر "قرار جديد" داخل غرفة الاجتماع كان
+  // يظهر لأي مشارك بلا أي فحص صلاحية (بخلاف DecisionsPage.tsx خارج
+  // الغرفة اللي تحجبه خلف canCreateAnyDecision بشكل صحيح). نفس منطق
+  // الفحص هنا بالضبط: رئيس هذه اللجنة تحديدًا، أو decisions.create
+  // بنطاق 'all' فعليًا.
+  const { data: committees } = useCommittees()
   const agora = useAgoraConnection(meetingId)
   const realtime = useMeetingRealtime(meetingId)
   const recorder = useAudioRecorder(meetingId)
@@ -117,6 +125,15 @@ export function MeetingRoom({
   }
 
   const meeting = meetingQuery.data
+
+  const canCreateDecision = Boolean(
+    currentUser &&
+      meeting &&
+      (scopeFor(currentUser, 'decisions.create') === 'all' ||
+        committees?.some(
+          (c) => c.committee_id === meeting.committee_id && c.chair_user_id === currentUser.user_id,
+        )),
+  )
 
   // تعديل لاما 2026-09-06: "انتهى وقت الاجتماع وما اغلق تلقائيًا" — الحالة
   // نفسها تُحسَب فعليًا بالباك-إند (_maybe_transition_status، تحويل كسول
@@ -209,9 +226,18 @@ export function MeetingRoom({
                     meetingId={meetingId}
                     committeeId={meeting.committee_id}
                     currentUserId={currentUser?.user_id ?? ''}
+                    canCreate={canCreateDecision}
+                    meetingScheduledAt={meeting.scheduled_at}
+                    meetingScheduledEndAt={meeting.scheduled_end_at}
                   />
                 )}
-                {activePanel === 'attachments' && <AttachmentsPanel meetingId={meetingId} />}
+                {activePanel === 'attachments' && (
+                  <AttachmentsPanel
+                    meetingId={meetingId}
+                    sharingScreen={agora.sharingScreen}
+                    onToggleScreenShare={agora.toggleScreenShare}
+                  />
+                )}
                 {activePanel === 'chat' && (
                   <ChatPanel
                     meetingId={meetingId}

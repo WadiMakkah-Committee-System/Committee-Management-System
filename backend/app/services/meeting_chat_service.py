@@ -14,6 +14,7 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.committee import Committee
 from app.models.meeting import Meeting
@@ -94,7 +95,23 @@ async def send_message(
     """يُستدعى من داخل راوت WebSocket (meeting_live_socket) عند type=chat.send —
     وليس عبر REST. يحفظ الرسالة ويُرجعها؛ البث لبقية المشاركين مسؤولية
     الراوت نفسه (عبر app.core.meeting_realtime.connection_manager) بعد
-    نجاح هذا الاستدعاء."""
+    نجاح هذا الاستدعاء.
+
+    إصلاح 2026-09-13 (بلاغ لاما — لايف: رسالة الدردشة "ما توصل ولا
+    تنحفظ"): كانت تُحفَظ فعليًا (commit ينجح)، لكن db.refresh(message)
+    لا يُعيد تحميل العلاقات (relationships) — فقط أعمدة الصف نفسه.
+    MeetingChatMessage.sender معرَّفة lazy="selectin" (راجعي
+    app/models/meeting_chat.py)، وهذا يعمل تلقائيًا فقط ضمن SELECT فعلي
+    يحمّل الصف، لا refresh() لكائن مُنشأ محليًا للتو. النتيجة: socketio_server.
+    chat_send يحاول MeetingChatMessageOut.model_validate(message) *بعد*
+    إغلاق جلسة async with — أي وصول لـmessage.sender عندها يفشل (الكائن
+    detached)، فيُرمى استثناء غير مُلتقَط داخل معالج chat.send، والبث
+    ("chat.message") لا يصل لأحد أبدًا — لا للمُرسِل نفسه ولا لبقية
+    الحاضرين — رغم أن الرسالة محفوظة فعليًا بقاعدة البيانات (تظهر فقط
+    عبر REST History عند إعادة فتح الدردشة لاحقًا). الحل: إعادة تحميل
+    الصف بـSELECT صريح مع selectinload(sender) بدل refresh() — نفس نمط
+    التحميل الصريح المطبَّق بكل الملف تقريبًا (meeting_service/
+    committee_service) بدل الاعتماد على تحميل ضمني بعد انتهاء الجلسة."""
     await require_realtime_access(db, actor=actor, meeting_id=meeting_id)
 
     trimmed = body.strip()
@@ -104,5 +121,10 @@ async def send_message(
     message = MeetingChatMessage(meeting_id=meeting_id, sender_id=actor.user_id, body=trimmed[:2000])
     db.add(message)
     await db.commit()
-    await db.refresh(message)
-    return message
+
+    result = await db.execute(
+        select(MeetingChatMessage)
+        .where(MeetingChatMessage.message_id == message.message_id)
+        .options(selectinload(MeetingChatMessage.sender))
+    )
+    return result.scalar_one()

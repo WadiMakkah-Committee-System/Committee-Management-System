@@ -110,11 +110,36 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
         return False
 
     await sio.save_session(sid, {"user": user, "meeting_id": str(meeting_id)})
-    sio.enter_room(sid, _room(str(meeting_id)))
+    room = _room(str(meeting_id))
+
+    # إصلاح 2026-09-13 (بلاغ لاما — عضو يفتح الاجتماع بعد غيره يرى البقية
+    # "غير متصلين" رغم اتصالهم الفعلي): onlineUserIds بالفرونت كان يُبنى
+    # فقط من أحداث presence.joined/presence.left المستقبلية — بلا أي
+    # صورة (snapshot) لحالة الغرفة الحالية عند الاتصال. أي مستخدم متصل
+    # *قبل* هذا الانضمام يبقى غير معروف للقادم الجديد للأبد (حدث انضمامه
+    # بُثّ قبل وجود مستمع له أصلًا). الحل: قبل ضم sid الجديد لنفسه، نجمع
+    # كل من هو متصل فعليًا بالغرفة الآن (بيانات جلسة كل sid آخر، بلا أي
+    # استعلام DB إضافي) ونرسلها لهذا الاتصال فقط (to=sid، لا بث للغرفة)
+    # كصورة أولية — presence.joined يبقى كما هو لبث الانضمامات اللاحقة.
+    existing_user_ids: set[str] = set()
+    for other_sid, _eio_sid in sio.manager.get_participants("/", room):
+        try:
+            other_session = await sio.get_session(other_sid)
+        except KeyError:
+            continue
+        other_user: User | None = other_session.get("user")
+        if other_user is not None:
+            existing_user_ids.add(str(other_user.user_id))
+
+    sio.enter_room(sid, room)
+
+    if existing_user_ids:
+        await sio.emit("presence.roster", {"user_ids": list(existing_user_ids)}, to=sid)
+
     await sio.emit(
         "presence.joined",
         {"user_id": str(user.user_id), "full_name": user.full_name},
-        room=_room(str(meeting_id)),
+        room=room,
     )
     return True
 
