@@ -137,13 +137,22 @@ async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
 
     _perf_probe.mark("meeting.eager_load_v3_active")
 
-    result = await db.execute(
-        select(Meeting)
-        .where(Meeting.meeting_id == meeting_id)
-        .options(
-            selectinload(Meeting.committee).selectinload(Committee.chair),
+    # تشخيص 2026-09-13: caller صريح حول استعلام Meeting الرئيسي — إثبات
+    # مباشر إن كل استعلام selectin تلقائي يظهر بالتتبّع بنفس هذا الاسم
+    # (حتى لو على علاقات لم تُطلب صراحة هنا مثل creator/participants/
+    # agenda_items/committee.members/committee.member_roles) هو فعليًا
+    # جزء من نفس await db.execute() هذا، وليس من دالة أخرى — يثبت أو
+    # ينفي فرضية "cascade تلقائي" بدل التخمين.
+    with _perf_probe.caller(
+        "_load_meeting[explicit selectinload: Meeting.committee->Committee.chair ONLY]"
+    ):
+        result = await db.execute(
+            select(Meeting)
+            .where(Meeting.meeting_id == meeting_id)
+            .options(
+                selectinload(Meeting.committee).selectinload(Committee.chair),
+            )
         )
-    )
     meeting = result.scalar_one_or_none()
     if meeting is None or meeting.is_deleted:
         raise MinutesNotFoundError("الاجتماع غير موجود")
@@ -247,7 +256,10 @@ async def _load_minutes_row(db: AsyncSession, meeting_id: uuid.UUID) -> MeetingM
             ),
         )
     )
-    result = await db.execute(stmt)
+    with _perf_probe.caller(
+        "_load_minutes_row[explicit selectinload: owner/reviewers/signatures -> role.role_permission_links.permission + job_title]"
+    ):
+        result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
 

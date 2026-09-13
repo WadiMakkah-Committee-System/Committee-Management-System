@@ -77,7 +77,9 @@ async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
     if user_id is None:
         raise unauthorized
 
-    with perf_probe.timed("auth.db_get_user"):
+    with perf_probe.timed("auth.db_get_user"), perf_probe.caller(
+        "auth._resolve_user_from_token->user_service.get_user[joinedload dept.manager + role.role_permission_links.permission]"
+    ):
         user = await user_service.get_user(db, user_id)
     if user is None:
         raise unauthorized

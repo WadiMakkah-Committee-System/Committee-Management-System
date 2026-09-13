@@ -72,7 +72,6 @@ SQLAlchemy (async) + asyncpg كـ driver، app.core.config لقراءة DATABASE
 """
 
 import time as _perf_time
-import traceback
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
@@ -141,18 +140,16 @@ engine = create_async_engine(
 
 
 def _perf_find_caller() -> str:
-    """تشخيص إضافي 2026-09-13 (بلاغ لاما — استعلامات SELECT permissions
-    متعددة رغم selectinload صريح، ما نعرف مصدرها الحقيقي بالكود): تمشي
-    بالـ stack الحالي (من داخل event hook متزامن يشتغل عبر جسر greenlet
-    الخاص بـSQLAlchemy async) وترجع أقرب إطار (frame) من كود التطبيق
-    نفسه (مجلد app/) وليس من sqlalchemy/greenlet الداخلية — عشان كل
-    استعلام بالتتبّع يُنسَب فعليًا للدالة اللي طلبته، بدل التخمين."""
-    for frame in reversed(traceback.extract_stack()):
-        fname = frame.filename.replace("\\", "/")
-        if "/app/" in fname and not fname.endswith("/app/db/session.py"):
-            short = fname.split("/app/", 1)[-1]
-            return f"app/{short}:{frame.lineno}:{frame.name}"
-    return "?"
+    """تحديث 2026-09-13 (بعد فشل مثبت): النسخة الأصلية هنا كانت تمشي
+    traceback.extract_stack() بحثًا عن أقرب إطار من app/ — فشلت تمامًا
+    بالقياس الفعلي (كل استعلام بكل التكرارات الأربعة رجع by=?)، لأن جسر
+    greenlet الخاص بـSQLAlchemy async لا يُبقي إطارات سلسلة الاستدعاء
+    غير المتزامنة الأصلية ظاهرة بالـstack من داخل event hook المتزامن
+    وقت تنفيذه. الحل الفعلي الآن: ContextVar صريح مضبوط بكود الخدمة نفسه
+    قبل كل await db.execute(...) (راجعي app/core/perf_probe.caller) —
+    يعمل عبر جسر الـgreenlet لأن SQLAlchemy يعمل copy_context() صراحة
+    عند greenlet_spawn، بعكس قراءة الـstack مباشرة."""
+    return perf_probe.current_caller()
 
 
 @event.listens_for(engine.sync_engine, "before_cursor_execute")

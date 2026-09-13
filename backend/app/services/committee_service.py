@@ -657,18 +657,22 @@ async def get_committee_role_permission_codes(
 
     _perf_probe.mark("committee_role.eager_load_v3_active")
 
-    result = await db.execute(
-        select(CommitteeMember)
-        .where(
-            CommitteeMember.committee_id == committee_id,
-            CommitteeMember.user_id == user_id,
+    with _perf_probe.caller(
+        "committee_service.get_committee_role_permission_codes"
+        "[explicit selectinload: CommitteeMember.committee_role->role_permission_links->permission]"
+    ):
+        result = await db.execute(
+            select(CommitteeMember)
+            .where(
+                CommitteeMember.committee_id == committee_id,
+                CommitteeMember.user_id == user_id,
+            )
+            .options(
+                selectinload(CommitteeMember.committee_role)
+                .selectinload(Role.role_permission_links)
+                .selectinload(RolePermission.permission)
+            )
         )
-        .options(
-            selectinload(CommitteeMember.committee_role)
-            .selectinload(Role.role_permission_links)
-            .selectinload(RolePermission.permission)
-        )
-    )
     membership = result.scalar_one_or_none()
     if membership is None:
         return set()

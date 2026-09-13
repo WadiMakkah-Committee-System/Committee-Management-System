@@ -84,7 +84,13 @@ async def perf_trace_middleware(request: Request, call_next):
     Logs مباشرة) + يرجع X-Perf-Trace/X-Perf-Total-Ms كـheaders."""
     perf_probe.start_trace()
     t0 = _perf_time.perf_counter()
-    response = await call_next(request)
+    # تشخيص 2026-09-13: caller افتراضي على مستوى الطلب كامل — أي استعلام
+    # يُطلَق خارج أي كتلة perf_probe.caller(...) أدق بكود الخدمة (مثلًا
+    # أثناء تسلسل/تجهيز الاستجابة Pydantic بعد رجوع دالة الخدمة، أو من
+    # مسار لم نضع فيه caller محدد بعد) يظهر بهذا الاسم بدل "?" المبهم —
+    # دليل مباشر إن كان السبب فعلًا تسلسل الاستجابة أو مكانًا لم نغطّه.
+    with perf_probe.caller(f"http_request_default[{request.method} {request.url.path}]"):
+        response = await call_next(request)
     total_ms = round((_perf_time.perf_counter() - t0) * 1000, 1)
     trace_str = perf_probe.trace_summary()
     response.headers["X-Perf-Total-Ms"] = str(total_ms)
