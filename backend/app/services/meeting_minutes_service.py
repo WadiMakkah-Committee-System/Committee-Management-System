@@ -377,7 +377,15 @@ async def list_templates_for_meeting(
     ما ينشئ الصف)."""
     meeting, committee = await _load_meeting_and_committee(db, meeting_id)
     _require_meeting_finished(meeting)
-    await _require_access(db, actor, committee, "minutes.templates.view", "ليست لديك صلاحية عرض قوالب المحاضر")
+    # إصلاح 2026-09-13: الكود كان يتحقق فعليًا من صلاحية "minutes.templates.view"
+    # منفصلة — لكنها غير ممنوحة لدور "عضو اللجنة" أصلًا بجدول role_permissions
+    # (الممنوح له فقط: view/update/sign/export)، فكان أي عضو عادي (وليس رئيس
+    # اللجنة) يحصل على 403 بمجرد فتح تبويب محضر أي اجتماع منتهٍ — يخالف تمامًا
+    # التوثيق الأصلي بأعلى الدالة القائل إن هذي القائمة (ثابتة بالكود، بلا بيانات
+    # حساسة) يُفترض التحقق منها ضمنيًا عبر "minutes.view" فقط، والاختيار الفعلي
+    # وحده محمي بصلاحية "minutes.templates.select" الأدق (بند 852 بـmeetings.py).
+    # الإصلاح: مطابقة الكود للتوثيق الأصلي بدل تغيير بيانات الصلاحيات.
+    await _require_access(db, actor, committee, "minutes.view", "ليست لديك صلاحية لعرض محضر هذا الاجتماع")
     return list_templates()
 
 
