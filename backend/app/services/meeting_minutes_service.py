@@ -114,7 +114,28 @@ async def _load_committee(db: AsyncSession, committee_id: uuid.UUID) -> Committe
 
 
 async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
-    result = await db.execute(select(Meeting).where(Meeting.meeting_id == meeting_id))
+    # تحقيق أداء لاما 2026-09-13 — إصلاح N+1 الثاني (بعد _load_minutes_row
+    # بتاريخ 2026-09-12): committee وchair/members الفرعيين كانوا يُحمَّلون
+    # عبر lazy="selectin" الافتراضي بدون تنسيق استعلام واحد وقت الجلب —
+    # التعليق القديم على _load_meeting_and_committee أدناه كان يفترض خطأً
+    # أن lazy="selectin" يعني تحميل committee ضمن نفس استعلام meeting
+    # (batched تلقائيًا) — هذا غير صحيح: lazy="selectin" كإستراتيجية
+    # افتراضية (بدون .options(selectinload(...)) وقت الاستعلام) يُطلق
+    # round trip منفصل خاص به عند أول وصول لـmeeting.committee، ثم كل
+    # علاقة فرعية تُلمَس بعده (chair، members) تُطلق round trip خاص بها
+    # أيضًا — بالضبط نفس آلية N+1 المؤكَّدة سابقًا على owner/reviewers/
+    # signatures، لكن هنا على مسار التحقق من الصلاحية الذي يمر منه كل
+    # استدعاء لهذه الدالة (9 مواقع استخدام). الحل: .options(selectinload)
+    # صريح هنا يجمّع committee+chair+members في استعلامين ثابتين بدل
+    # تحميل كل علاقة لحالها عند أول استخدام لها لاحقًا بالكود.
+    result = await db.execute(
+        select(Meeting)
+        .where(Meeting.meeting_id == meeting_id)
+        .options(
+            selectinload(Meeting.committee).selectinload(Committee.chair),
+            selectinload(Meeting.committee).selectinload(Committee.members),
+        )
+    )
     meeting = result.scalar_one_or_none()
     if meeting is None or meeting.is_deleted:
         raise MinutesNotFoundError("الاجتماع غير موجود")
@@ -166,11 +187,11 @@ async def _require_access(
 
 
 async def _load_meeting_and_committee(db: AsyncSession, meeting_id: uuid.UUID) -> tuple[Meeting, Committee]:
+    # تصحيح 2026-09-13: التعليق القديم هنا كان يفترض أن committee تُحمَّل
+    # ضمن نفس استعلام meeting تلقائيًا بمجرد lazy="selectin" — تبيّن بالقياس
+    # الفعلي إن هذا غير صحيح (نفس مفهوم N+1 المكتشف بـ_load_minutes_row).
+    # الإصلاح الحقيقي الآن داخل _load_meeting نفسها عبر selectinload صريح.
     meeting = await _load_meeting(db, meeting_id)
-    # committee.lazy="selectin" على Meeting.committee يعني أن الصف محمَّل
-    # فعليًا ضمن نفس الاستعلام الذي جلب meeting أعلاه (batched select) — استعلام
-    # منفصل هنا كان round trip إضافي بلا داعٍ لكل استدعاء (9 مواقع استخدام في
-    # هذا الملف)، يتضاعف أثره مع بُعد قاعدة البيانات جغرافيًا (Supabase Ireland).
     committee = meeting.committee
     return meeting, committee
 

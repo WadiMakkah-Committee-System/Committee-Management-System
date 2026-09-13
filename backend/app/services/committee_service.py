@@ -642,10 +642,27 @@ async def get_committee_role_permission_codes(
     "الأدوار والصلاحيات" ينعكس فورًا على كل رؤساء اللجان بكل اللجان، بلا أي
     تعديل يدوي لكل لجنة/عضو (متطلب لاما الصريح: نفس الاختبار المطلوب).
     """
+    # تحقيق أداء لاما 2026-09-13 — إصلاح N+1 الثالث (بعد _load_minutes_row
+    # و_load_meeting/_load_meeting_and_committee): committee_role كان
+    # lazy="selectin" افتراضي بدون تنسيق استعلام واحد، فيُحمَّل بـround trip
+    # منفصل عند membership.committee_role، ثم role_permission_links بـround
+    # trip آخر (مجموعة الصلاحيات)، ثم .permission على *كل صف* منها بـround
+    # trip مستقل — نفس الآلية بالضبط المؤكَّدة سابقًا على owner/reviewers/
+    # signatures، وهذه الدالة بالذات مشتركة بين 6 مواقع استخدام بالمشروع
+    # (meetings، decisions، chat، tasks، committees، minutes) فيتضاعف
+    # أثرها. selectinload صريح هنا يجمّع السلسلة كاملة (committee_role ثم
+    # role_permission_links ثم permission لكل صف) في 3 استعلامات مجمّعة
+    # ثابتة بدل واحد لكل صلاحية يملكها الدور.
     result = await db.execute(
-        select(CommitteeMember).where(
+        select(CommitteeMember)
+        .where(
             CommitteeMember.committee_id == committee_id,
             CommitteeMember.user_id == user_id,
+        )
+        .options(
+            selectinload(CommitteeMember.committee_role)
+            .selectinload(Role.role_permission_links)
+            .selectinload(RolePermission.permission)
         )
     )
     membership = result.scalar_one_or_none()
