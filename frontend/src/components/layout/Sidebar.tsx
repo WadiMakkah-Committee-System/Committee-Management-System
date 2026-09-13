@@ -12,7 +12,6 @@ import {
   FileText,
   Sparkles,
   Bell,
-  BarChart3,
   ShieldQuestion,
   UserRound,
   Briefcase,
@@ -95,7 +94,6 @@ const NAV_ITEMS: NavItem[] = [
     requiredPermission: ['documents.search_all_agent'],
   },
   { label: 'الإشعارات', icon: Bell, path: '/notifications' },
-  { label: 'التقارير', icon: BarChart3, comingSoon: true },
 ]
 
 /**
