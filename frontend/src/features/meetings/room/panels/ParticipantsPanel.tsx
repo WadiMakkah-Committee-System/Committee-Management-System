@@ -56,7 +56,7 @@ export function ParticipantsPanel({
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-semibold text-text-primary">
                   {participant.first_name} {participant.last_name}
-                  {isMe && <span className="font-normal text-text-muted"> (أنتِ)</span>}
+                  {isMe && <span className="font-normal text-text-muted"> (أنت)</span>}
                 </p>
                 <p className="text-[11px] text-text-muted">{online ? 'متصل الآن' : 'غير متصل'}</p>
               </div>

@@ -249,7 +249,7 @@ export function MeetingFormModal({
       description={
         isEdit
           ? `تعديل بيانات اجتماع "${meeting?.title}"`
-          : 'أدخلي بيانات الاجتماع — يُرسل إشعار تلقائي لكل أعضاء اللجنة المختارة'
+          : 'يُرجى إدخال بيانات الاجتماع — يُرسل إشعار تلقائي لكل أعضاء اللجنة المختارة'
       }
       size="lg"
       footer={
@@ -273,7 +273,7 @@ export function MeetingFormModal({
                 label="اللجنة"
                 required
                 disabled={isEdit}
-                placeholder="اختاري اللجنة"
+                placeholder="اختر اللجنة"
                 options={committeeOptions}
                 error={errors.committee_id?.message}
                 {...field}
@@ -302,7 +302,7 @@ export function MeetingFormModal({
               <Select
                 label="نوع الاجتماع"
                 required
-                placeholder="اختاري نوع الاجتماع"
+                placeholder="اختر نوع الاجتماع"
                 options={MEETING_MODE_OPTIONS}
                 error={errors.mode?.message}
                 {...field}
@@ -361,7 +361,7 @@ export function MeetingFormModal({
 
         <FormSection icon={<UsersIcon size={13} />} title="المشاركون">
           {!selectedCommittee ? (
-            <p className="text-xs text-text-muted">اختاري اللجنة أولًا لعرض أعضائها</p>
+            <p className="text-xs text-text-muted">اختر اللجنة أولًا لعرض أعضائها</p>
           ) : autoParticipants.length === 0 ? (
             <p className="text-xs text-text-muted">لا يوجد أعضاء بهذه اللجنة</p>
           ) : (
@@ -406,7 +406,7 @@ export function MeetingFormModal({
             }
           >
             {agendaFieldArray.fields.length === 0 ? (
-              <p className="text-xs text-text-muted">لا توجد بنود بعد — اضغطي + لإضافة بند</p>
+              <p className="text-xs text-text-muted">لا توجد بنود بعد — اضغط + لإضافة بند</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {agendaFieldArray.fields.map((field, index) => (

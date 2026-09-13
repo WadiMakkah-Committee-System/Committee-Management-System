@@ -95,7 +95,11 @@ async def _load_request(db: AsyncSession, request_id: uuid.UUID) -> CommitteeFor
         select(CommitteeFormationRequest)
         .options(
             selectinload(CommitteeFormationRequest.requester),
-            selectinload(CommitteeFormationRequest.proposed_members),
+            # .selectinload(User.department) إضافية هنا (2026-09-13):
+            # department على User بعكس job_title لا يحمل lazy="selectin"
+            # بمستوى الموديل — بدونها ProposedMemberOut.department كان
+            # سيسبّب MissingGreenlet أول ما يُقرأ الحقل بجلسة async.
+            selectinload(CommitteeFormationRequest.proposed_members).selectinload(User.department),
             # صراحةً رغم lazy="selectin" على مستوى الـ Model (نفس نمط
             # requester/proposed_members أعلاه) — لازم هنا تحديدًا لأن
             # approve_request يستدعي _get_request_or_raise مرتين: قبل
@@ -197,27 +201,65 @@ async def create_request(
     return await _get_request_or_raise(db, request.request_id)
 
 
+def _visible_statuses_for(actor: User) -> list[CommitteeRequestStatus]:
+    """
+    يحدّد أي حالات طلب تظهر لغير مالك الطلب (يُستدعى فقط لمن يملك
+    committees.request.view بنطاق department/all — can_view_all=True) —
+    قرار موثّق مع المستخدمة 2026-09-13: المسودة (draft) خاصة بمقدّمها
+    فقط ولا تظهر لأي طرف آخر مهما كانت صلاحيته قبل submit_request؛
+    الرئيس التنفيذي (committees.request.approve) تحديدًا لا يشوف الطلب
+    إلا بعد ما المكتب التنفيذي يرفعه له فعليًا (escalate_request →
+    pending_approval) — وليس فور إرساله للمكتب مباشرة. المكتب التنفيذي
+    (committees.request.update/escalate) يشوف كل شيء إرسل submitted
+    فما بعده (بما فيها returned، لأنه هو من يرجعها).
+
+    هذا يصحّح ثغرة كانت موجودة: can_view_all كانت تُستخدم وحدها بدون أي
+    تمييز على status، فتُرجع كل الحالات (حتى draft) لأي دور يملك النطاق
+    الأوسع — بغض النظر عن مكانه الفعلي بدورة حياة الطلب.
+    """
+    if actor.scope_for("committees.request.approve") in ("department", "all"):
+        return [
+            CommitteeRequestStatus.pending_approval,
+            CommitteeRequestStatus.approved,
+            CommitteeRequestStatus.rejected,
+        ]
+    # المكتب التنفيذي (أو أي دور آخر بنطاق واسع على committees.request.view
+    # بدون approve) — كل شيء عدا draft.
+    return [s for s in CommitteeRequestStatus if s != CommitteeRequestStatus.draft]
+
+
 async def list_requests(
     db: AsyncSession, *, actor: User, can_view_all: bool
 ) -> list[CommitteeFormationRequest]:
     """
-    عرض قائمة الطلبات. من يملك committees.request.view (المكتب التنفيذي/
-    الرئيس التنفيذي/super_admin) يشوف كل الطلبات. غير ذلك (الادمن، الذي
-    لا يملك هذه الصلاحية حسب permissions.xlsx) يشوف طلباته هو فقط —
-    استثناء ملكية شبيه بنمط GET /users/me الموثّق مسبقًا بالمشروع، وإلا
-    ما راح يقدر يتابع حالة طلبه بعد إرساله. قرار غير موثّق صراحة بالوثائق،
-    مذكور صراحة هنا لسهولة المراجعة.
+    عرض قائمة الطلبات. مالك الطلب يشوف طلباته هو بكل حالاتها دائمًا
+    (استثناء ملكية شبيه بنمط GET /users/me الموثّق مسبقًا بالمشروع، وإلا
+    ما راح يقدر يتابع حالة طلبه بعد إرساله). من يملك committees.request.view
+    بنطاق department/all (المكتب التنفيذي/الرئيس التنفيذي/super_admin)
+    يشوف زيادة على طلباته طلبات البقية — لكن فقط الحالات المسموح له
+    برؤيتها حسب دوره (راجعي _visible_statuses_for)، وليس كل الحالات
+    بلا تمييز.
     """
     stmt = (
         select(CommitteeFormationRequest)
         .options(
             selectinload(CommitteeFormationRequest.requester),
-            selectinload(CommitteeFormationRequest.proposed_members),
+            # .selectinload(User.department) إضافية هنا (2026-09-13) —
+            # راجعي نفس الملاحظة بـ_load_request أعلاه.
+            selectinload(CommitteeFormationRequest.proposed_members).selectinload(User.department),
         )
         .order_by(CommitteeFormationRequest.created_at.desc())
     )
     if not can_view_all:
         stmt = stmt.where(CommitteeFormationRequest.requested_by == actor.user_id)
+    else:
+        visible_statuses = _visible_statuses_for(actor)
+        stmt = stmt.where(
+            or_(
+                CommitteeFormationRequest.requested_by == actor.user_id,
+                CommitteeFormationRequest.status.in_(visible_statuses),
+            )
+        )
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -225,10 +267,19 @@ async def list_requests(
 async def get_request(
     db: AsyncSession, *, request_id: uuid.UUID, actor: User, can_view_all: bool
 ) -> CommitteeFormationRequest:
-    """تفاصيل طلب واحد — نفس قاعدة الوصول في list_requests (ملكية أو صلاحية عامة)."""
+    """
+    تفاصيل طلب واحد — نفس قاعدة الوصول في list_requests (ملكية دائمًا، أو
+    صلاحية عامة مع تقييد الحالة حسب _visible_statuses_for). تفرض القاعدة
+    هنا أيضًا (وليس فقط بالقائمة) حتى لا يقدر أحد يشوف تفاصيل طلب بحالة
+    غير مسموح له بها بمعرفة الـ request_id مباشرة.
+    """
     request = await _get_request_or_raise(db, request_id)
-    if not can_view_all and request.requested_by != actor.user_id:
+    if request.requested_by == actor.user_id:
+        return request
+    if not can_view_all:
         raise CommitteeRequestForbiddenError("ليست لديك صلاحية لعرض هذا الطلب")
+    if request.status not in _visible_statuses_for(actor):
+        raise CommitteeRequestForbiddenError("ليست لديك صلاحية لعرض هذا الطلب بحالته الحالية")
     return request
 
 

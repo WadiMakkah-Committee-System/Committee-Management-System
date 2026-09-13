@@ -69,7 +69,7 @@ export function useAudioRecorder(meetingId: string) {
       }, 1000)
       return true
     } catch {
-      setMicError('تعذّر الوصول للميكروفون — تحققي من صلاحيات المتصفح')
+      setMicError('تعذّر الوصول للميكروفون — تحقق من صلاحيات المتصفح')
       return false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

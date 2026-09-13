@@ -263,7 +263,7 @@ export function MeetingRoom({
               )}
               {agora.phase === 'connected' && (
                 <MeetingStage
-                  localName={currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'أنتِ'}
+                  localName={currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'أنت'}
                   localDisplayTrack={agora.localDisplayTrack}
                   micEnabled={agora.micEnabled}
                   camEnabled={agora.camEnabled}
@@ -305,7 +305,7 @@ export function MeetingRoom({
         onClose={() => setConfirmLeaveOpen(false)}
         onConfirm={handleConfirmLeave}
         title="مغادرة الاجتماع"
-        description="هل أنتِ متأكدة أنك تريدين مغادرة الاجتماع؟"
+        description="هل أنت متأكد أنك تريد مغادرة الاجتماع؟"
         confirmLabel="مغادرة"
         variant="danger"
         loading={leaving}

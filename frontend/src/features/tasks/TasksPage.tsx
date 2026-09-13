@@ -476,7 +476,7 @@ export function TasksPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDeleteConfirm}
         title="حذف المهمة"
-        description={`سيتم حذف مهمة "${deleteTarget?.title}" نهائيًا. هل أنتِ متأكدة؟`}
+        description={`سيتم حذف مهمة "${deleteTarget?.title}" نهائيًا. هل أنت متأكد؟`}
         confirmLabel="حذف"
         loading={deleteMutation.isPending}
         errorMessage={deleteError}
