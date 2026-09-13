@@ -45,7 +45,7 @@ def timed(label: str):
         mark(label, dur_ms=round((time.perf_counter() - t0) * 1000, 1))
 
 
-def trace_summary(max_entries: int = 60) -> str:
+def trace_summary(max_entries: int = 500) -> str:
     trace = _trace.get()
     if not trace:
         return ""
