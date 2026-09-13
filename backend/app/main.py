@@ -9,15 +9,19 @@
 - توفير مسار /health بسيط للتحقق من أن الخدمة تعمل (Health Check).
 """
 
+import logging
 import time as _perf_time
 from contextlib import asynccontextmanager
 
 import socketio
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.gzip import GZipMiddleware
+
+logger = logging.getLogger(__name__)
 
 from app.api.v1.router import api_router
 from app.core import perf_probe
@@ -59,6 +63,28 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(api_router)
+
+
+# إصلاح 2026-09-13 (بلاغ لاما — صفحة المحضر تعطّلت بخطأ "CORS policy" رغم
+# إعداد CORS نفسه سليم): أي استثناء غير متوقَّع (مو HTTPException من
+# _handle_errors بـmeetings.py وأخواتها) كان يفلت بلا أي exception_handler
+# مسجَّل هنا — فيتولى ServerErrorMiddleware الخاص بـStarlette (وهو الطبقة
+# الأخارجية فعليًا، خارج CORSMiddleware/GZipMiddleware/perf_trace_middleware
+# أعلاه) إرجاع 500 خام مباشرة، بدون ما يمر على أي middleware من هذي —
+# فتوصل استجابة 500 بلا أي CORS headers إطلاقًا، والمتصفح يعرضها كـ"blocked
+# by CORS policy" رغم إن السبب الحقيقي استثناء غير متوقَّع بالسيرفر (يُسجَّل
+# هنا بالكامل بـRender Logs عشان تشخيص السبب الجذري لاحقًا) لا مشكلة إعداد
+# CORS. تسجيل exception_handler صريح هنا يشغّل *قبل* ServerErrorMiddleware
+# (FastAPI يربطه بـExceptionMiddleware الداخلية، وهي طبقة داخل CORSMiddleware
+# لا خارجها) — فترجع استجابة عادية تمر بكل الـmiddleware ويضيف لها CORS
+# الـheaders الصحيحة كأي استجابة سليمة.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "حدث خطأ غير متوقع بالسيرفر، حاول مرة أخرى"},
+    )
 
 
 @app.get("/health", tags=["Health"])
