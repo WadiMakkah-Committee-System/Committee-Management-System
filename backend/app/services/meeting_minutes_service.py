@@ -128,6 +128,10 @@ async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
     # استدعاء لهذه الدالة (9 مواقع استخدام). الحل: .options(selectinload)
     # صريح هنا يجمّع committee+chair+members في استعلامين ثابتين بدل
     # تحميل كل علاقة لحالها عند أول استخدام لها لاحقًا بالكود.
+    from app.core import perf_probe as _perf_probe
+
+    _perf_probe.mark("meeting.eager_load_v3_active")
+
     result = await db.execute(
         select(Meeting)
         .where(Meeting.meeting_id == meeting_id)

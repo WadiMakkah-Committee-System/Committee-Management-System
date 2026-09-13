@@ -89,7 +89,14 @@ async def perf_trace_middleware(request: Request, call_next):
     trace_str = perf_probe.trace_summary()
     response.headers["X-Perf-Total-Ms"] = str(total_ms)
     if trace_str:
-        response.headers["X-Perf-Trace"] = trace_str[:4000]
+        # إصلاح 2026-09-13 (اكتُشف أثناء تحقيق N+1 الثاني): القص كان على
+        # 4000 حرف فقط، بينما print() بالأسفل يسجّل الـtrace كاملًا بدون
+        # قص بالـLogs — لطلب فيه ~40 استعلام، الـmarker واستعلامات الإصلاح
+        # كانت تقع بعد نقطة القص، فتظهر نتيجة NEW_CODE_CONFIRMED: False
+        # خاطئة بفحص لاما رغم أن الكود الصحيح فعليًا كان يشتغل (تأكَّد هذا
+        # من Render Logs الخام وقتها). رفع الحد هنا يخلي X-Perf-Trace
+        # نفسه مطابقًا لما يُسجَّل بالـLogs لأي تتبّع معقول الحجم.
+        response.headers["X-Perf-Trace"] = trace_str[:15000]
     print(
         f"[PERF] {request.method} {request.url.path} total={total_ms}ms | {trace_str}",
         flush=True,

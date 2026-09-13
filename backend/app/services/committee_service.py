@@ -653,6 +653,10 @@ async def get_committee_role_permission_codes(
     # أثرها. selectinload صريح هنا يجمّع السلسلة كاملة (committee_role ثم
     # role_permission_links ثم permission لكل صف) في 3 استعلامات مجمّعة
     # ثابتة بدل واحد لكل صلاحية يملكها الدور.
+    from app.core import perf_probe as _perf_probe
+
+    _perf_probe.mark("committee_role.eager_load_v3_active")
+
     result = await db.execute(
         select(CommitteeMember)
         .where(
