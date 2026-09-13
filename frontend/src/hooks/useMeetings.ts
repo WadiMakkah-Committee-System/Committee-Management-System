@@ -333,6 +333,26 @@ export function useDownloadMeetingRecording() {
   })
 }
 
+/**
+ * تشغيل التسجيل الصوتي مباشرة بالصفحة (بدل تنزيله) — طلب لاما 2026-09-13
+ * ("زر تشغيل بدل تنزيل"). نفس آلية الجلب بالضبط (fetchMeetingRecordingBlob،
+ * نفس المصادقة عبر Authorization header)، فقط بدل إنشاء رابط <a download>
+ * وحذفه فورًا، نُبقي الـblob URL ونمرره لعنصر <audio> — المكوّن
+ * (MeetingDetailPage.tsx) مسؤول عن استدعاء URL.revokeObjectURL عند إغلاق
+ * المشغّل/تفكيك المكوّن لتفادي تسريب الذاكرة. ملاحظة أداء: نفس تكلفة زر
+ * "تنزيل" بالضبط (طلب واحد لجلب الملف كاملًا) — يُجلَب مرة واحدة فقط لكل
+ * ضغطة تشغيل (لا استعلام قاعدة بيانات إضافي ولا استدعاء متكرر)، فلا يضيف
+ * أي حمل جديد على الباك-إند.
+ */
+export function usePlayMeetingRecording() {
+  return useMutation({
+    mutationFn: async (meetingId: string) => {
+      const { blob } = await meetingRecordingApi.fetchMeetingRecordingBlob(meetingId)
+      return URL.createObjectURL(blob)
+    },
+  })
+}
+
 export function useMeetingDraft(meetingId: string | undefined) {
   return useQuery({
     queryKey: ['meetings', meetingId ?? '', 'draft'] as const,
