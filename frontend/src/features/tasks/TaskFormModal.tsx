@@ -151,7 +151,7 @@ export function TaskFormModal({
                 label="اللجنة"
                 required
                 disabled={isEdit}
-                placeholder="اختاري اللجنة"
+                placeholder="اختر اللجنة"
                 options={committeeOptions}
                 error={errors.committee_id?.message}
                 {...field}
@@ -254,10 +254,10 @@ export function TaskFormModal({
 
           {isEdit ? (
             <p className="text-xs text-text-muted">
-              لا يمكن تغيير مسؤول المهمة من هنا — استخدمي "إعادة إسناد" من صفحة تفاصيل المهمة (يُسجَّل بمسار المهمة).
+              لا يمكن تغيير مسؤول المهمة من هنا — استخدم "إعادة إسناد" من صفحة تفاصيل المهمة (يُسجَّل بمسار المهمة).
             </p>
           ) : !selectedCommittee ? (
-            <p className="text-xs text-text-muted">اختاري اللجنة أولًا لعرض أعضائها</p>
+            <p className="text-xs text-text-muted">اختر اللجنة أولًا لعرض أعضائها</p>
           ) : (
             <Controller
               control={control}

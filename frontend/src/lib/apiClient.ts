@@ -68,7 +68,7 @@ apiClient.interceptors.response.use(
 
     const { refreshToken, setTokens, logout } = useAuthStore.getState()
     if (!refreshToken) {
-      notify('انتهت جلستك — سجّلي الدخول مرة أخرى', 'error')
+      notify('انتهت الجلسة — يُرجى تسجيل الدخول مرة أخرى', 'error')
       logout()
       return Promise.reject(error)
     }
@@ -104,7 +104,7 @@ apiClient.interceptors.response.use(
       // يصير صامتًا بدون أي رسالة، فيبدو للمستخدمة إن الزر ببساطة "ما
       // يستجيب" رغم إن التحويل لصفحة الدخول صار فعليًا. هذا التنبيه يوضّح
       // السبب الحقيقي قبل التحويل.
-      notify('انتهت جلستك — سجّلي الدخول مرة أخرى', 'error')
+      notify('انتهت الجلسة — يُرجى تسجيل الدخول مرة أخرى', 'error')
       logout()
       return Promise.reject(refreshError)
     } finally {

@@ -66,7 +66,7 @@ function LocalTile({
           <UsersIcon size={large ? 40 : 20} />
         </div>
       )}
-      <TileFooter label={sharingScreen ? `${name} · تشارك الشاشة` : `${name} (أنتِ)`} muted={!micEnabled} />
+      <TileFooter label={sharingScreen ? `${name} · تشارك الشاشة` : `${name} (أنت)`} muted={!micEnabled} />
       {raisedHand && <RaisedHandBadge large={large} />}
     </TileShell>
   )

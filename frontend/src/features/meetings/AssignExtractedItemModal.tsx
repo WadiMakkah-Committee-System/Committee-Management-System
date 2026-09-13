@@ -166,7 +166,7 @@ export function AssignExtractedItemModal({
           <Select
             label="المسؤول"
             required
-            placeholder="اختاري المسؤول"
+            placeholder="اختر المسؤول"
             options={memberOptions}
             value={assigneeId}
             onChange={(e) => setAssigneeId(e.target.value)}

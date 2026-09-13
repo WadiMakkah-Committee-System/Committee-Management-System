@@ -84,7 +84,7 @@ export function ReasonConfirmDialog({
           <Textarea
             label={reasonLabel}
             required
-            placeholder="اكتبي السبب هنا..."
+            placeholder="السبب..."
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             onBlur={() => setTouched(true)}

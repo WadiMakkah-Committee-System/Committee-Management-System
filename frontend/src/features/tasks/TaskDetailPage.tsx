@@ -318,7 +318,7 @@ export function TaskDetailPage() {
           <p className="mt-1 text-xs text-text-muted">
             {isLocked
               ? 'المهمة مكتملة — لا يمكن تغيير حالتها بعد الآن'
-              : 'اختاري الحالة الجديدة للمهمة'}
+              : 'اختر الحالة الجديدة للمهمة'}
           </p>
           {!isLocked && (
             <div className="mt-3 flex flex-wrap gap-2">
@@ -422,7 +422,7 @@ export function TaskDetailPage() {
             onClose={() => setDeleteOpen(false)}
             onConfirm={handleDelete}
             title="حذف المهمة"
-            description={`سيتم حذف مهمة "${task.title}" نهائيًا. هل أنتِ متأكدة؟`}
+            description={`سيتم حذف مهمة "${task.title}" نهائيًا. هل أنت متأكد؟`}
             confirmLabel="حذف"
             loading={deleteMutation.isPending}
             errorMessage={deleteError}
@@ -432,7 +432,7 @@ export function TaskDetailPage() {
             open={reassignOpen}
             onClose={() => setReassignOpen(false)}
             title="إعادة إسناد المهمة"
-            description="اختاري المسؤول الجديد — يُسجَّل تلقائيًا بمسار المهمة"
+            description="اختر المسؤول الجديد — يُسجَّل تلقائيًا بمسار المهمة"
             footer={
               <>
                 <Button variant="ghost" onClick={() => setReassignOpen(false)} disabled={reassignMutation.isPending}>
@@ -493,7 +493,7 @@ export function TaskDetailPage() {
           applyStatus('completed')
         }}
         title="إكمال المهمة"
-        description="بعد تحديد المهمة كمكتملة، لن يمكن تعديلها أو حذفها أو إعادة إسنادها أو تغيير حالتها مجددًا. هل أنتِ متأكدة؟"
+        description="بعد تحديد المهمة كمكتملة، لن يمكن تعديلها أو حذفها أو إعادة إسنادها أو تغيير حالتها مجددًا. هل أنت متأكد؟"
         confirmLabel="تأكيد الإكمال"
         loading={statusMutation.isPending}
       />

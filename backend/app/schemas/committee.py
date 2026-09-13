@@ -41,6 +41,44 @@ class CommitteeRoleSummaryOut(BaseModel):
     committee_role_slug: str | None
 
 
+class ProposedMemberOut(CommitteeMemberUserOut):
+    """
+    نفس CommitteeMemberUserOut + المسمى الوظيفي والإدارة الحاليان لهذا
+    المستخدم — تُستخدم حصرًا بحقل proposed_members بطلب تشكيل اللجنة
+    (قرار موثّق مع المستخدمة 2026-09-13: يحتاج الأدمن/المكتب التنفيذي/
+    الرئيس التنفيذي يشوفون هذي المعلومات بجنب كل عضو مقترح قبل اتخاذ
+    القرار — بما أن رئيس اللجنة المقترح هو أحد proposed_members نفسه
+    (قيد مفروض بـcreate_request)، لا حاجة لتوسيع chair/requester بنفس
+    الحقلين).
+
+    عمدًا فرع منفصل عن CommitteeMemberUserOut الأصلية (لا تُعدَّل هي
+    نفسها) — تلك تُستخدم بأماكن أخرى (اللجنة المعتمدة نفسها بـCommitteeOut،
+    DepartmentMemberElsewhereOut) لا تضمن استعلاماتها eager-load لعلاقة
+    User.department (بعكس job_title الذي يحمل lazy="selectin" على مستوى
+    الموديل أصلاً) — توسيعها هناك كان سيحتاج تدقيق ومراجعة كل استعلام
+    يستخدمها لتفادي MissingGreenlet (Lazy Load بجلسة async).
+    """
+
+    job_title: str | None = None
+    department: str | None = None
+
+    @field_validator("job_title", mode="before")
+    @classmethod
+    def _flatten_job_title(cls, value: object) -> str | None:
+        # يصل هنا ككائن JobTitle ORM (عبر from_attributes) عادة، أو
+        # كسلسلة نصية جاهزة لو بُنيت القيمة يدويًا مستقبلًا.
+        if value is None or isinstance(value, str):
+            return value
+        return getattr(value, "name", None)
+
+    @field_validator("department", mode="before")
+    @classmethod
+    def _flatten_department(cls, value: object) -> str | None:
+        if value is None or isinstance(value, str):
+            return value
+        return getattr(value, "name", None)
+
+
 class CommitteeMemberRoleOut(BaseModel):
     """
     عضو اللجنة مع دوره داخلها تحديدًا (رئيس اللجنة/عضو اللجنة) — مراجعة
@@ -149,7 +187,7 @@ class CommitteeFormationRequestOut(BaseModel):
     end_date: date
     status: CommitteeRequestStatus
     requester: CommitteeMemberUserOut
-    proposed_members: list[CommitteeMemberUserOut]
+    proposed_members: list[ProposedMemberOut]
     chair_user_id: uuid.UUID | None
     chair: CommitteeMemberUserOut | None
     # اللجنة الناتجة عن اعتماد هذا الطلب — None قبل الاعتماد (Task #15،

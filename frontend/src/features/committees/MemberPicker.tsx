@@ -89,7 +89,7 @@ export function MemberPicker({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-text-muted">اختاري عضوًا واحدًا على الأقل من القائمة أدناه</p>
+        <p className="text-xs text-text-muted">اختر عضوًا واحدًا على الأقل من القائمة أدناه</p>
         <span
           className={cn(
             'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-colors',
@@ -218,7 +218,7 @@ export function MemberPicker({
                   رئيس اللجنة<span className="text-danger"> *</span>
                 </p>
               </div>
-              <p className="text-xs text-text-muted">اختاري عضوًا واحدًا من الأعضاء المحددين أعلاه ليكون رئيسًا للجنة</p>
+              <p className="text-xs text-text-muted">اختر عضوًا واحدًا من الأعضاء المحددين أعلاه ليكون رئيسًا للجنة</p>
               <div className="flex flex-col gap-1">
                 {selectedUsers.map((u) => (
                   <label

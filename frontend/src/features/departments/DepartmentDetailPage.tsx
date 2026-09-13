@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowRight, Building2, FileText, Mail, Plus, UserRound, Users as UsersIcon } from 'lucide-react'
 import { useDepartmentDetail } from '@/hooks/useDepartments'
-import { useCreateUser, useUpdateUser } from '@/hooks/useUsers'
+import { useUpdateUser, useUsers } from '@/hooks/useUsers'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { StatCard } from '@/components/ui/StatCard'
@@ -15,42 +15,57 @@ import { UserStatusBadge, RoleBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { UserFormModal } from '@/features/users/UserFormModal'
 import { MemberDetailModal } from '@/features/users/MemberDetailModal'
+import { AssignExistingUserModal } from './AssignExistingUserModal'
 import { extractErrorMessage, formatDate } from '@/lib/utils'
-import type { User, UserCreatePayload, UserUpdatePayload } from '@/types'
+import type { User, UserUpdatePayload } from '@/types'
 
 /**
  * صفحة تفاصيل إدارة واحدة — الاسم، الوصف، عدد الأعضاء، وقائمة الأعضاء
- * كاملة، بالإضافة إلى إمكانية إضافة عضو جديد مباشرة لهذه الإدارة
- * (الإدارة مُختارة مسبقًا في نموذج الإضافة عبر defaultDepId).
+ * كاملة، بالإضافة إلى إمكانية إضافة مستخدم **موجود مسبقًا** لهذه الإدارة
+ * (AssignExistingUserModal — PATCH /users/{id} بحقل dep_id فقط). إنشاء
+ * مستخدم جديد بالكامل انتقل حصرًا لصفحة "المستخدمين" (UsersPage) — قرار
+ * موثّق مع المستخدمة 2026-09-13: زر "إضافة مستخدم" هنا كان يفتح نموذج
+ * تسجيل مستخدم جديد دائمًا، حتى لو المطلوب فعليًا نقل مستخدم موجود من
+ * إدارة أخرى أو بدون إدارة. UserFormModal ما زال مستخدَمًا هنا لكن فقط
+ * لتعديل بيانات عضو موجود أصلاً بالإدارة (من MemberDetailModal.onEdit).
  */
 export function DepartmentDetailPage() {
   const { depId } = useParams<{ depId: string }>()
   const navigate = useNavigate()
   const { data: detail, isLoading, isError, refetch } = useDepartmentDetail(depId)
-  const createMutation = useCreateUser()
+  const { data: allUsers } = useUsers()
   const updateMutation = useUpdateUser()
+  const assignMutation = useUpdateUser()
   const { showToast } = useToast()
 
   const [formOpen, setFormOpen] = useState(false)
   const [editingMember, setEditingMember] = useState<User | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [detailUserId, setDetailUserId] = useState<string | null>(null)
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [assignError, setAssignError] = useState<string | null>(null)
 
-  function openCreateForm() {
-    setEditingMember(null)
-    setFormError(null)
-    setFormOpen(true)
+  function openAssignModal() {
+    setAssignError(null)
+    setAssignOpen(true)
   }
 
-  function handleCreate(values: UserCreatePayload) {
-    setFormError(null)
-    createMutation.mutate(values, {
-      onSuccess: () => {
-        setFormOpen(false)
-        showToast('تمت إضافة العضو إلى الإدارة بنجاح', 'success')
+  /** مرشّحو الإضافة = كل مستخدمي النظام ما عدا من هو أصلاً عضو بهذه الإدارة. */
+  const assignCandidates = (allUsers ?? []).filter((u) => u.dep_id !== detail?.dep_id)
+
+  function handleAssignExisting(userId: string) {
+    if (!detail) return
+    setAssignError(null)
+    assignMutation.mutate(
+      { userId, payload: { dep_id: detail.dep_id } },
+      {
+        onSuccess: () => {
+          setAssignOpen(false)
+          showToast('تمت إضافة المستخدم إلى الإدارة بنجاح', 'success')
+        },
+        onError: (err) => setAssignError(extractErrorMessage(err)),
       },
-      onError: (err) => setFormError(extractErrorMessage(err)),
-    })
+    )
   }
 
   function handleEdit(values: UserUpdatePayload) {
@@ -110,7 +125,7 @@ export function DepartmentDetailPage() {
             <p className="mt-1 text-sm text-text-muted">{detail.description || 'لا يوجد وصف'}</p>
           </div>
         </div>
-        <Button icon={<Plus size={16} />} onClick={openCreateForm}>
+        <Button icon={<Plus size={16} />} onClick={openAssignModal}>
           إضافة مستخدم
         </Button>
       </div>
@@ -146,7 +161,7 @@ export function DepartmentDetailPage() {
               title="لا يوجد أعضاء في هذه الإدارة بعد"
               description="ابدأ بإضافة أول عضو لهذه الإدارة"
               action={
-                <Button size="sm" icon={<Plus size={14} />} onClick={openCreateForm}>
+                <Button size="sm" icon={<Plus size={14} />} onClick={openAssignModal}>
                   إضافة مستخدم
                 </Button>
               }
@@ -206,10 +221,19 @@ export function DepartmentDetailPage() {
         user={editingMember}
         departments={[detail]}
         defaultDepId={detail.dep_id}
-        onSubmitCreate={handleCreate}
+        onSubmitCreate={() => {}}
         onSubmitEdit={handleEdit}
-        loading={createMutation.isPending || updateMutation.isPending}
+        loading={updateMutation.isPending}
         serverError={formError}
+      />
+
+      <AssignExistingUserModal
+        open={assignOpen}
+        onClose={() => setAssignOpen(false)}
+        candidates={assignCandidates}
+        onAssign={handleAssignExisting}
+        loading={assignMutation.isPending}
+        serverError={assignError}
       />
 
       <MemberDetailModal

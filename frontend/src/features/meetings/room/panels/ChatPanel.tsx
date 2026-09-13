@@ -114,7 +114,7 @@ export function ChatPanel({
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleSend()
           }}
-          placeholder="اكتبي رسالة..."
+          placeholder="اكتب رسالة..."
           className="h-9 flex-1 rounded-sm border border-border-default bg-bg-surface px-3 text-[12px] text-text-primary placeholder:text-text-muted focus:border-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-accent/40"
         />
         <button

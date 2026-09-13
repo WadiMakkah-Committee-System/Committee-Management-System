@@ -1181,7 +1181,7 @@ export function MeetingDetailPage() {
           <div className="flex flex-col gap-3 px-4 py-3">
             <div className="flex gap-2">
               <Input
-                placeholder="أضيفي بندًا يدويًا..."
+                placeholder="أضف بندًا يدويًا..."
                 value={manualItemText}
                 onChange={(e) => setManualItemText(e.target.value)}
                 className="flex-1"
@@ -1202,8 +1202,8 @@ export function MeetingDetailPage() {
               <Skeleton className="h-16 w-full" />
             ) : !extractedItemsQuery.data?.length ? (
               <p className="text-xs text-text-muted">
-                لا توجد بنود بعد — اضغطي "استخراج بنود من الملخص" لتحويل نقاط الاجتماع إلى مهام أو
-                قرارات، أو أضيفي بندًا يدويًا.
+                لا توجد بنود بعد — اضغط "استخراج بنود من الملخص" لتحويل نقاط الاجتماع إلى مهام أو
+                قرارات، أو أضف بندًا يدويًا.
               </p>
             ) : (
               <ul className="flex flex-col gap-2">
@@ -1272,7 +1272,7 @@ export function MeetingDetailPage() {
             onClose={() => setDeleteOpen(false)}
             onConfirm={handleDelete}
             title="حذف الاجتماع"
-            description={`سيتم حذف اجتماع "${meeting.title}" نهائيًا، وسيُرسَل إشعار لكل المشاركين. هل أنتِ متأكدة؟`}
+            description={`سيتم حذف اجتماع "${meeting.title}" نهائيًا، وسيُرسَل إشعار لكل المشاركين. هل أنت متأكد؟`}
             confirmLabel="حذف"
             loading={deleteMeetingMutation.isPending}
             errorMessage={deleteError}
@@ -1282,7 +1282,7 @@ export function MeetingDetailPage() {
             onClose={() => setDeletingItemId(null)}
             onConfirm={confirmDeleteItem}
             title="حذف بند جدول الأعمال"
-            description="سيتم حذف هذا البند نهائيًا من جدول الأعمال. هل أنتِ متأكدة؟"
+            description="سيتم حذف هذا البند نهائيًا من جدول الأعمال. هل أنت متأكد؟"
             confirmLabel="حذف"
             loading={deleteAgendaItemMutation.isPending}
           />
@@ -1291,7 +1291,7 @@ export function MeetingDetailPage() {
             onClose={() => setDeletingAttachmentId(null)}
             onConfirm={confirmDeleteAttachment}
             title="حذف المرفق"
-            description="سيتم حذف هذا المرفق نهائيًا. هل أنتِ متأكدة؟"
+            description="سيتم حذف هذا المرفق نهائيًا. هل أنت متأكد؟"
             confirmLabel="حذف"
             loading={deleteAttachmentMutation.isPending}
           />
@@ -1300,7 +1300,7 @@ export function MeetingDetailPage() {
             onClose={() => setDeletingExtractedItemId(null)}
             onConfirm={confirmDeleteExtractedItem}
             title="حذف البند"
-            description="سيُزال هذا البند نهائيًا من القائمة، بدون تحويله لمهمة أو قرار. هل أنتِ متأكدة؟"
+            description="سيُزال هذا البند نهائيًا من القائمة، بدون تحويله لمهمة أو قرار. هل أنت متأكد؟"
             confirmLabel="حذف"
             loading={deleteExtractedItemMutation.isPending}
           />
