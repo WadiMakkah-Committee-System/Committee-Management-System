@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import noload, selectinload
+from sqlalchemy.orm import joinedload, noload, selectinload
 
 from app.models.committee import Committee
 from app.models.meeting import Meeting, MeetingStatus
@@ -150,10 +150,16 @@ async def _load_meeting(
     # على الملف كامل) — noload صريح وآمن لكل هذي بكل الحالات.
     from app.core import perf_probe as _perf_probe
 
-    _perf_probe.mark("meeting.eager_load_v4_no_cascade_active")
+    _perf_probe.mark("meeting.eager_load_v5_joined_scalars_active")
 
-    committee_load = selectinload(Meeting.committee)
-    chair_load = committee_load.selectinload(Committee.chair)
+    # تحسين إضافي 2026-09-13 (بعد إثبات نجاح إزالة الـcascade — 65->15
+    # استعلام): meeting->committee->chair سلسلة scalar بحتة (many-to-one
+    # في الاتجاهين، بلا أي collection) — لا داعي لها تُجلَب بـselectinload
+    # (round trip منفصل لكل مستوى)، تقدر تندمج بـJOIN واحد ضمن نفس استعلام
+    # meetings عبر joinedload بدون أي خطر تكرار صفوف (collection واحدة =
+    # صفر تكرار، فـ.unique() غير مطلوبة هنا).
+    committee_load = joinedload(Meeting.committee)
+    chair_load = committee_load.joinedload(Committee.chair)
 
     options = [
         chair_load,
@@ -173,7 +179,7 @@ async def _load_meeting(
         options.append(noload(Meeting.agenda_items))
 
     with _perf_probe.caller(
-        f"_load_meeting[no-cascade v4; with_committee_members={with_committee_members}, "
+        f"_load_meeting[v5: joined scalars (committee/chair) + no-cascade; with_committee_members={with_committee_members}, "
         f"with_agenda_items={with_agenda_items}]"
     ):
         result = await db.execute(
@@ -291,23 +297,30 @@ async def _load_minutes_row(db: AsyncSession, meeting_id: uuid.UUID) -> MeetingM
     # نفس درس الكاش القديم اللي صار بالتحقيق السابق.
     from app.core import perf_probe as _perf_probe
 
-    _perf_probe.mark("minutes.eager_load_v2_active")
+    _perf_probe.mark("minutes.eager_load_v5_joined_scalars_active")
 
+    # تحسين إضافي 2026-09-13: owner scalar بحتة — joinedload تدمجها بنفس
+    # استعلام meeting_minutes. reviewers/signatures تبقيان selectinload
+    # (collections، تفاديًا لتكرار صفوف meeting_minutes نفسها)، لكن .user
+    # الخاص بكل صف منها scalar بحتة أيضًا (many-to-one) — joinedload هنا
+    # تدمجه بنفس استعلام selectin الفرعي لتلك الدفعة (reviewer/signature +
+    # مستخدمه بـJOIN واحد) بدل round trip ثالث منفصل، بلا أي خطر تكرار
+    # (كل صف reviewer/signature له مستخدم واحد بالضبط).
     stmt = (
         select(MeetingMinutes)
         .where(MeetingMinutes.meeting_id == meeting_id)
         .options(
-            *_user_eager_options(selectinload(MeetingMinutes.owner)),
+            *_user_eager_options(joinedload(MeetingMinutes.owner)),
             *_user_eager_options(
-                selectinload(MeetingMinutes.reviewers).selectinload(MeetingMinutesReviewer.user)
+                selectinload(MeetingMinutes.reviewers).joinedload(MeetingMinutesReviewer.user)
             ),
             *_user_eager_options(
-                selectinload(MeetingMinutes.signatures).selectinload(MeetingMinutesSignature.user)
+                selectinload(MeetingMinutes.signatures).joinedload(MeetingMinutesSignature.user)
             ),
         )
     )
     with _perf_probe.caller(
-        "_load_minutes_row[explicit selectinload: owner/reviewers/signatures -> role.role_permission_links.permission + job_title]"
+        "_load_minutes_row[v5: joinedload owner+per-row user, noload role/job_title]"
     ):
         result = await db.execute(stmt)
     return result.scalar_one_or_none()

@@ -55,7 +55,7 @@ from datetime import date
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, noload, selectinload
+from sqlalchemy.orm import aliased, joinedload, noload, selectinload
 
 from app.models.committee import Committee, CommitteeMember, committee_members
 from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
@@ -659,11 +659,11 @@ async def get_committee_role_permission_codes(
     # مُستخدَم إطلاقًا. noload صريح يمنع هذا التحميل التلقائي للجميع.
     from app.core import perf_probe as _perf_probe
 
-    _perf_probe.mark("committee_role.eager_load_v4_no_cascade_active")
+    _perf_probe.mark("committee_role.eager_load_v5_joined_scalar_active")
 
     with _perf_probe.caller(
         "committee_service.get_committee_role_permission_codes"
-        "[no-cascade v4: committee_role->role_permission_links->permission ONLY, noload(.user)]"
+        "[v5: joined committee_role (scalar) + selectin role_permission_links->permission, noload(.user)]"
     ):
         result = await db.execute(
             select(CommitteeMember)
@@ -672,7 +672,12 @@ async def get_committee_role_permission_codes(
                 CommitteeMember.user_id == user_id,
             )
             .options(
-                selectinload(CommitteeMember.committee_role)
+                # تحسين إضافي 2026-09-13: committee_role نفسها scalar بحتة
+                # (many-to-one) — joinedload تدمجها بنفس استعلام
+                # committee_members عبر JOIN واحد بدل round trip منفصل.
+                # role_permission_links تبقى selectinload لأنها collection
+                # (تجنّبًا لتكرار الصفوف).
+                joinedload(CommitteeMember.committee_role)
                 .selectinload(Role.role_permission_links)
                 .selectinload(RolePermission.permission),
                 noload(CommitteeMember.user),

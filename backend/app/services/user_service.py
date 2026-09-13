@@ -177,8 +177,13 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
     # فقط user_id/first_name/middle_name/last_name/email — بلا دور أو
     # مسمى وظيفي إطلاقًا، بأي مكان يُستخدَم فيه get_user (المصادقة بكل
     # طلب، وendpoints /users). noload صريح يمنع هذا التحميل التلقائي غير
-    # المُستهلَك. ملاحظة: user.job_title الخاص بالمستخدم نفسه (لا المدير)
-    # يبقى يتحمّل تلقائيًا كالمعتاد — UserOut.job_title يحتاجه فعليًا.
+    # المُستهلَك.
+    #
+    # تحسين إضافي 2026-09-13: user.job_title الخاص بالمستخدم نفسه (لا
+    # المدير) فعليًا مطلوب (UserOut.job_title) وكان يتحمّل عبر round trip
+    # منفصل (lazy="selectin" الافتراضي بدون .options() صريح له). scalar
+    # بحتة (many-to-one) — joinedload صريح هنا يدمجه بنفس استعلام users
+    # الرئيسي فيلغي هذا الـround trip كليًا بدل تحسينه فقط.
     result = await db.execute(
         select(User)
         .options(
@@ -187,6 +192,7 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
             joinedload(User.role).joinedload(Role.role_permission_links).joinedload(
                 RolePermission.permission
             ),
+            joinedload(User.job_title),
         )
         .where(User.user_id == user_id, User.deleted_at.is_(None))
     )
