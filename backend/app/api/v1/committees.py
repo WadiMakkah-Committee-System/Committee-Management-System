@@ -38,6 +38,7 @@ from app.schemas.committee import (
     CommitteeOut,
     CommitteeRejectRequest,
     CommitteeReturnRequest,
+    CommitteeUpdate,
     DepartmentMemberElsewhereOut,
 )
 from app.schemas.user import UserOut
@@ -445,6 +446,36 @@ async def get_committee(
     except CommitteeNotFoundError as exc:
         raise _handle_errors(exc) from exc
 
+    return CommitteeOut.model_validate(committee)
+
+
+@committees_router.patch(
+    "/{committee_id}",
+    response_model=CommitteeOut,
+    dependencies=[Depends(require_permission("committees.update"))],
+)
+async def update_committee(
+    committee_id: uuid.UUID,
+    payload: CommitteeUpdate,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CommitteeOut:
+    """
+    تعديل فترة اللجنة (start_date/end_date فقط) — endpoint جديد كامل
+    (طلب صاحبة المشروع 2026-09-13). راجعي committee_service.update_committee
+    وdocstring رأس committee_service.py للسياق الكامل (عكس جزئي متعمَّد
+    ومحدود النطاق لقرار 0009_committee_formation_enforcement.sql).
+    """
+    try:
+        committee = await committee_service.update_committee(
+            db,
+            actor=current_user,
+            committee_id=committee_id,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+        )
+    except (CommitteeNotFoundError, ValueError) as exc:
+        raise _handle_errors(exc) from exc
     return CommitteeOut.model_validate(committee)
 
 

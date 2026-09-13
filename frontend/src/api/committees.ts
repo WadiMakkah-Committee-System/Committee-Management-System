@@ -19,6 +19,25 @@ export async function fetchCommittee(committeeId: string): Promise<Committee> {
   return data
 }
 
+export interface CommitteeDatesUpdatePayload {
+  start_date?: string
+  end_date?: string
+}
+
+/**
+ * تعديل فترة عمل لجنة معتمدة (start_date/end_date فقط) — قرار صاحبة
+ * المشروع 2026-09-13 ("قاعدة فترة اللجنة"، نقض جزئي لقرار "بيانات اللجنة
+ * مقفلة نهائيًا"). متاح فقط لمن يملك committees.update (المكتب التنفيذي
+ * حاليًا — راجعي backend/db/migrations/0032_committee_dates_update_grant.sql).
+ */
+export async function updateCommitteeDates(
+  committeeId: string,
+  payload: CommitteeDatesUpdatePayload,
+): Promise<Committee> {
+  const { data } = await apiClient.patch<Committee>(`/committees/${committeeId}`, payload)
+  return data
+}
+
 /**
  * موظفو إدارة المستخدم الحالي المشاركون بلجان لا تتبع إدارتهم — مراجعة
  * لاما 2026-08-30 (الجولة الثالثة). search اختياري (تصفية نصية باسم

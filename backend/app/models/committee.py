@@ -119,6 +119,10 @@ class Committee(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # منع تكرار إشعار "انتهت فترة اللجنة" — جزء من "قاعدة فترة اللجنة"
+    # (طلب صاحبة المشروع 2026-09-13). راجعي app/core/scheduler.py
+    # (_check_committee_expiry) وdb/migrations/0033_committee_expiry_notified_at.sql.
+    expiry_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     source_request: Mapped["CommitteeFormationRequest"] = relationship(  # noqa: F821
         back_populates="committee", foreign_keys=[source_request_id]

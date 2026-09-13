@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { cn, roleLabel } from '@/lib/utils'
 import type {
+  Committee,
   CommitteeRequestStatus,
   CommitteeRoleSlug,
   DecisionStatus,
@@ -146,6 +147,30 @@ const COMMITTEE_ROLE_META: Record<'chair' | 'member', { label: string; tone: Bad
 export function CommitteeRoleBadge({ slug }: { slug: CommitteeRoleSlug }) {
   if (!slug) return null
   const meta = COMMITTEE_ROLE_META[slug]
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  )
+}
+
+/**
+ * الحالة الزمنية للجنة (قادمة/نشطة/منتهية) — قاعدة فترة اللجنة (طلب
+ * صاحبة المشروع 2026-09-13): "يجب أن يكون هناك فرق بين اللجنة نشطة
+ * ولجنة انتهت". محسوبة بالباك-إند (Committee.lifecycle_state_today)،
+ * وليس بحساب تاريخ بالواجهة — مصدر حقيقة واحد.
+ */
+const COMMITTEE_LIFECYCLE_META: Record<
+  Committee['lifecycle_state'],
+  { label: string; tone: BadgeTone; icon: ReactNode }
+> = {
+  upcoming: { label: 'قادمة', tone: 'info', icon: <CalendarClock size={13} /> },
+  ongoing: { label: 'نشطة', tone: 'success', icon: <CheckCircle2 size={13} /> },
+  ended: { label: 'منتهية', tone: 'neutral', icon: <Archive size={13} /> },
+}
+
+export function CommitteeLifecycleBadge({ state }: { state: Committee['lifecycle_state'] }) {
+  const meta = COMMITTEE_LIFECYCLE_META[state]
   return (
     <Badge tone={meta.tone} icon={meta.icon}>
       {meta.label}

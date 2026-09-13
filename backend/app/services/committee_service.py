@@ -45,6 +45,15 @@ project_memory: phase2-committee-formation-requests.md لتفاصيل القرا
 الأدوار بدون استثناء** — لا يوجد هنا ولا في طبقة الـAPI أي دالة تعدّل
 committees/committee_members بعد approved.
 
+تحديث 2026-09-13 (عكس جزئي متعمَّد ومحدود النطاق لهذا القرار — "قاعدة
+فترة اللجنة"، بموافقة صريحة من صاحبة المشروع): الاسم/البيان/الرئيس/
+الأعضاء تبقى مقفلة تمامًا كما أعلاه، **بدون أي استثناء** — لكن
+start_date/end_date فقط أصبحا قابلين للتعديل عبر update_committee أدناه
+(endpoint جديد: PATCH /committees/{id}، صلاحية committees.update، ممنوحة
+فقط لأدوار المكتب التنفيذي — راجعي db/migrations/0032_committee_dates_
+update_grant.sql). التعديل يُرفض إن وُجد اجتماع/مهمة/قرار مرتبط يقع
+خارج الفترة الجديدة (راجعي _assert_no_linked_items_outside_period).
+
 الإشعارات (RF-COM-700: إشعار الأعضاء فور الاعتماد) خارج نطاق هذه الخدمة
 — لا يوجد جدول notifications عام بالمشروع بعد (قرار موثّق مسبقًا في Phase
 1)، تُحل عند بناء تلك الوحدة.
@@ -59,8 +68,11 @@ from sqlalchemy.orm import aliased, joinedload, noload, selectinload
 
 from app.models.committee import Committee, CommitteeMember, committee_members
 from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
+from app.models.decision import Decision
 from app.models.department import Department
+from app.models.meeting import Meeting
 from app.models.role import Permission, Role, RolePermission
+from app.models.task import Task
 from app.models.user import User
 from app.services import audit_service
 
@@ -624,6 +636,114 @@ async def get_committee(
         if actor.dep_id is None or committee_dep_id != actor.dep_id:
             raise CommitteeForbiddenError("ليست لديك صلاحية لعرض هذه اللجنة")
     return committee
+
+
+async def _assert_no_linked_items_outside_period(
+    db: AsyncSession, *, committee_id: uuid.UUID, new_start: date, new_end: date
+) -> None:
+    """
+    فحص جزء من "قاعدة فترة اللجنة" (طلب صاحبة المشروع 2026-09-13):
+    تضييق فترة لجنة قائمة يُرفض إن وُجد اجتماع/مهمة/قرار مرتبط (غير محذوف)
+    يقع خارج الفترة الجديدة — راجعي update_committee أدناه.
+    """
+    meeting_exists = (
+        await db.execute(
+            select(Meeting.meeting_id)
+            .where(
+                Meeting.committee_id == committee_id,
+                Meeting.deleted_at.is_(None),
+                or_(
+                    func.date(Meeting.scheduled_at) < new_start,
+                    func.date(Meeting.scheduled_at) > new_end,
+                ),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    task_exists = (
+        await db.execute(
+            select(Task.task_id)
+            .where(
+                Task.committee_id == committee_id,
+                Task.deleted_at.is_(None),
+                or_(Task.start_date < new_start, Task.end_date > new_end),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    decision_exists = (
+        await db.execute(
+            select(Decision.decision_id)
+            .where(
+                Decision.committee_id == committee_id,
+                Decision.deleted_at.is_(None),
+                or_(Decision.start_date < new_start, Decision.end_date > new_end),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if meeting_exists or task_exists or decision_exists:
+        raise ValueError(
+            "لا يمكن تعديل فترة اللجنة لأن هناك عناصر مرتبطة بها تقع خارج الفترة الجديدة."
+        )
+
+
+async def update_committee(
+    db: AsyncSession,
+    *,
+    actor: User,
+    committee_id: uuid.UUID,
+    start_date: date | None,
+    end_date: date | None,
+) -> Committee:
+    """
+    تعديل فترة اللجنة (start_date/end_date فقط) — راجعي التحديث المؤرَّخ
+    2026-09-13 بأعلى docstring هذا الملف للسياق الكامل. actor هنا مضمون
+    مسبقًا (على مستوى الـ API dependency) أنه يملك committees.update —
+    صلاحية نظامية بسيطة، بلا حاجة لفحص نطاق (دائمًا 'all' للأدوار
+    الممنوحة لها، راجعي 0032_committee_dates_update_grant.sql).
+    """
+    result = await db.execute(select(Committee).where(Committee.committee_id == committee_id))
+    committee = result.scalar_one_or_none()
+    if committee is None or committee.is_deleted:
+        raise CommitteeNotFoundError("اللجنة غير موجودة")
+
+    new_start = start_date if start_date is not None else committee.start_date
+    new_end = end_date if end_date is not None else committee.end_date
+    if new_end <= new_start:
+        raise ValueError("تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية")
+
+    if new_start != committee.start_date or new_end != committee.end_date:
+        await _assert_no_linked_items_outside_period(
+            db, committee_id=committee_id, new_start=new_start, new_end=new_end
+        )
+
+    before = {
+        "start_date": committee.start_date.isoformat(),
+        "end_date": committee.end_date.isoformat(),
+    }
+    committee.start_date = new_start
+    committee.end_date = new_end
+
+    await audit_service.log_action(
+        db,
+        actor_user_id=actor.user_id,
+        action_type="update",
+        target_type="committee",
+        target_id=committee.committee_id,
+        metadata={
+            "before": before,
+            "after": {"start_date": new_start.isoformat(), "end_date": new_end.isoformat()},
+        },
+    )
+
+    await db.commit()
+    result = await db.execute(
+        select(Committee)
+        .options(selectinload(Committee.members))
+        .where(Committee.committee_id == committee_id)
+    )
+    return result.scalar_one()
 
 
 async def get_committee_role_permission_codes(

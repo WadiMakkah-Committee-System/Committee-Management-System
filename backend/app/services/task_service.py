@@ -38,6 +38,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.committee_period import assert_committee_not_expired, assert_within_committee_period
 from app.models.committee import Committee, committee_members
 from app.models.role import Permission, RolePermission
 from app.models.task import Task, TaskAssignmentHistory, TaskPriority, TaskStatus
@@ -201,6 +202,9 @@ async def create_task(
     await _require_access(
         db, actor, committee, _CREATE, "ليست لديك صلاحية إنشاء مهمة لهذه اللجنة"
     )
+    assert_committee_not_expired(committee, action_label="إنشاء مهمة جديدة لهذه اللجنة")
+    assert_within_committee_period(committee, field_label="تاريخ بداية المهمة", value=start_date)
+    assert_within_committee_period(committee, field_label="تاريخ استحقاق المهمة", value=end_date)
     _validate_assignee_membership(committee, assignee_user_id)
 
     task = Task(
@@ -402,6 +406,8 @@ async def update_task(
     effective_end = end_date if end_date is not None else task.end_date
     if effective_end < effective_start:
         raise TaskValidationError("تاريخ نهاية المهمة يجب أن يكون بعد تاريخ البداية أو يساويه")
+    assert_within_committee_period(committee, field_label="تاريخ بداية المهمة", value=effective_start)
+    assert_within_committee_period(committee, field_label="تاريخ استحقاق المهمة", value=effective_end)
 
     old_priority = task.priority
     other_field_changed = False

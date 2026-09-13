@@ -325,6 +325,8 @@ export interface Committee {
   chair_user_id: string | null
   chair: CommitteeMemberUser | null
   created_at: string
+  /** الحالة الزمنية المحسوبة (upcoming/ongoing/ended) — راجعي Committee.lifecycle_state_today بالباك-إند. */
+  lifecycle_state: 'upcoming' | 'ongoing' | 'ended'
 }
 
 /**

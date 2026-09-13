@@ -2,20 +2,25 @@
 الهدف:
 مهمة مجدولة داخل عملية السيرفر نفسها (بدون Celery/APScheduler — بيئة
 التطوير الحالية بلا اتصال شبكة لتثبيت حزم جديدة؛ حلقة asyncio بسيطة
-كافية لحجم النظام) تفحص جدول tasks دوريًا لإطلاق:
+كافية لحجم النظام) تفحص دوريًا:
 
-1) تذكير للمسؤول عن المهمة قبل الاستحقاق بعدد أيام = reminder_offset_days
-   (الافتراضي يوم واحد، قابل للتخصيص من رئيس اللجنة عند الإنشاء/التعديل).
-2) تنبيه فوري لرئيس اللجنة لحظة أول تأخر فعلي للمهمة (نفس يوم فوات
-   الموعد، مرة واحدة فقط لكل تأخر).
+1) جدول tasks لإطلاق:
+   أ) تذكير للمسؤول عن المهمة قبل الاستحقاق بعدد أيام = reminder_offset_days
+      (الافتراضي يوم واحد، قابل للتخصيص من رئيس اللجنة عند الإنشاء/التعديل).
+   ب) تنبيه فوري لرئيس اللجنة لحظة أول تأخر فعلي للمهمة (نفس يوم فوات
+      الموعد، مرة واحدة فقط لكل تأخر).
+   راجعي db/migrations/0031_task_priority_reminder.sql للاجتهادات الموثّقة
+   (طلب صاحبة المشروع 2026-09-11، بعد بحث في الأنظمة العالمية).
 
-راجعي db/migrations/0031_task_priority_reminder.sql للاجتهادات الموثّقة
-(طلب صاحبة المشروع 2026-09-11، بعد بحث في الأنظمة العالمية).
+2) جدول committees لإطلاق إشعار "انتهت فترة اللجنة" مرة واحدة فقط لحظة
+   اكتشاف lifecycle_state == 'ended' فعليًا (اليوم > end_date) — جزء من
+   "قاعدة فترة اللجنة" (طلب صاحبة المشروع 2026-09-13). راجعي
+   db/migrations/0033_committee_expiry_notified_at.sql.
 
-آلية منع التكرار: reminder_sent_at/overdue_notified_at بجدول tasks —
-تُقارَن بتاريخ اليوم (date)، لا بالطابع الزمني الكامل، فلا يُعاد إرسال
-نفس التذكير مرتين بنفس اليوم حتى لو دارت الحلقة أكثر من مرة. تمديد
-الموعد (task_service.update_task) يُصفّرهما، فتُستأنف الدورة من جديد.
+آلية منع التكرار (كلا الفحصين): عمود طابع زمن مخصَّص بكل جدول
+(reminder_sent_at/overdue_notified_at بـtasks، expiry_notified_at
+بـcommittees) — تُقارَن بتاريخ اليوم (date) أو بوجودها أصلًا، لا بالطابع
+الزمني الكامل، فلا يتكرر نفس الإشعار حتى لو دارت الحلقة أكثر من مرة.
 """
 
 from __future__ import annotations
@@ -27,8 +32,13 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
+from app.models.committee import Committee
 from app.models.task import Task, TaskStatus
-from app.services.notification_service import notify_task_overdue, notify_task_reminder
+from app.services.notification_service import (
+    notify_committee_expired,
+    notify_task_overdue,
+    notify_task_reminder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +73,42 @@ async def _check_task_reminders_and_overdue() -> None:
         await db.commit()
 
 
+async def _check_committee_expiry() -> None:
+    """
+    قاعدة فترة اللجنة (طلب صاحبة المشروع 2026-09-13): إشعار كل أعضاء
+    اللجنة (ورئيسها) فور اكتشاف انتهاء فترتها فعليًا، مرة واحدة فقط لكل
+    لجنة — راجعي docstring رأس الملف وnotify_committee_expired
+    (app/services/notification_service.py).
+    """
+    today = date.today()
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Committee).where(
+                Committee.deleted_at.is_(None),
+                Committee.end_date < today,
+                Committee.expiry_notified_at.is_(None),
+            )
+        )
+        committees = result.scalars().unique().all()
+
+        for committee in committees:
+            await notify_committee_expired(committee)
+            committee.expiry_notified_at = datetime.now(UTC)
+
+        if committees:
+            await db.commit()
+
+
 async def _scheduler_loop() -> None:
     while True:
         try:
             await _check_task_reminders_and_overdue()
         except Exception:  # noqa: BLE001 — فشل دورة واحدة لا يجب أن يوقف الحلقة كليًا
             logger.exception("فشل فحص تذكيرات/تأخر المهام المجدول")
+        try:
+            await _check_committee_expiry()
+        except Exception:  # noqa: BLE001 — نفس فلسفة الفحص أعلاه، فحص مستقل تمامًا
+            logger.exception("فشل فحص انتهاء فترة اللجان المجدول")
         await asyncio.sleep(_CHECK_INTERVAL_SECONDS)
 
 

@@ -12,6 +12,16 @@ interface DateFieldProps {
   value: string
   onChange: (value: string) => void
   disabled?: boolean
+  /**
+   * حدّا التاريخ المسموح (ضمنًا) بصيغة ISO (yyyy-mm-dd) — قاعدة فترة
+   * اللجنة (طلب صاحبة المشروع 2026-09-13): تُمرَّر من فترة اللجنة
+   * المختارة بالنموذج. الأيام خارج [min, max] تُعطَّل بصريًا ولا يمكن
+   * اختيارها من التقويم — تذكير: الـbackend هو المصدر النهائي للحقيقة
+   * دائمًا (يرفض أي تاريخ خارج النطاق حتى لو تجاوز هذا التعطيل بأي شكل)،
+   * هذا فقط لتحسين تجربة الاستخدام.
+   */
+  min?: string
+  max?: string
 }
 
 const MONTH_NAMES = [
@@ -79,10 +89,30 @@ function formatDisplay(d: Date): string {
  * (Contract) بالضبط الذي كان عليه سابقًا، فلا حاجة لتعديل أي منطق
  * إرسال/تحقق (Zod) بالنماذج المستخدمة فيه.
  */
-export function DateField({ label, required, error, hint, value, onChange, disabled }: DateFieldProps) {
+export function DateField({
+  label,
+  required,
+  error,
+  hint,
+  value,
+  onChange,
+  disabled,
+  min,
+  max,
+}: DateFieldProps) {
   const [open, setOpen] = useState(false)
   const selected = fromIso(value)
   const today = new Date()
+  const minDate = min ? fromIso(min) : null
+  const maxDate = max ? fromIso(max) : null
+
+  function isOutOfRange(d: Date): boolean {
+    if (minDate && d < minDate) return true
+    if (maxDate && d > maxDate) return true
+    return false
+  }
+
+  const todayOutOfRange = isOutOfRange(today)
   const [viewYear, setViewYear] = useState(selected?.getFullYear() ?? today.getFullYear())
   const [viewMonth, setViewMonth] = useState(selected?.getMonth() ?? today.getMonth())
   const containerRef = useRef<HTMLDivElement>(null)
@@ -252,19 +282,24 @@ export function DateField({ label, required, error, hint, value, onChange, disab
                   const inMonth = d.getMonth() === viewMonth
                   const isSelected = selected ? sameDay(d, selected) : false
                   const isToday = sameDay(d, today)
+                  const isDisabled = isOutOfRange(d)
                   return (
                     <button
                       key={i}
                       type="button"
-                      onClick={() => pickDay(d)}
+                      disabled={isDisabled}
+                      onClick={() => !isDisabled && pickDay(d)}
+                      aria-disabled={isDisabled}
                       className={cn(
                         'mx-auto flex h-8 w-8 items-center justify-center rounded-full text-xs transition-colors',
-                        isSelected
-                          ? 'bg-brand-primary font-semibold text-white'
-                          : inMonth
-                            ? 'text-text-primary hover:bg-bg-surface'
-                            : 'text-text-muted/50 hover:bg-bg-surface',
-                        !isSelected && isToday && 'ring-1 ring-brand-primary/60',
+                        isDisabled
+                          ? 'cursor-not-allowed text-text-muted/30'
+                          : isSelected
+                            ? 'bg-brand-primary font-semibold text-white'
+                            : inMonth
+                              ? 'text-text-primary hover:bg-bg-surface'
+                              : 'text-text-muted/50 hover:bg-bg-surface',
+                        !isDisabled && !isSelected && isToday && 'ring-1 ring-brand-primary/60',
                       )}
                     >
                       {d.getDate()}
@@ -286,8 +321,14 @@ export function DateField({ label, required, error, hint, value, onChange, disab
                 </button>
                 <button
                   type="button"
+                  disabled={todayOutOfRange}
                   onClick={() => pickDay(today)}
-                  className="text-xs font-medium text-brand-primary transition-colors hover:text-brand-primary/80"
+                  className={cn(
+                    'text-xs font-medium transition-colors',
+                    todayOutOfRange
+                      ? 'cursor-not-allowed text-text-muted/40'
+                      : 'text-brand-primary hover:text-brand-primary/80',
+                  )}
                 >
                   اليوم
                 </button>

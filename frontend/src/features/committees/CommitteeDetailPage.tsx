@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowRight, CalendarDays, Download, FileText, Mail, Plus, Users as UsersIcon } from 'lucide-react'
-import { useCommitteeDetail } from '@/hooks/useCommittees'
+import { ArrowRight, CalendarDays, Download, FileText, Mail, Pencil, Plus, Users as UsersIcon } from 'lucide-react'
+import { useCommitteeDetail, useUpdateCommitteeDates } from '@/hooks/useCommittees'
 import {
   useDocumentPublishTargets,
   useDocuments,
@@ -18,8 +18,9 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton, TableSkeleton } from '@/components/ui/Skeleton'
 import { Avatar } from '@/components/ui/Avatar'
-import { CommitteeRoleBadge } from '@/components/ui/StatusBadge'
+import { CommitteeLifecycleBadge, CommitteeRoleBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
+import { CommitteeDatesEditModal } from '@/features/committees/CommitteeDatesEditModal'
 import { DocumentFormModal, type DocumentFormSubmitValues } from '@/features/documents/DocumentFormModal'
 import { cn, extractErrorMessage, formatDate, formatDateTime, formatFileSize } from '@/lib/utils'
 
@@ -42,6 +43,24 @@ export function CommitteeDetailPage() {
   // لا يوجد تجاوز تلقائي لـsuper_admin هنا (قرار موثّق 2026-08-27) — العرض
   // محكوم فعليًا بامتلاك الصلاحية، تمامًا مثل الوصول لصفحة الطلب نفسها.
   const canViewSourceRequest = permissions.includes('committees.request.view')
+  // قاعدة فترة اللجنة (طلب صاحبة المشروع 2026-09-13) — راجعي
+  // backend/db/migrations/0032_committee_dates_update_grant.sql (المكتب
+  // التنفيذي فقط حاليًا).
+  const canEditDates = permissions.includes('committees.update')
+  const [datesEditOpen, setDatesEditOpen] = useState(false)
+  const [datesEditError, setDatesEditError] = useState<string | null>(null)
+  const updateDatesMutation = useUpdateCommitteeDates(committeeId ?? '')
+
+  function handleUpdateDates(values: { start_date: string; end_date: string }) {
+    setDatesEditError(null)
+    updateDatesMutation.mutate(values, {
+      onSuccess: () => {
+        setDatesEditOpen(false)
+        showToast('تم تحديث فترة عمل اللجنة بنجاح', 'success')
+      },
+      onError: (err) => setDatesEditError(extractErrorMessage(err)),
+    })
+  }
 
   // قسم "وثائق اللجنة" (طلب صريح من المستخدمة 2026-09-02): رفع وثيقة من
   // داخل صفحة اللجنة يضبط نطاقها تلقائيًا على هذه اللجنة تحديدًا
@@ -121,7 +140,10 @@ export function CommitteeDetailPage() {
             <ArrowRight size={18} />
           </button>
           <div>
-            <h1 className="text-xl font-bold text-text-primary">{committee.name}</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-bold text-text-primary">{committee.name}</h1>
+              <CommitteeLifecycleBadge state={committee.lifecycle_state} />
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <p className="text-sm text-text-muted">لجنة معتمدة رسميًا</p>
               {myMembership && (
@@ -134,15 +156,22 @@ export function CommitteeDetailPage() {
             </div>
           </div>
         </div>
-        {canViewSourceRequest && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(`/committees/requests/${committee.source_request_id}`)}
-          >
-            عرض طلب التشكيل الأصلي
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {canEditDates && (
+            <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => setDatesEditOpen(true)}>
+              تعديل فترة اللجنة
+            </Button>
+          )}
+          {canViewSourceRequest && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(`/committees/requests/${committee.source_request_id}`)}
+            >
+              عرض طلب التشكيل الأصلي
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -309,6 +338,17 @@ export function CommitteeDetailPage() {
           onSubmitEdit={handleDocumentUpload}
           loading={uploadDocumentMutation.isPending}
           serverError={documentFormError}
+        />
+      )}
+
+      {canEditDates && (
+        <CommitteeDatesEditModal
+          open={datesEditOpen}
+          onClose={() => setDatesEditOpen(false)}
+          committee={committee}
+          onSubmit={handleUpdateDates}
+          loading={updateDatesMutation.isPending}
+          serverError={datesEditError}
         />
       )}
     </div>

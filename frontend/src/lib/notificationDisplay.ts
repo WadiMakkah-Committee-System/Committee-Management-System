@@ -54,6 +54,8 @@ const EVENT_TONE: Record<string, NotificationTone> = {
   meeting_created: 'info',
   meeting_updated: 'info',
   meeting_cancelled: 'danger',
+  // قاعدة فترة اللجنة (2026-09-13) — راجعي notification_service.notify_committee_expired.
+  committee_expired: 'warning',
 }
 
 export function notificationTone(eventType: string): NotificationTone {

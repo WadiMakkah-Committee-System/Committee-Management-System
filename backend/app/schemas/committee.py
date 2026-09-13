@@ -12,6 +12,7 @@ Requests) — Phase 2 (Backend APIs). تحدّد شكل بيانات الطلب�
 
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -178,6 +179,27 @@ class CommitteeOut(BaseModel):
     chair_user_id: uuid.UUID | None
     chair: CommitteeMemberUserOut | None
     created_at: datetime
+    # محسوبة (لا تُخزَّن) — راجعي Committee.lifecycle_state_today
+    # (app/models/committee.py)، جزء من "قاعدة فترة اللجنة" (طلب صاحبة
+    # المشروع 2026-09-13): تمييز واضح نشطة/منتهية بالواجهة.
+    lifecycle_state: Literal["upcoming", "ongoing", "ended"] = Field(
+        validation_alias="lifecycle_state_today"
+    )
+
+
+class CommitteeUpdate(BaseModel):
+    """
+    تعديل فترة اللجنة (start_date/end_date فقط) — endpoint جديد كامل
+    (طلب صاحبة المشروع 2026-09-13، عكس جزئي متعمَّد ومحدود النطاق لقرار
+    0009_committee_formation_enforcement.sql الذي قفل كل بيانات اللجنة
+    بعد الاعتماد بلا استثناء). الاسم/البيان/الرئيس/الأعضاء تبقى مقفلة
+    تمامًا كما قرَّرت 0009 — فقط التاريخان هنا. راجعي
+    app/services/committee_service.py::update_committee وdb/migrations/
+    0032_committee_dates_update_grant.sql (الصلاحية) للتفاصيل الكاملة.
+    """
+
+    start_date: date | None = None
+    end_date: date | None = None
 
 
 class DepartmentMemberElsewhereOut(BaseModel):

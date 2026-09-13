@@ -57,6 +57,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.committee_period import assert_committee_not_expired, assert_within_committee_period
 from app.models.committee import Committee, committee_members
 from app.models.decision import (
     Decision,
@@ -275,6 +276,9 @@ async def create_decision(
     await _require_access(
         db, actor, committee, "decisions.create", "ليست لديك صلاحية إنشاء قرار لهذه اللجنة"
     )
+    assert_committee_not_expired(committee, action_label="إصدار قرار جديد لهذه اللجنة")
+    assert_within_committee_period(committee, field_label="تاريخ بداية القرار", value=start_date)
+    assert_within_committee_period(committee, field_label="تاريخ نهاية القرار", value=end_date)
 
     if meeting_id is not None:
         meeting_result = await db.execute(select(Meeting).where(Meeting.meeting_id == meeting_id))
@@ -415,6 +419,8 @@ async def update_decision(
     effective_end = end_date if end_date is not None else decision.end_date
     if effective_end < effective_start:
         raise DecisionValidationError("تاريخ نهاية التنفيذ يجب أن يكون بعد تاريخ البداية أو يساويه")
+    assert_within_committee_period(committee, field_label="تاريخ بداية القرار", value=effective_start)
+    assert_within_committee_period(committee, field_label="تاريخ نهاية القرار", value=effective_end)
 
     if title is not None:
         decision.title = title

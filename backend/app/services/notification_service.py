@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.email_client import send_email
 from app.core.redis_client import redis_client
 from app.db.session import AsyncSessionLocal
+from app.models.committee import Committee
 from app.models.committee_request import CommitteeFormationRequest
 from app.models.decision import Decision
 from app.models.meeting import Meeting
@@ -428,6 +429,29 @@ async def notify_task_overdue(task: Task) -> None:
         ),
         related_entity_type="task",
         related_entity_id=task.task_id,
+    )
+
+
+async def notify_committee_expired(committee: Committee) -> None:
+    """
+    إشعار كل أعضاء اللجنة (ورئيسها) فور اكتشاف انتهاء فترتها فعليًا —
+    "قاعدة فترة اللجنة" (طلب صاحبة المشروع 2026-09-13). تُستدعى من المهمة
+    المجدولة فقط (app/core/scheduler.py::_check_committee_expiry)، مرة
+    واحدة فقط لكل لجنة (يُمنع التكرار بـ expiry_notified_at بطبقة الـ
+    scheduler، بنفس نمط reminder_sent_at/overdue_notified_at بالمهام).
+    """
+    recipients = {m.user_id for m in committee.members}
+    if committee.chair_user_id is not None:
+        recipients.add(committee.chair_user_id)
+    if not recipients:
+        return
+    await _notify_many(
+        recipients,
+        event_type="committee_expired",
+        title=f"انتهت فترة اللجنة: {committee.name}",
+        body=f"انتهت فترة عمل اللجنة بتاريخ {committee.end_date.strftime('%Y-%m-%d')}.",
+        related_entity_type="committee",
+        related_entity_id=committee.committee_id,
     )
 
 

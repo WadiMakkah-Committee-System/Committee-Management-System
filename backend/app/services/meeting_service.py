@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core import agora_client, gemini_client, storage_client
+from app.core.committee_period import assert_committee_not_expired, assert_within_committee_period
 from app.models.committee import Committee, committee_members
 from app.models.document import Document, DocumentLink
 from app.models.meeting import (
@@ -252,6 +253,11 @@ async def create_meeting(
         db, actor, committee, "meetings.schedule", "ليست لديك صلاحية جدولة اجتماع لهذه اللجنة"
     )
     _validate_mode_location(mode, location)
+    assert_committee_not_expired(committee, action_label="جدولة اجتماع جديد لهذه اللجنة")
+    assert_within_committee_period(committee, field_label="تاريخ الاجتماع", value=scheduled_at.date())
+    assert_within_committee_period(
+        committee, field_label="تاريخ نهاية الاجتماع", value=scheduled_end_at.date()
+    )
 
     meeting = Meeting(
         committee_id=committee_id,
@@ -379,6 +385,11 @@ async def update_meeting(
     effective_end = scheduled_end_at if scheduled_end_at is not None else meeting.scheduled_end_at
     if effective_end is not None and effective_end <= effective_start:
         raise MeetingValidationError("وقت نهاية الاجتماع يجب أن يكون بعد وقت البداية")
+    assert_within_committee_period(committee, field_label="تاريخ الاجتماع", value=effective_start.date())
+    if effective_end is not None:
+        assert_within_committee_period(
+            committee, field_label="تاريخ نهاية الاجتماع", value=effective_end.date()
+        )
 
     _important_fields = ("scheduled_at", "scheduled_end_at", "mode", "location")
     _before = {field: getattr(meeting, field) for field in _important_fields}

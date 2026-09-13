@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { CardSkeleton } from '@/components/ui/Skeleton'
 import { StatCard } from '@/components/ui/StatCard'
+import { CommitteeLifecycleBadge } from '@/components/ui/StatusBadge'
 import { cardToneClass, cn, formatDate } from '@/lib/utils'
 
 /**
@@ -113,7 +114,10 @@ export function CommitteesPage() {
                   <CheckCircle2 size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-text-primary">{committee.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-text-primary">{committee.name}</h3>
+                    <CommitteeLifecycleBadge state={committee.lifecycle_state} />
+                  </div>
                   <p className="mt-1 line-clamp-2 text-sm text-text-muted">
                     {committee.statement || 'لا يوجد بيان'}
                   </p>

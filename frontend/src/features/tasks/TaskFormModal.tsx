@@ -183,6 +183,13 @@ export function TaskFormModal({
               label="تاريخ بداية التنفيذ"
               required
               error={errors.start_date?.message}
+              min={selectedCommittee?.start_date}
+              max={selectedCommittee?.end_date}
+              hint={
+                selectedCommittee
+                  ? `ضمن فترة اللجنة (${selectedCommittee.start_date} - ${selectedCommittee.end_date})`
+                  : undefined
+              }
               {...register('start_date')}
             />
             <Input
@@ -190,6 +197,8 @@ export function TaskFormModal({
               label="تاريخ نهاية التنفيذ"
               required
               error={errors.end_date?.message}
+              min={selectedCommittee?.start_date}
+              max={selectedCommittee?.end_date}
               {...register('end_date')}
             />
           </div>
