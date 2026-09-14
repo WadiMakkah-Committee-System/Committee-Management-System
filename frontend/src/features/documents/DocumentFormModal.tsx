@@ -398,6 +398,7 @@ export function DocumentFormModal({
                 getId={(u) => u.user_id}
                 getLabel={(u) => `${u.first_name} ${u.last_name}`}
                 getSublabel={(u) => u.email}
+                getGroupLabel={(u) => u.department?.name}
                 selected={userIds}
                 onChange={setUserIds}
                 searchPlaceholder="ابحث بالاسم أو البريد الإلكتروني..."
