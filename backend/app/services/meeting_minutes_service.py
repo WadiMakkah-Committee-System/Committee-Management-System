@@ -118,6 +118,7 @@ async def _load_meeting(
     *,
     with_committee_members: bool = False,
     with_agenda_items: bool = False,
+    with_participants: bool = False,
 ) -> Meeting:
     # تحقيق أداء لاما 2026-09-13 — إصلاح N+1 الثاني (بعد _load_minutes_row
     # بتاريخ 2026-09-12): committee وchair/members الفرعيين كانوا يُحمَّلون
@@ -139,15 +140,25 @@ async def _load_meeting(
     # بمسار GET /minutes (تحقّقتُ: _system_scope_allows تلمس فقط
     # committee.chair.dep_id، عمود خام لا علاقة).
     #
-    # هذه دالة مشتركة بـ9 مواقع استخدام (راجعي grep _load_meeting_and_
+    # هذه دالة مشتركة بمواقع استخدام متعددة (راجعي grep _load_meeting_and_
     # committee) — قبل حذف أي شيء تحققتُ من كل موقع: _all_committee_members
     # (تستخدمها select_template وsend_for_signature فقط) تحتاج فعليًا
     # committee.members وcommittee.chair — لذا with_committee_members
     # صار معامل صريح يفعّلها بس لمن يحتاجها. list_templates_for_meeting
     # وحدها تحتاج meeting.agenda_items — with_agenda_items لنفس السبب.
     # لا أحد يلمس .chair.role أو .chair.job_title أو .creator أو
-    # .participants أو .member_roles بأي مكان بهذا الملف (تحقّقتُ بـgrep
-    # على الملف كامل) — noload صريح وآمن لكل هذي بكل الحالات.
+    # .member_roles بأي مكان بهذا الملف (تحقّقتُ بـgrep على الملف كامل) —
+    # noload صريح وآمن لكل هذي بكل الحالات.
+    #
+    # إضافة 2026-09-14 (توحيد GET /{meeting_id}/minutes/detail — راجعي
+    # get_minutes_detail أدناه): .participants كانت noload دومًا لأن لا
+    # أحد بهذا الملف يلمسها — لكن صفحة المحضر (MeetingMinutesPage.tsx)
+    # تعرض meeting.participants فعليًا بتبويبي "المحرر"/"عرض المحضر"، وكانت
+    # تجيبهم عبر useMeetingDetailForMinutes (قسم الاجتماعات) بطلب منفصل.
+    # with_participants صار معامل صريح بنفس نمط with_committee_members —
+    # يفعّلها فقط get_minutes_detail، وselectinload (مو joinedload) لأنها
+    # نفس نوع العلاقة many-to-many لـcommittee.members (تفادي أي ضرب
+    # ديكارتي مع مجموعة agenda_items الشقيقة بنفس الاستعلام).
     from app.core import perf_probe as _perf_probe
 
     _perf_probe.mark("meeting.eager_load_v5_joined_scalars_active")
@@ -167,7 +178,6 @@ async def _load_meeting(
         chair_load.noload(User.job_title),
         committee_load.noload(Committee.member_roles),
         noload(Meeting.creator),
-        noload(Meeting.participants),
     ]
     if with_committee_members:
         options.append(committee_load.selectinload(Committee.members))
@@ -177,10 +187,17 @@ async def _load_meeting(
         options.append(selectinload(Meeting.agenda_items))
     else:
         options.append(noload(Meeting.agenda_items))
+    if with_participants:
+        participants_load = selectinload(Meeting.participants)
+        options.append(participants_load)
+        options.append(participants_load.noload(User.role))
+        options.append(participants_load.noload(User.job_title))
+    else:
+        options.append(noload(Meeting.participants))
 
     with _perf_probe.caller(
         f"_load_meeting[v5: joined scalars (committee/chair) + no-cascade; with_committee_members={with_committee_members}, "
-        f"with_agenda_items={with_agenda_items}]"
+        f"with_agenda_items={with_agenda_items}, with_participants={with_participants}]"
     ):
         result = await db.execute(
             select(Meeting)
@@ -243,18 +260,21 @@ async def _load_meeting_and_committee(
     *,
     with_committee_members: bool = False,
     with_agenda_items: bool = False,
+    with_participants: bool = False,
 ) -> tuple[Meeting, Committee]:
     # تصحيح 2026-09-13: التعليق القديم هنا كان يفترض أن committee تُحمَّل
     # ضمن نفس استعلام meeting تلقائيًا بمجرد lazy="selectin" — تبيّن بالقياس
     # الفعلي إن هذا غير صحيح. الإصلاح الحقيقي داخل _load_meeting نفسها.
-    # with_committee_members/with_agenda_items يُمرَّران لمن يحتاجهما فعليًا
-    # (select_template تحتاج الاثنين، send_for_signature تحتاج الأول فقط) —
-    # راجعي التعليق الكامل بـ_load_meeting.
+    # with_committee_members/with_agenda_items/with_participants يُمرَّران
+    # لمن يحتاجها فعليًا (select_template تحتاج الأولين، send_for_signature
+    # تحتاج الأول فقط، get_minutes_detail تحتاج الأخيرين) — راجعي التعليق
+    # الكامل بـ_load_meeting.
     meeting = await _load_meeting(
         db,
         meeting_id,
         with_committee_members=with_committee_members,
         with_agenda_items=with_agenda_items,
+        with_participants=with_participants,
     )
     committee = meeting.committee
     return meeting, committee
@@ -474,6 +494,78 @@ async def get_or_create_minutes(db: AsyncSession, *, meeting_id: uuid.UUID, acto
     db.add(minutes)
     await db.commit()
     return await _load_minutes_or_404(db, meeting_id)
+
+
+async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: User) -> dict:
+    """توحيد أداء (التوصية الثانية بتقرير لاما 2026-09-14 عن أداء صفحة
+    المحضر — راجعي رأس هذا الملف للتوصية الأولى المُنفَّذة سابقًا بإيقاف
+    perf_trace_middleware بالإنتاج): تستبدل 5 طلبات HTTP منفصلة كانت
+    MeetingMinutesPage.tsx تطلقها (useMeetingDetailForMinutes +
+    useCommitteeDetail + useMeetingMinutes + useMinutesTemplates +
+    useMeetingExtractedItems) بنداء واحد فقط، بنفس فلسفة
+    list_minutes_summaries أعلاه (تجميع بدل تعدد). أهم فرق: useCommitteeDetail
+    بالواجهة القديمة كانت Network Waterfall حقيقي (تنتظر meeting.committee_id
+    من الطلب الأول قبل أن تبدأ حتى) — هنا committee تُحمَّل ضمن نفس استعلام
+    meeting مباشرة (راجعي _load_meeting: joinedload لسلسلة meeting→committee→
+    chair).
+
+    منطق كل جزء مطابق تمامًا للدالة المستقلة المقابلة له (بلا أي تغيير
+    بالسلوك، توحيد فقط):
+    - meeting/committee/الصلاحية (minutes.view) ومحضر (إنشاء تلقائي لو
+      غير موجود): مطابق حرفيًا لـget_or_create_minutes أعلاه.
+    - templates: مطابق لما تعيده list_templates_for_meeting لو الاجتماع
+      منتهٍ — لكن بدل استدعائها (وهي تكرر تحميل meeting/فحص الصلاحية من
+      الصفر وترفع 409 لو لم ينتهِ الاجتماع)، نفس الشرط (meeting.status
+      finished/recorded) يُفحص هنا مباشرة ونعيد [] بهدوء بدل 409 "صامت" —
+      هذا بالضبط الفخ الذي وثّقه تقرير الأداء (list_templates_for_meeting
+      كانت تُستدعى من الواجهة القديمة كطلب متوازٍ مستقل حتى قبل أن يُعرف
+      إن كان الاجتماع منتهيًا أصلًا بالواجهة، فترفع 409 مهدورًا في أغلب
+      الحالات).
+    - extracted_items: تتطلب صلاحية meetings.draft.view (مختلفة عن
+      minutes.view أعلاه) — مستخدمة تملك عرض المحضر لكن لا تملك عرض
+      المسودة تحصل هنا على قائمة فارغة بهدوء بدل 403 يوقف الصفحة كاملة،
+      مطابق تمامًا للسلوك الصامت اللي كانت الواجهة القديمة تطبّقه أصلًا
+      محليًا (extractedItemsQuery.data ?? []).
+
+    يستخدم مخططات خفيفة مخصَّصة (MinutesDetailMeetingOut/
+    MinutesDetailCommitteeOut بـschemas/meeting_minutes.py) بدل MeetingOut/
+    CommitteeOut الكاملين — عمدًا: هذان الأخيران يتطلبان حقولًا (creator،
+    members، member_roles) غير محمَّلة أصلًا بمسار _load_meeting_and_committee
+    المُحسَّن هنا (noload صريح لها)، ولا تستخدمها صفحة المحضر إطلاقًا
+    (تحقّقتُ بـgrep كامل على MeetingMinutesPage.tsx: فقط participants/
+    agenda_items من الاجتماع، وname/chair_user_id من اللجنة) — نفس فلسفة
+    MinutesSummaryOut الموثّقة بـschemas/meeting_minutes.py."""
+    meeting, committee = await _load_meeting_and_committee(
+        db, meeting_id, with_agenda_items=True, with_participants=True
+    )
+    await _require_access(db, actor, committee, "minutes.view", "ليست لديك صلاحية لعرض محضر هذا الاجتماع")
+
+    minutes = await _load_minutes_row(db, meeting_id)
+    if minutes is None:
+        _require_meeting_finished(meeting)
+        minutes = MeetingMinutes(meeting_id=meeting_id)
+        db.add(minutes)
+        await db.commit()
+        minutes = await _load_minutes_or_404(db, meeting_id)
+
+    templates = (
+        list_templates() if meeting.status in (MeetingStatus.finished, MeetingStatus.recorded) else []
+    )
+
+    try:
+        extracted_items = await meeting_service.list_extracted_items(
+            db, actor=actor, meeting_id=meeting_id
+        )
+    except (meeting_service.MeetingForbiddenError, meeting_service.MeetingNotFoundError):
+        extracted_items = []
+
+    return {
+        "meeting": meeting,
+        "committee": committee,
+        "minutes": minutes,
+        "templates": templates,
+        "extracted_items": extracted_items,
+    }
 
 
 async def list_minutes_summaries(

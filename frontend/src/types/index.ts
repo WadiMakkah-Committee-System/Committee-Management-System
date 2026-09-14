@@ -786,6 +786,50 @@ export interface MinutesSummary {
   signatures_signed: number
 }
 
+/**
+ * نسخة خفيفة من Meeting/Committee — حصرًا الحقول التي تستخدمها فعليًا
+ * صفحة المحضر (MeetingMinutesPage.tsx)، تقابل MinutesDetailMeetingOut/
+ * MinutesDetailCommitteeOut بالباك-إند. راجعي MeetingMinutesDetail أدناه.
+ */
+export interface MinutesDetailMeeting {
+  meeting_id: string
+  committee_id: string
+  title: string
+  description: string | null
+  mode: MeetingMode
+  location: string | null
+  scheduled_at: string
+  scheduled_end_at: string | null
+  status: MeetingStatus
+  participants: CommitteeMemberUser[]
+  agenda_items: MeetingAgendaItem[]
+  started_at: string | null
+  ended_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MinutesDetailCommittee {
+  committee_id: string
+  name: string
+  chair_user_id: string | null
+}
+
+/**
+ * استجابة GET /{meeting_id}/minutes/detail — إصلاح أداء (التوصية الثانية
+ * بتقرير أداء لاما 2026-09-14): توحّد بيانات الاجتماع واللجنة والمحضر
+ * والقوالب والبنود المستخرجة بنداء HTTP واحد بدل 5 طلبات منفصلة كانت
+ * MeetingMinutesPage.tsx تطلقها (راجعي useMeetingMinutesDetail
+ * بـhooks/useMeetingMinutes.ts).
+ */
+export interface MeetingMinutesDetail {
+  meeting: MinutesDetailMeeting
+  committee: MinutesDetailCommittee
+  minutes: MeetingMinutes
+  templates: MinutesTemplate[]
+  extracted_items: MeetingExtractedItem[]
+}
+
 export interface MeetingDraft {
   draft_id: string
   meeting_id: string

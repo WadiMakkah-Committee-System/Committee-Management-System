@@ -21,13 +21,10 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-import { useMeetingDetailForMinutes, useMeetingExtractedItems } from '@/hooks/useMeetings'
-import { useCommitteeDetail } from '@/hooks/useCommittees'
 import {
   useApproveMinutes,
   useApproveMinutesReview,
-  useMeetingMinutes,
-  useMinutesTemplates,
+  useMeetingMinutesDetail,
   useReturnMinutesForEdit,
   useReturnMinutesReview,
   useSelectMinutesTemplate,
@@ -66,6 +63,15 @@ import { errorStatusOf, MinutesStageBadge, StageTimeline } from './minutesShared
  * الصلاحيات هنا تقريب بصري فقط (إظهار/إخفاء الأزرار) — التحقق الفعلي دائمًا
  * بالباك-إند (minutes.* عبر _has_access)، تمامًا كنمط canManage بصفحة
  * تفاصيل الاجتماع.
+ *
+ * إصلاح أداء 2026-09-14 (التوصية الثانية بتقرير أداء لاما، بعد التوصية
+ * الأولى المُنفَّذة سابقًا بإيقاف perf_trace_middleware بالإنتاج): كانت
+ * هذي الصفحة تطلق 5 طلبات HTTP منفصلة عند كل فتح (اجتماع/لجنة/محضر/
+ * قوالب/بنود مستخرجة)، أحدها Network Waterfall حقيقي (طلب اللجنة ينتظر
+ * نتيجة طلب الاجتماع أولًا). استُبدلت كلها باستعلام واحد موحَّد
+ * (useMeetingMinutesDetail → GET /{meeting_id}/minutes/detail) — راجعي
+ * docstring get_minutes_detail بـservices/meeting_minutes_service.py
+ * للتصميم الكامل بالباك-إند.
  */
 
 const TEMPLATE_ICONS: Record<string, LucideIcon> = {
@@ -88,18 +94,19 @@ export function MeetingMinutesPage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
 
-  const meetingQuery = useMeetingDetailForMinutes(meetingId)
-  const meeting = meetingQuery.data
-  const committeeQuery = useCommitteeDetail(meeting?.committee_id)
-  const committee = committeeQuery.data
-
-  const minutesQuery = useMeetingMinutes(meetingId)
-  const minutes = minutesQuery.data
-  const templatesQuery = useMinutesTemplates(meetingId)
-  const templates = templatesQuery.data ?? []
-
-  const extractedItemsQuery = useMeetingExtractedItems(meetingId)
-  const linkedItems = (extractedItemsQuery.data ?? []).filter((i) => i.status !== 'pending')
+  // إصلاح أداء (التوصية الثانية بتقرير أداء لاما 2026-09-14 — راجعي
+  // docstring useMeetingMinutesDetail بـhooks/useMeetingMinutes.ts):
+  // نداء واحد موحَّد بدل 5 استعلامات منفصلة كانت هنا (اجتماع/لجنة/محضر/
+  // قوالب/بنود مستخرجة) — أهمها إلغاء Network Waterfall حقيقي كان قائمًا
+  // فعليًا (طلب اللجنة كان ينتظر نتيجة طلب الاجتماع أولًا لمعرفة
+  // committee_id قبل أن يبدأ حتى).
+  const detailQuery = useMeetingMinutesDetail(meetingId)
+  const detail = detailQuery.data
+  const meeting = detail?.meeting
+  const committee = detail?.committee
+  const minutes = detail?.minutes
+  const templates = detail?.templates ?? []
+  const linkedItems = (detail?.extracted_items ?? []).filter((i) => i.status !== 'pending')
 
   const { collaborators, remoteSections, announceEditing, broadcastUpdate } = useMinutesRealtime(meetingId)
   const { showToast } = useToast()
@@ -145,8 +152,6 @@ export function MeetingMinutesPage() {
   const returnForEditMutation = useReturnMinutesForEdit()
   const sendForSignatureMutation = useSendMinutesForSignature()
   const signMutation = useSignMinutes()
-
-  const meetingEnded = !!meeting && (meeting.status === 'finished' || meeting.status === 'recorded')
 
   const canManage =
     scopeFor(user, 'minutes.update', 'minutes.templates.select') === 'all' ||
@@ -337,7 +342,7 @@ export function MeetingMinutesPage() {
 
   if (!meetingId) return null
 
-  if (meetingQuery.isLoading) {
+  if (detailQuery.isLoading) {
     return (
       <div className="flex flex-col gap-4">
         <Skeleton className="h-8 w-64" />
@@ -346,25 +351,49 @@ export function MeetingMinutesPage() {
     )
   }
 
-  if (meetingQuery.isError || !meeting) {
-    return <ErrorState title="تعذّر تحميل الاجتماع" onRetry={() => meetingQuery.refetch()} />
+  // إصلاح أداء (راجعي docstring get_minutes_detail بالباك-إند): نداء
+  // موحَّد واحد بدل 5، فتُوحَّد هنا أيضًا حالات الخطأ الأربع التي كانت
+  // موزّعة بين "بوابة !meetingEnded" الأمامية (تعتمد meeting.status محليًا
+  // فقط، بلا أي تحقق صلاحية) وبين معالجة أخطاء minutesQuery المنفصلة
+  // (409/403) — الباك-إند نفسه الآن هو مصدر الحقيقة الوحيد لكل الحالات
+  // الأربع (404 اجتماع غير موجود/409 لم ينتهِ بعد/403 لا صلاحية)، بنفس
+  // ترتيب الأولوية الذي يفرضه get_minutes_detail (الصلاحية تُفحص قبل حتى
+  // معرفة هل انتهى الاجتماع أم لا — أدق من البوابة الأمامية القديمة التي
+  // كانت تعرض "غير متاح بعد" حتى لمستخدمة بلا صلاحية أصلًا).
+  if (detailQuery.isError) {
+    const status = errorStatusOf(detailQuery.error)
+    if (status === 404) {
+      return <ErrorState title="تعذّر تحميل الاجتماع" onRetry={() => detailQuery.refetch()} />
+    }
+    if (status === 409) {
+      return (
+        <Card className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-info-bg text-info">
+            <Clock size={24} />
+          </div>
+          <p className="text-sm font-semibold text-text-primary">محضر الاجتماع غير متاح بعد</p>
+          <p className="max-w-sm text-sm text-text-secondary">
+            يُتاح إعداد محضر الاجتماع بعد انتهائه (FR-MIN-001). عودي إلى هذه الصفحة بعد اكتمال الاجتماع.
+          </p>
+          <Button variant="secondary" onClick={() => navigate(`/meetings/${meetingId}`)}>
+            العودة إلى الاجتماع
+          </Button>
+        </Card>
+      )
+    }
+    if (status === 403) {
+      return (
+        <ErrorState
+          title="لا تملكين صلاحية عرض هذا المحضر"
+          description="تحتاج صلاحية minutes.view أو عضوية فعلية بلجنة هذا الاجتماع"
+        />
+      )
+    }
+    return <ErrorState title="تعذّر تحميل المحضر" onRetry={() => detailQuery.refetch()} />
   }
 
-  if (!meetingEnded) {
-    return (
-      <Card className="flex flex-col items-center gap-3 px-6 py-16 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-info-bg text-info">
-          <Clock size={24} />
-        </div>
-        <p className="text-sm font-semibold text-text-primary">محضر الاجتماع غير متاح بعد</p>
-        <p className="max-w-sm text-sm text-text-secondary">
-          يُتاح إعداد محضر الاجتماع بعد انتهائه (FR-MIN-001). عودي إلى هذه الصفحة بعد اكتمال الاجتماع.
-        </p>
-        <Button variant="secondary" onClick={() => navigate(`/meetings/${meetingId}`)}>
-          العودة إلى الاجتماع
-        </Button>
-      </Card>
-    )
+  if (!meeting || !minutes) {
+    return <ErrorState title="تعذّر تحميل المحضر" onRetry={() => detailQuery.refetch()} />
   }
 
   const headerAction = (() => {
@@ -426,34 +455,9 @@ export function MeetingMinutesPage() {
         </div>
       )}
 
-      {minutesQuery.isLoading ? (
-        <Skeleton className="h-32 w-full" />
-      ) : minutesQuery.isError ? (
-        (() => {
-          const status = errorStatusOf(minutesQuery.error)
-          if (status === 409) {
-            return (
-              <ErrorState
-                title="الاجتماع لم ينتهِ بعد"
-                description="إعداد المحضر يبدأ تلقائيًا بعد انتهاء وقت الاجتماع فعليًا — حاولي مرة أخرى بعد انتهائه"
-                onRetry={() => minutesQuery.refetch()}
-              />
-            )
-          }
-          if (status === 403) {
-            return (
-              <ErrorState
-                title="لا تملكين صلاحية عرض هذا المحضر"
-                description="تحتاج صلاحية minutes.view أو عضوية فعلية بلجنة هذا الاجتماع"
-              />
-            )
-          }
-          return <ErrorState title="تعذّر تحميل المحضر" onRetry={() => minutesQuery.refetch()} />
-        })()
-      ) : !minutes ? (
-        <ErrorState title="تعذّر تحميل المحضر" onRetry={() => minutesQuery.refetch()} />
-      ) : (
-        <>
+      {/* تحميل/خطأ المحضر تم التعامل معهما مسبقًا أعلاه ضمن بوابة
+          detailQuery الموحَّدة (meeting/minutes مضمونان معرَّفان هنا). */}
+      <>
           <Card>
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -481,13 +485,11 @@ export function MeetingMinutesPage() {
 
           {tab === 'templates' && (
             <div className="grid gap-4 lg:grid-cols-3">
-              {templatesQuery.isLoading ? (
-                <>
-                  <Skeleton className="h-64 w-full" />
-                  <Skeleton className="h-64 w-full" />
-                  <Skeleton className="h-64 w-full" />
-                </>
-              ) : (
+              {
+                // لا حاجة لحالة تحميل مستقلة هنا بعد التوحيد (إصلاح أداء
+                // 2026-09-14) — templates جزء من نفس استجابة detailQuery
+                // المُحمَّلة أصلًا قبل الوصول لهذا الـReturn (راجعي بوابة
+                // !meeting/!minutes أعلاه)، فهي دائمًا جاهزة هنا.
                 templates.map((t, i) => {
                   const isCurrent = minutes.template_id === t.id
                   const canPick = canManage && (minutes.stage === 'none' || minutes.stage === 'preparing')
@@ -550,7 +552,7 @@ export function MeetingMinutesPage() {
                     </Card>
                   )
                 })
-              )}
+              }
             </div>
           )}
 
@@ -1101,8 +1103,7 @@ export function MeetingMinutesPage() {
                 </Card>
               </div>
             ))}
-        </>
-      )}
+      </>
 
       <Modal
         open={signatureOpen}
