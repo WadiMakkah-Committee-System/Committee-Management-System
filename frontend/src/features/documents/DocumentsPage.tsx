@@ -43,7 +43,7 @@ import type { Document, DocumentScopeFilter } from '@/types'
 
 /**
  * عنصر التحكم المُقسَّم (segmented filter) بأعلى صفحة "الوثائق" —
- * فلترة بـ"قسم" الوثيقة (الكل/عامة/إدارتي/لجاني/شورك معي)، بنفس الصفحة
+ * فلترة بـ"قسم" الوثيقة (الكل/عامة/إدارتي/لجاني/مشاركة معي)، بنفس الصفحة
  * وبدون تبويب/مسار جديد (طلب صريح من المستخدمة)، مدفوعة بمعامل رابط
  * (?scope=) بدل State محلي فقط — يحفظ اختيار المستخدمة عند تحديث الصفحة
  * أو مشاركة الرابط، ويطابق GET /documents?scope= بالباك-إند تمامًا
@@ -54,7 +54,7 @@ const SCOPE_FILTER_OPTIONS: { value: DocumentScopeFilter | 'all'; label: string;
   { value: 'public', label: 'عامة', icon: Globe2 },
   { value: 'department', label: 'إدارتي', icon: Building2 },
   { value: 'committee', label: 'لجاني', icon: Users2 },
-  { value: 'shared', label: 'شورك معي', icon: UserRound },
+  { value: 'shared', label: 'مشاركة معي', icon: UserRound }, // تسمية أوضح (بلاغ 2026-09-14) بدل "شورك معي"
 ]
 
 /** أيقونة "قسم" الوثيقة لشارة كل بطاقة — نفس مجموعة أيقونات DocumentScope بـDocumentFormModal. */
