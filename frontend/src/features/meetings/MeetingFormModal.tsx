@@ -12,7 +12,6 @@ import {
   Save,
   Trash2,
   Users as UsersIcon,
-  Video,
   X,
 } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
@@ -318,15 +317,6 @@ export function MeetingFormModal({
               error={errors.location?.message}
               {...register('location')}
             />
-          )}
-          {selectedMode === 'remote' && (
-            // تعديل 2026-09-14 (بلاغ لاما): الصياغة القديمة "سيُربط...
-            // لاحقًا" أوحت بأن الأمر مؤجَّل/غير مؤكَّد — لاما تبي توضيحًا
-            // مباشرًا إن الاجتماع نفسه يُعقد على Microsoft Teams.
-            <p className="flex items-center gap-1.5 text-xs text-text-muted">
-              <Video size={13} />
-              يُعقد هذا الاجتماع عبر Microsoft Teams
-            </p>
           )}
         </FormSection>
 
