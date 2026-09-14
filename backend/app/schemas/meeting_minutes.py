@@ -80,6 +80,36 @@ class MeetingMinutesOut(BaseModel):
     updated_at: datetime
 
 
+class MinutesSummaryOut(BaseModel):
+    """ملخص خفيف لمحضر اجتماع واحد ضمن استجابة دفعية (bulk) — إصلاح
+    2026-09-14 (بلاغ لاما — انهيار 500 متكرر على عدة مسارات مختلفة
+    بنفس اللحظة): صفحة "إدارة المحاضر" (MinutesListPage.tsx) كانت تطلق
+    طلب HTTP منفصل بالكامل لكل اجتماع عبر useQueries (5-40+ طلب متزامن
+    حسب عدد الاجتماعات غير upcoming بالنظام)، وكل طلب يفتح جلسة/اتصال
+    قاعدة بيانات مستقل — هذا بالضبط ما كان يستنزف Connection Pool
+    (pool_size=10+max_overflow=10) عند أي انفجار طلبات (خصوصًا بعد Render
+    Cold Start)، تمامًا كما وُثِّق سابقًا بتعليقات app/db/session.py
+    (9/10/12 سبتمبر — "صفحة المحضر وحدها تفتح 5-6 طلبات متزامنة"، ونفس
+    الفخ تكرر هنا بمضاعفة عدد الاجتماعات بدل صفحة واحدة). الحل الجذري:
+    نقطة API دفعية واحدة (GET /meetings/minutes/summary) تعيد ملخصًا
+    لكل الاجتماعات المطلوبة باستعلامين اثنين فقط (راجعي
+    list_minutes_summaries أدناه) بدل استعلام Full MeetingMinutesOut لكل
+    اجتماع على حدة. لا يحمل sections/template_id (غير مستخدَمة بالقائمة
+    أصلًا) — القائمة تفتح المحضر التفصيلي (GET /{id}/minutes العادي) فقط
+    عند الضغط الفعلي على بطاقة واحدة."""
+
+    meeting_id: uuid.UUID
+    forbidden: bool
+    not_finished_yet: bool
+    stage: MeetingMinutesStageOut | None
+    owner_name: str | None
+    reviewers_total: int
+    reviewers_approved: int
+    approved_at: datetime | None
+    signatures_total: int
+    signatures_signed: int
+
+
 class SelectTemplateIn(BaseModel):
     """اختيار قالب المحضر (FR-MIN-003) — رئيس اللجنة فقط (minutes.templates.select)."""
 

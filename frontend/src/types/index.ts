@@ -773,6 +773,19 @@ export interface MeetingMinutes {
   updated_at: string
 }
 
+export interface MinutesSummary {
+  meeting_id: string
+  forbidden: boolean
+  not_finished_yet: boolean
+  stage: MeetingMinutesStage | null
+  owner_name: string | null
+  reviewers_total: number
+  reviewers_approved: number
+  approved_at: string | null
+  signatures_total: number
+  signatures_signed: number
+}
+
 export interface MeetingDraft {
   draft_id: string
   meeting_id: string

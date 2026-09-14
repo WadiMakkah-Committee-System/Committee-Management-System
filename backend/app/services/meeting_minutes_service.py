@@ -476,6 +476,125 @@ async def get_or_create_minutes(db: AsyncSession, *, meeting_id: uuid.UUID, acto
     return await _load_minutes_or_404(db, meeting_id)
 
 
+async def list_minutes_summaries(
+    db: AsyncSession, *, actor: User, meeting_ids: list[uuid.UUID]
+) -> list[dict]:
+    """ملخص خفيف لعدة اجتماعات دفعة واحدة (لصفحة "إدارة المحاضر") —
+    إصلاح 2026-09-14 (راجعي docstring MinutesSummaryOut بـschemas/
+    meeting_minutes.py للسبب الكامل): بدل ما تفتح الواجهة طلب HTTP/جلسة
+    قاعدة بيانات منفصلة لكل اجتماع (get_or_create_minutes تُستدعى N مرة
+    عبر useQueries)، هذي الدالة تجيب كل شيء بـ3 مجموعات استعلامات ثابتة
+    العدد بغض النظر عن N: (1) الاجتماعات + لجانها/رؤسائها بجملة واحدة،
+    (2) صفوف meeting_minutes الموجودة فعليًا (owner+reviewers+signatures،
+    selectinload لا joinedload — دفعة واحدة عبر IN تلقائيًا، لا N+1)،
+    (3) صلاحية minutes.view محسوبة مرة واحدة فقط لكل لجنة فريدة (لا لكل
+    اجتماع) عبر _has_access.
+
+    عمدًا READ-ONLY بالكامل: لا تُنشئ صف meeting_minutes لأي اجتماع لم
+    يُفتح محضره فعليًا بعد (بعكس get_or_create_minutes) — قائمة كاملة لا
+    يصح أن تُنشئ عشرات الصفوف كأثر جانبي لمجرد عرضها؛ الإنشاء الفعلي
+    يبقى حصريًا عند فتح محضر اجتماع واحد بالتفصيل (GET /{id}/minutes)."""
+    if not meeting_ids:
+        return []
+
+    committee_load = joinedload(Meeting.committee)
+    chair_load = committee_load.joinedload(Committee.chair)
+    meetings_result = await db.execute(
+        select(Meeting)
+        .where(Meeting.meeting_id.in_(meeting_ids), Meeting.deleted_at.is_(None))
+        .options(
+            chair_load,
+            chair_load.noload(User.role),
+            chair_load.noload(User.job_title),
+            committee_load.noload(Committee.member_roles),
+            committee_load.noload(Committee.members),
+            noload(Meeting.creator),
+            noload(Meeting.participants),
+            noload(Meeting.agenda_items),
+        )
+    )
+    meetings = list(meetings_result.unique().scalars().all())
+    for m in meetings:
+        meeting_service.sync_meeting_status(m)
+
+    minutes_result = await db.execute(
+        select(MeetingMinutes)
+        .where(MeetingMinutes.meeting_id.in_(meeting_ids))
+        .options(
+            *_user_eager_options(joinedload(MeetingMinutes.owner)),
+            selectinload(MeetingMinutes.reviewers),
+            selectinload(MeetingMinutes.signatures),
+        )
+    )
+    minutes_by_meeting = {mm.meeting_id: mm for mm in minutes_result.unique().scalars().all()}
+
+    access_by_committee: dict[uuid.UUID, bool] = {}
+    for m in meetings:
+        if m.committee_id in access_by_committee:
+            continue
+        access_by_committee[m.committee_id] = await _has_access(
+            db, actor, m.committee, "minutes.view"
+        )
+
+    items: list[dict] = []
+    for m in meetings:
+        if not access_by_committee.get(m.committee_id, False):
+            items.append(
+                {
+                    "meeting_id": m.meeting_id,
+                    "forbidden": True,
+                    "not_finished_yet": False,
+                    "stage": None,
+                    "owner_name": None,
+                    "reviewers_total": 0,
+                    "reviewers_approved": 0,
+                    "approved_at": None,
+                    "signatures_total": 0,
+                    "signatures_signed": 0,
+                }
+            )
+            continue
+
+        minutes = minutes_by_meeting.get(m.meeting_id)
+        if minutes is None:
+            items.append(
+                {
+                    "meeting_id": m.meeting_id,
+                    "forbidden": False,
+                    "not_finished_yet": m.status not in (MeetingStatus.finished, MeetingStatus.recorded),
+                    "stage": None,
+                    "owner_name": None,
+                    "reviewers_total": 0,
+                    "reviewers_approved": 0,
+                    "approved_at": None,
+                    "signatures_total": 0,
+                    "signatures_signed": 0,
+                }
+            )
+            continue
+
+        owner_name = (
+            f"{minutes.owner.first_name} {minutes.owner.last_name}".strip() if minutes.owner else None
+        )
+        items.append(
+            {
+                "meeting_id": m.meeting_id,
+                "forbidden": False,
+                "not_finished_yet": False,
+                "stage": minutes.stage.value,
+                "owner_name": owner_name,
+                "reviewers_total": len(minutes.reviewers),
+                "reviewers_approved": sum(
+                    1 for r in minutes.reviewers if r.status == MeetingMinutesReviewStatus.approved
+                ),
+                "approved_at": minutes.approved_at,
+                "signatures_total": len(minutes.signatures),
+                "signatures_signed": sum(1 for s in minutes.signatures if s.signed_at is not None),
+            }
+        )
+    return items
+
+
 async def update_sections(
     db: AsyncSession, *, meeting_id: uuid.UUID, actor: User, sections: list[dict]
 ) -> MeetingMinutes:

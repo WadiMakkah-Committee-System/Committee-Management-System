@@ -1,5 +1,5 @@
 import { apiClient } from '@/lib/apiClient'
-import type { MeetingMinutes, MinutesSection, MinutesTemplate, MinutesTemplateId } from '@/types'
+import type { MeetingMinutes, MinutesSection, MinutesSummary, MinutesTemplate, MinutesTemplateId } from '@/types'
 
 /**
  * وحدة "المحاضر" (SRS §7) — تقابل app/api/v1/meetings.py (مسارات
@@ -10,6 +10,26 @@ import type { MeetingMinutes, MinutesSection, MinutesTemplate, MinutesTemplateId
 
 export async function fetchMinutesTemplates(meetingId: string): Promise<MinutesTemplate[]> {
   const { data } = await apiClient.get<MinutesTemplate[]>(`/meetings/${meetingId}/minutes/templates`)
+  return data
+}
+
+/**
+ * إصلاح 2026-09-14 (بلاغ لاما — 500 متكرر على عدة مسارات مختلفة بنفس
+ * اللحظة، السبب الجذري: MinutesListPage.tsx كانت تطلق طلب HTTP منفصل
+ * بالكامل لكل اجتماع عبر useQueries — انفجار طلبات متزامنة يستنزف
+ * Connection Pool بالباك-إند، خصوصًا بعد Render Cold Start. راجعي
+ * docstring MinutesSummaryOut بـbackend/app/schemas/meeting_minutes.py
+ * للتفصيل الكامل). نداء واحد فقط لكل الاجتماعات دفعة وحدة بدل N نداء.
+ *
+ * تحقّقت فعليًا (node -e مع axios المثبّت بالمشروع، 1.19.0) إن التسلسل
+ * الافتراضي لـ`params: { x: string[] }` ينتج ?x[]=a&x[]=b (بأقواس) —
+ * FastAPI Query(list[...]) يقرأ فقط ?x=a&x=b المتكرر بلا أقواس، فما كان
+ * ليعمل. تجنّبت الفخ كليًا بنص واحد مفصول بفاصلة بدل قائمة. */
+export async function fetchMinutesSummaries(meetingIds: string[]): Promise<MinutesSummary[]> {
+  if (meetingIds.length === 0) return []
+  const { data } = await apiClient.get<MinutesSummary[]>('/meetings/minutes/summary', {
+    params: { meeting_ids: meetingIds.join(',') },
+  })
   return data
 }
 

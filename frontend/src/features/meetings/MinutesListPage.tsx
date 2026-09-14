@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQueries } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle2, ClipboardList, FileSignature, ShieldAlert, SquarePen, UserRound, Users2 } from 'lucide-react'
 import { useMeetings } from '@/hooks/useMeetings'
@@ -14,9 +14,9 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { CardSkeleton } from '@/components/ui/Skeleton'
 import { StatCard, type StatTone } from '@/components/ui/StatCard'
-import { errorStatusOf, MinutesStageBadge, STAGE_META, STAGE_ORDER, StageTimeline } from './minutesShared'
+import { MinutesStageBadge, STAGE_META, STAGE_ORDER, StageTimeline } from './minutesShared'
 import { cardToneClass, cn, formatDate } from '@/lib/utils'
-import type { MeetingMinutes, MeetingMinutesStage } from '@/types'
+import type { MeetingMinutesStage, MinutesSummary } from '@/types'
 
 /**
  * قائمة "المحاضر" — إعادة تصميم كاملة 2026-09-09 (طلب لاما، بمرجع بصري
@@ -79,32 +79,35 @@ export function MinutesListPage() {
    * المحضر لها بـ409 وهذا متوقَّع ومعروض بوضوح بالبطاقة (انظر أعلاه). */
   const started = useMemo(() => (meetings ?? []).filter((m) => m.status !== 'upcoming'), [meetings])
 
-  const minutesQueries = useQueries({
-    queries: started.map((m) => ({
-      queryKey: ['meetings', m.meeting_id, 'minutes'],
-      queryFn: () => minutesApi.fetchMeetingMinutes(m.meeting_id),
-      staleTime: 30_000,
-      retry: false,
-    })),
+  const startedIds = useMemo(() => started.map((m) => m.meeting_id), [started])
+
+  /** إصلاح 2026-09-14 (بلاغ لاما — 500 متكرر على عدة مسارات غير مرتبطة
+   * ببعض بنفس اللحظة): كانت هذي الصفحة تفتح طلب HTTP منفصل بالكامل لكل
+   * اجتماع (useQueries، N طلب متزامن) — استنزاف فعلي لـConnection Pool
+   * بالباك-إند مثبَّت بسجلات Render (راجعي رسالة الكوميت لتفاصيل
+   * التحقيق الكامل). الآن: نداء واحد فقط يجيب ملخص كل الاجتماعات دفعة
+   * وحدة عبر fetchMinutesSummaries (نقطة API جديدة، استعلامان اثنان فقط
+   * بالباك-إند بغض النظر عن عدد الاجتماعات). */
+  const {
+    data: summaries,
+    isLoading: summariesLoading,
+    isError: summariesError,
+  } = useQuery({
+    queryKey: ['meetings', 'minutes', 'summary', startedIds],
+    queryFn: () => minutesApi.fetchMinutesSummaries(startedIds),
+    enabled: startedIds.length > 0,
+    staleTime: 30_000,
   })
 
-  const queryFor = (meetingId: string) => {
-    const idx = started.findIndex((m) => m.meeting_id === meetingId)
-    return idx === -1 ? undefined : minutesQueries[idx]
-  }
-
-  /** خريطة meeting_id → المحضر كامل (لا المرحلة فقط) — نحتاج المراجعين
-   * والتوقيعات والمسؤول لكل بطاقة، وكلها موجودة أصلًا بنفس الاستجابة. */
-  const minutesByMeeting = useMemo(() => {
-    const map = new Map<string, MeetingMinutes | null>()
-    started.forEach((m, i) => {
-      const q = minutesQueries[i]
-      map.set(m.meeting_id, q.data ?? null)
-    })
+  /** خريطة meeting_id → ملخص المحضر (لا المحضر الكامل — لا حاجة له
+   * بالقائمة، راجعي docstring MinutesSummaryOut بالباك-إند). */
+  const summaryByMeeting = useMemo(() => {
+    const map = new Map<string, MinutesSummary>()
+    for (const s of summaries ?? []) map.set(s.meeting_id, s)
     return map
-  }, [started, minutesQueries])
+  }, [summaries])
 
-  const stageOf = (meetingId: string): MeetingMinutesStage | null => minutesByMeeting.get(meetingId)?.stage ?? null
+  const stageOf = (meetingId: string): MeetingMinutesStage | null => summaryByMeeting.get(meetingId)?.stage ?? null
 
   const searched = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -121,7 +124,7 @@ export function MinutesListPage() {
       return true
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, stageFilter, committeeFilter, minutesByMeeting])
+  }, [searched, stageFilter, committeeFilter, summaryByMeeting])
 
   const stats = useMemo(() => {
     const counts: Record<MeetingMinutesStage, number> = {
@@ -138,7 +141,7 @@ export function MinutesListPage() {
     }
     return counts
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started, minutesByMeeting])
+  }, [started, summaryByMeeting])
 
   const sorted = useMemo(
     () => [...filtered].sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime()),
@@ -237,13 +240,11 @@ export function MinutesListPage() {
             className="flex flex-col gap-4"
           >
             {sorted.map((meeting, i) => {
-              const minutes = minutesByMeeting.get(meeting.meeting_id)
-              const stage = minutes?.stage ?? null
-              const query = queryFor(meeting.meeting_id)
-              const status = query?.isError ? errorStatusOf(query.error) : null
-              const notFinishedYet = status === 409
-              const forbidden = status === 403
-              const otherError = Boolean(query?.isError) && !notFinishedYet && !forbidden
+              const summary = summaryByMeeting.get(meeting.meeting_id)
+              const stage = summary?.stage ?? null
+              const notFinishedYet = summary?.not_finished_yet ?? false
+              const forbidden = summary?.forbidden ?? false
+              const otherError = summariesError && !summariesLoading && !summary
 
               return (
                 <motion.div
@@ -267,7 +268,7 @@ export function MinutesListPage() {
                             <span className="inline-flex items-center gap-1 rounded-xs border border-danger/30 bg-danger-bg px-1.5 py-0.5 text-[10px] font-semibold text-danger">
                               <ShieldAlert size={11} /> لا تملكين صلاحية العرض
                             </span>
-                          ) : otherError ? (
+                          ) : summariesLoading ? null : otherError ? (
                             <span className="rounded-xs border border-neutral-border/30 bg-neutral-bg px-1.5 py-0.5 text-[10px] font-semibold text-neutral">
                               تعذّر تحميل حالة المحضر
                             </span>
@@ -279,11 +280,11 @@ export function MinutesListPage() {
                           </span>
                           <span className="text-text-muted">·</span>
                           <span>تاريخ الاجتماع {formatDate(meeting.scheduled_at)}</span>
-                          {minutes?.owner && (
+                          {summary?.owner_name && (
                             <>
                               <span className="text-text-muted">·</span>
                               <span className="inline-flex items-center gap-1">
-                                <UserRound size={12} /> المسؤول عن الإعداد: {minutes.owner.first_name} {minutes.owner.last_name}
+                                <UserRound size={12} /> المسؤول عن الإعداد: {summary.owner_name}
                               </span>
                             </>
                           )}
@@ -305,17 +306,16 @@ export function MinutesListPage() {
                       </Button>
                     </div>
 
-                    {minutes && (
+                    {summary?.stage && (
                       <div className="flex flex-wrap gap-2">
                         <span className="rounded-full border border-border-default bg-bg-surface px-3 py-1.5 text-xs text-text-secondary">
-                          حالة المراجعة: {minutes.reviewers.filter((r) => r.status === 'approved').length}/
-                          {minutes.reviewers.length} مراجع
+                          حالة المراجعة: {summary.reviewers_approved}/{summary.reviewers_total} مراجع
                         </span>
                         <span className="rounded-full border border-border-default bg-bg-surface px-3 py-1.5 text-xs text-text-secondary">
-                          حالة الاعتماد: {minutes.approved_at ? 'معتمد' : 'بانتظار الاعتماد'}
+                          حالة الاعتماد: {summary.approved_at ? 'معتمد' : 'بانتظار الاعتماد'}
                         </span>
                         <span className="rounded-full border border-border-default bg-bg-surface px-3 py-1.5 text-xs text-text-secondary">
-                          حالة التوقيعات: {minutes.signatures.filter((s) => s.signed).length}/{minutes.signatures.length} توقيع
+                          حالة التوقيعات: {summary.signatures_signed}/{summary.signatures_total} توقيع
                         </span>
                       </div>
                     )}

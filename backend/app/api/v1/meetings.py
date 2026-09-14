@@ -30,6 +30,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Response,
     UploadFile,
     status,
@@ -62,6 +63,7 @@ from app.schemas.meeting_extracted_item import (
 from app.schemas.meeting_minutes import (
     MeetingMinutesOut,
     MinutesSection,
+    MinutesSummaryOut,
     MinutesTemplateOut,
     ReviewDecisionIn,
     SelectTemplateIn,
@@ -816,6 +818,36 @@ def _minutes_out(minutes) -> MeetingMinutesOut:
         created_at=minutes.created_at,
         updated_at=minutes.updated_at,
     )
+
+
+@router.get("/minutes/summary", response_model=list[MinutesSummaryOut])
+async def get_minutes_summaries(
+    current_user: CurrentUser,
+    meeting_ids: str = Query(default="", description="قائمة meeting_id مفصولة بفاصلة"),
+    db: AsyncSession = Depends(get_db),
+) -> list[MinutesSummaryOut]:
+    """إصلاح 2026-09-14 (بلاغ لاما — 500 متكرر على مسارات متعددة غير
+    مرتبطة ببعض بنفس اللحظة، راجعي docstring MinutesSummaryOut للتفاصيل
+    الكاملة): نقطة دفعية واحدة تستبدل N طلب منفصل (get_meeting_minutes
+    لكل اجتماع عبر useQueries بـMinutesListPage.tsx) — كل نداء لهذي
+    النقطة اتصال قاعدة بيانات واحد بدل N اتصال متزامن، مهما كان عدد
+    الاجتماعات المطلوبة.
+
+    ?meeting_ids=id1,id2,... (نص واحد مفصول بفاصلة — تحققتُ فعليًا إن
+    axios 1.19 بهذا المشروع يسلسل `params: { x: string[] }` بصيغة
+    x[]=a&x[]=b الافتراضية غير المدعومة تلقائيًا من FastAPI Query(list),
+    فتجنّبت هذا الفخ كليًا بمعامل نصي واحد بدل قائمة)."""
+    ids = [s.strip() for s in meeting_ids.split(",") if s.strip()]
+    if not ids:
+        return []
+    try:
+        parsed_ids = [uuid.UUID(s) for s in ids]
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="meeting_ids غير صالحة") from exc
+    summaries = await meeting_minutes_service.list_minutes_summaries(
+        db, actor=current_user, meeting_ids=parsed_ids
+    )
+    return [MinutesSummaryOut(**s) for s in summaries]
 
 
 @router.get("/{meeting_id}/minutes/templates", response_model=list[MinutesTemplateOut])
