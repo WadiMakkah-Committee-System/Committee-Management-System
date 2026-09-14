@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.committee_period import CommitteePeriodError
 from app.core.dependencies import CurrentUser
 from app.core.socketio_server import sio
 from app.db.session import get_db
@@ -34,6 +35,9 @@ _SERVICE_ERRORS = (
     DecisionForbiddenError,
     DecisionInvalidStateError,
     DecisionValidationError,
+    # إصلاح 2026-09-14 — راجعي نفس التعليق الكامل بـmeetings.py: كانت
+    # مفقودة هنا كمان، فأي تاريخ قرار خارج فترة عمل اللجنة يسبّب 500.
+    CommitteePeriodError,
 )
 
 

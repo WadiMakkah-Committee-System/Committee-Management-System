@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.committee_period import CommitteePeriodError
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.schemas.task import (
@@ -34,6 +35,9 @@ _SERVICE_ERRORS = (
     TaskForbiddenError,
     TaskInvalidStateError,
     TaskValidationError,
+    # إصلاح 2026-09-14 — راجعي نفس التعليق الكامل بـmeetings.py: كانت
+    # مفقودة هنا كمان، فأي تاريخ مهمة خارج فترة عمل اللجنة يسبّب 500.
+    CommitteePeriodError,
 )
 
 

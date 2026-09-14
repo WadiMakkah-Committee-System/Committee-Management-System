@@ -94,6 +94,7 @@ from app.services.meeting_service import (
     MeetingValidationError,
     RecordingNotFoundError,
 )
+from app.core.committee_period import CommitteePeriodError
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
@@ -123,6 +124,16 @@ _SERVICE_ERRORS = (
     MinutesForbiddenError,
     MinutesInvalidStateError,
     MinutesValidationError,
+    # إصلاح 2026-09-14 (بلاغ لاما — "Network Error" حقيقي/CORS مضلِّل عند
+    # إنشاء اجتماع): CommitteePeriodError (app/core/committee_period.py)
+    # ترث من ValueError وتوثيقها بنفسها يقول "تُترجَم تلقائيًا إلى 400" —
+    # لكنها لم تكن مذكورة هنا إطلاقًا بهذا التuple، فـ except أدناه ما كان
+    # يمسكها أصلًا (بغض النظر عن كون _handle_errors تتعامل مع ValueError
+    # بشكل عام — لا فرق لأن الاستثناء يفلت قبل ما يوصل لها). أي تاريخ
+    # اجتماع (أو نهايته) خارج فترة عمل اللجنة كان يُسبّب 500 حقيقي غير
+    # معالَج — نفس الخلل بالضبط بـdecisions.py وtasks.py (CommitteePeriodError
+    # تُستخدَم بالثلاثة، أضفتها هناك كمان).
+    CommitteePeriodError,
 )
 
 

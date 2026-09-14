@@ -66,25 +66,48 @@ app.include_router(api_router)
 
 
 # إصلاح 2026-09-13 (بلاغ لاما — صفحة المحضر تعطّلت بخطأ "CORS policy" رغم
-# إعداد CORS نفسه سليم): أي استثناء غير متوقَّع (مو HTTPException من
-# _handle_errors بـmeetings.py وأخواتها) كان يفلت بلا أي exception_handler
-# مسجَّل هنا — فيتولى ServerErrorMiddleware الخاص بـStarlette (وهو الطبقة
-# الأخارجية فعليًا، خارج CORSMiddleware/GZipMiddleware/perf_trace_middleware
-# أعلاه) إرجاع 500 خام مباشرة، بدون ما يمر على أي middleware من هذي —
-# فتوصل استجابة 500 بلا أي CORS headers إطلاقًا، والمتصفح يعرضها كـ"blocked
-# by CORS policy" رغم إن السبب الحقيقي استثناء غير متوقَّع بالسيرفر (يُسجَّل
-# هنا بالكامل بـRender Logs عشان تشخيص السبب الجذري لاحقًا) لا مشكلة إعداد
-# CORS. تسجيل exception_handler صريح هنا يشغّل *قبل* ServerErrorMiddleware
-# (FastAPI يربطه بـExceptionMiddleware الداخلية، وهي طبقة داخل CORSMiddleware
-# لا خارجها) — فترجع استجابة عادية تمر بكل الـmiddleware ويضيف لها CORS
-# الـheaders الصحيحة كأي استجابة سليمة.
+# إعداد CORS نفسه سليم)، تصحيح 2026-09-14 (بلاغ لاما — نفس الخطأ استمر
+# رغم هذا الإصلاح، تأكَّد فعليًا بإنشاء اجتماع جديد: POST /meetings رجع
+# 500 حقيقي لكن بلا أي CORS headers، بالضبط زي قبل الإصلاح):
+#
+# فهمي الأصلي بالأمس كان خاطئًا. قرأت فعليًا Starlette.build_middleware_
+# stack (starlette/applications.py) للتأكد هذي المرة بدل الافتراض:
+#
+#     for key, value in self.exception_handlers.items():
+#         if key in (500, Exception):
+#             error_handler = value       # <-- يُنزَع من القائمة العادية
+#         else:
+#             exception_handlers[key] = value
+#     middleware = (
+#         [Middleware(ServerErrorMiddleware, handler=error_handler, ...)]
+#         + self.user_middleware            # (CORS/Gzip/perf_trace هنا)
+#         + [Middleware(ExceptionMiddleware, handlers=exception_handlers, ...)]
+#     )
+#
+# أي @app.exception_handler(Exception) تحديدًا (خلاف أي استثناء آخر
+# محدَّد بالاسم) يُستثنى عمدًا من ExceptionMiddleware الداخلية (الطبقة
+# جوّا CORS) ويُثبَّت بدله كمعالج لـServerErrorMiddleware نفسها — وهي
+# الطبقة الخارجية فعليًا، خارج CORSMiddleware تمامًا. يعني تسجيل هذا
+# المعالج كان يشتغل فعلًا (الاستثناء يُسجَّل بالـLogs)، لكن استجابته
+# نفسها ما كانت تمر على CORSMiddleware إطلاقًا — فتبقى بلا أي CORS
+# headers بالضبط كما لو ما فيه معالج أصلًا. الإصلاح الحقيقي: إضافة
+# CORS headers يدويًا هنا (نفس منطق CORSMiddleware نفسه: انعكاس الأصل
+# (Origin) المسموح به + Allow-Credentials)، بدل الاعتماد على مرور
+# الاستجابة عبر CORSMiddleware — لأنها لا تمر عليها بهذا الموقع تحديدًا.
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
-    return JSONResponse(
+    response = JSONResponse(
         status_code=500,
         content={"detail": "حدث خطأ غير متوقع بالسيرفر، حاول مرة أخرى"},
     )
+    allowed_origins = ["*"] if settings.ENVIRONMENT == "development" else settings.cors_origins_list
+    origin = request.headers.get("origin")
+    if origin and (origin in allowed_origins or "*" in allowed_origins):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
 
 
 @app.get("/health", tags=["Health"])
