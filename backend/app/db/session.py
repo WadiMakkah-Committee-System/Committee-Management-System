@@ -152,54 +152,56 @@ def _perf_find_caller() -> str:
     return perf_probe.current_caller()
 
 
-@event.listens_for(engine.sync_engine, "before_cursor_execute")
-def _perf_before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-    context._perf_query_t0 = _perf_time.perf_counter()
+# تحديث 2026-09-14 (إيقاف الأداة بالإنتاج): التحقيق الأصلي خلص، وهذي
+# الـhooks تُنفَّذ على كل استعلام SQL بكل طلب — تكلفة أداء حقيقية لو
+# ظلت مسجَّلة بالإنتاج. من الآن تُسجَّل فقط بالتطوير.
+if settings.ENVIRONMENT == "development":
 
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _perf_before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        context._perf_query_t0 = _perf_time.perf_counter()
 
-@event.listens_for(engine.sync_engine, "after_cursor_execute")
-def _perf_after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-    t0 = getattr(context, "_perf_query_t0", None)
-    if t0 is None:
-        return
-    dur_ms = round((_perf_time.perf_counter() - t0) * 1000, 1)
-    # تشخيص إضافي 2026-09-13 (بلاغ لاما — لغز الـ26 permission): كان
-    # النص مقصوص لـ70 حرف بس (يخفي WHERE/IN)، وما فيه أي دليل هل الاستعلام
-    # يجيب صف واحد أو دفعة IN بعدة قيم، ولا مين استدعاه فعليًا. الآن:
-    # - نص SQL كامل لغاية 200 حرف (يبيّن IN (...) بوضوح).
-    # - عدد bound parameters الفعلي (len(parameters)) — دليل مباشر: IN
-    #   بـ26 قيمة يعطي param_count كبير بواحد استعلام؛ 26 استعلام منفصل
-    #   بصف واحد يعطي param_count صغير (1-2) مكرر 26 مرة بالتتبّع.
-    # - نوع الجملة (SELECT/INSERT/UPDATE).
-    # - أقرب دالة بكود التطبيق استدعت db.execute (عبر _perf_find_caller).
-    full_sql = " ".join(statement.split())[:200]
-    query_type = full_sql.split(" ", 1)[0].upper() if full_sql else "?"
-    if executemany:
-        try:
-            param_count = len(parameters)
-        except TypeError:
-            param_count = -1
-        param_note = f"executemany*{param_count}"
-    else:
-        try:
-            param_count = len(parameters) if parameters is not None else 0
-        except TypeError:
-            param_count = -1
-        param_note = f"params={param_count}"
-    caller = _perf_find_caller()
-    perf_probe.mark(f"sql: [{query_type} {param_note} by={caller}] {full_sql}", dur_ms=dur_ms)
+    @event.listens_for(engine.sync_engine, "after_cursor_execute")
+    def _perf_after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        t0 = getattr(context, "_perf_query_t0", None)
+        if t0 is None:
+            return
+        dur_ms = round((_perf_time.perf_counter() - t0) * 1000, 1)
+        # تشخيص إضافي 2026-09-13 (بلاغ لاما — لغز الـ26 permission): كان
+        # النص مقصوص لـ70 حرف بس (يخفي WHERE/IN)، وما فيه أي دليل هل الاستعلام
+        # يجيب صف واحد أو دفعة IN بعدة قيم، ولا مين استدعاه فعليًا. الآن:
+        # - نص SQL كامل لغاية 200 حرف (يبيّن IN (...) بوضوح).
+        # - عدد bound parameters الفعلي (len(parameters)) — دليل مباشر: IN
+        #   بـ26 قيمة يعطي param_count كبير بواحد استعلام؛ 26 استعلام منفصل
+        #   بصف واحد يعطي param_count صغير (1-2) مكرر 26 مرة بالتتبّع.
+        # - نوع الجملة (SELECT/INSERT/UPDATE).
+        # - أقرب دالة بكود التطبيق استدعت db.execute (عبر _perf_find_caller).
+        full_sql = " ".join(statement.split())[:200]
+        query_type = full_sql.split(" ", 1)[0].upper() if full_sql else "?"
+        if executemany:
+            try:
+                param_count = len(parameters)
+            except TypeError:
+                param_count = -1
+            param_note = f"executemany*{param_count}"
+        else:
+            try:
+                param_count = len(parameters) if parameters is not None else 0
+            except TypeError:
+                param_count = -1
+            param_note = f"params={param_count}"
+        caller = _perf_find_caller()
+        perf_probe.mark(f"sql: [{query_type} {param_note} by={caller}] {full_sql}", dur_ms=dur_ms)
 
+    @event.listens_for(engine.sync_engine, "connect")
+    def _perf_on_new_physical_connection(dbapi_conn, connection_record):
+        # يفتح فقط لما يُنشَأ اتصال TCP/TLS فعلي جديد بالكامل (Pool ما عنده
+        # اتصال جاهز مُعاد استخدامه) — أبطأ حالة ممكنة لاتصال قاعدة بيانات.
+        perf_probe.mark("db.NEW_PHYSICAL_CONNECTION_CREATED")
 
-@event.listens_for(engine.sync_engine, "connect")
-def _perf_on_new_physical_connection(dbapi_conn, connection_record):
-    # يفتح فقط لما يُنشَأ اتصال TCP/TLS فعلي جديد بالكامل (Pool ما عنده
-    # اتصال جاهز مُعاد استخدامه) — أبطأ حالة ممكنة لاتصال قاعدة بيانات.
-    perf_probe.mark("db.NEW_PHYSICAL_CONNECTION_CREATED")
-
-
-@event.listens_for(engine.sync_engine.pool, "checkout")
-def _perf_on_pool_checkout(dbapi_conn, connection_record, connection_proxy):
-    perf_probe.mark("db.pool_checkout")
+    @event.listens_for(engine.sync_engine.pool, "checkout")
+    def _perf_on_pool_checkout(dbapi_conn, connection_record, connection_proxy):
+        perf_probe.mark("db.pool_checkout")
 
 
 AsyncSessionLocal = async_sessionmaker(
