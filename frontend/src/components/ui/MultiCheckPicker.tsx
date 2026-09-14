@@ -8,6 +8,15 @@ interface MultiCheckPickerProps<T> {
   getId: (item: T) => string
   getLabel: (item: T) => string
   getSublabel?: (item: T) => string | null | undefined
+  /**
+   * تجميع اختياري (مثال: اسم الإدارة لكل مستخدم) — بلاغ من صاحبة المشروع
+   * 2026-09-14: منتقي "مستخدمون محددون" برفع الوثيقة كان يعرض كل الأعضاء
+   * مبعثرين بلا أي تقسيم، بخلاف MemberPicker.tsx (اللجان) اللي عنده هذا
+   * التجميع أصلًا. أُضيف هنا كخاصية اختيارية بدل تكرار مكوّن كامل ثانٍ —
+   * بلا هذا الخيار، يبقى السلوك القديم تمامًا (قائمة مسطّحة، توافقًا
+   * خلفيًا مع بقية الاستخدامات الثلاثة الحالية لهذا المكوّن).
+   */
+  getGroupLabel?: (item: T) => string | null | undefined
   selected: string[]
   onChange: (next: string[]) => void
   searchPlaceholder?: string
@@ -44,6 +53,7 @@ export function MultiCheckPicker<T>({
   getId,
   getLabel,
   getSublabel,
+  getGroupLabel,
   selected,
   onChange,
   searchPlaceholder = 'ابحث...',
@@ -61,6 +71,20 @@ export function MultiCheckPicker<T>({
       return getLabel(item).toLowerCase().includes(q) || (sub ? sub.toLowerCase().includes(q) : false)
     })
   }, [items, search, getLabel, getSublabel])
+
+  /** بدون getGroupLabel: مجموعة واحدة بعنوان فارغ — نفس القائمة المسطّحة القديمة تمامًا. */
+  const groups = useMemo(() => {
+    if (!getGroupLabel) return [{ label: null as string | null, items: filtered }]
+    const map = new Map<string, T[]>()
+    for (const item of filtered) {
+      const label = getGroupLabel(item)?.trim() || 'بدون إدارة'
+      if (!map.has(label)) map.set(label, [])
+      map.get(label)!.push(item)
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, 'ar'))
+      .map(([label, groupItems]) => ({ label, items: groupItems }))
+  }, [filtered, getGroupLabel])
 
   function toggle(id: string) {
     if (selectedSet.has(id)) onChange(selected.filter((s) => s !== id))
@@ -124,32 +148,41 @@ export function MultiCheckPicker<T>({
         {filtered.length === 0 ? (
           <p className="px-3 py-6 text-center text-xs text-text-muted">{emptyText}</p>
         ) : (
-          filtered.map((item) => {
-            const id = getId(item)
-            const isChecked = selectedSet.has(id)
-            const sub = getSublabel?.(item)
-            return (
-              <label
-                key={id}
-                className={cn(
-                  'flex cursor-pointer items-center gap-2.5 border-b border-border-default px-3 py-2 text-sm transition-colors last:border-0',
-                  'focus-within:bg-bg-elevated hover:bg-bg-elevated',
-                  isChecked && 'bg-brand-primary/5',
-                )}
-              >
-                <input
-                  type="checkbox"
-                  checked={isChecked}
-                  onChange={() => toggle(id)}
-                  className="h-4 w-4 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
-                />
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-text-primary">{getLabel(item)}</p>
-                  {sub && <p className="truncate text-xs text-text-muted">{sub}</p>}
-                </div>
-              </label>
-            )
-          })
+          groups.map((group) => (
+            <div key={group.label ?? '__flat__'}>
+              {group.label !== null && (
+                <p className="sticky top-0 border-b border-border-default bg-bg-elevated px-3 py-1.5 text-[11px] font-bold text-text-muted">
+                  {group.label}
+                </p>
+              )}
+              {group.items.map((item) => {
+                const id = getId(item)
+                const isChecked = selectedSet.has(id)
+                const sub = getSublabel?.(item)
+                return (
+                  <label
+                    key={id}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-2.5 border-b border-border-default px-3 py-2 text-sm transition-colors last:border-0',
+                      'focus-within:bg-bg-elevated hover:bg-bg-elevated',
+                      isChecked && 'bg-brand-primary/5',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggle(id)}
+                      className="h-4 w-4 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-text-primary">{getLabel(item)}</p>
+                      {sub && <p className="truncate text-xs text-text-muted">{sub}</p>}
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+          ))
         )}
       </div>
       {error && <p className="text-xs font-medium text-danger">{error}</p>}
