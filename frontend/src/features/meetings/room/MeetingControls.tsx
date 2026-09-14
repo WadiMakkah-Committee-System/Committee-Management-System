@@ -61,6 +61,7 @@ export function MeetingControls({
   sharingScreen,
   handRaised,
   isRecording,
+  canRecord,
   onToggleMic,
   onToggleCamera,
   onToggleScreenShare,
@@ -74,6 +75,11 @@ export function MeetingControls({
   sharingScreen: boolean
   handRaised: boolean
   isRecording: boolean
+  /** إصلاح 2026-09-14 (بلاغ لاما) — بس رئيس اللجنة (أو صاحب صلاحية
+   * meetings.record_audio بنطاق عام) يشوف زر التسجيل أصلًا؛ التحقق
+   * الفعلي مكرَّر بالباك-إند (meeting_service.py::upload_recording) لأن
+   * هذا مجرد إخفاء واجهة، نفس نمط canManage بـAgendaPanel. */
+  canRecord: boolean
   onToggleMic: () => void
   onToggleCamera: () => void
   onToggleScreenShare: () => void
@@ -123,9 +129,11 @@ export function MeetingControls({
       >
         {sharingScreen ? <ScreenShareOff size={18} /> : <MonitorUp size={18} />}
       </ControlButton>
-      <ControlButton onClick={onToggleRecording} active={isRecording} danger={isRecording} label={isRecording ? 'إيقاف التسجيل' : 'بدء التسجيل'}>
-        <Circle size={18} className={isRecording ? 'fill-current' : undefined} />
-      </ControlButton>
+      {canRecord && (
+        <ControlButton onClick={onToggleRecording} active={isRecording} danger={isRecording} label={isRecording ? 'إيقاف التسجيل' : 'بدء التسجيل'}>
+          <Circle size={18} className={isRecording ? 'fill-current' : undefined} />
+        </ControlButton>
+      )}
       <ControlButton onClick={onOpenMore} label="المزيد">
         <MoreHorizontal size={18} />
       </ControlButton>

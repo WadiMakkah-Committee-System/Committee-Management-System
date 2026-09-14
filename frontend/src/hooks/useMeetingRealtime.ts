@@ -198,6 +198,27 @@ export function useMeetingRealtime(meetingId: string | undefined) {
       if (!socket || !socket.connected) {
         return { ok: false, error: 'لا يوجد اتصال بقناة الدردشة حاليًا — تحققي من الاتصال وحاولي مجددًا.' }
       }
+
+      // إصلاح 2026-09-14 (بلاغ لاما الثاني — تظهر "انتهت قناة الاتصال"
+      // رغم أن الرسالة تصل فعليًا لبقية المشاركين): تبيّن أن emitWithAck
+      // وحدها قد تنتهي مهلتها (أو ترفض) حتى لو نجح الحفظ والبث فعليًا على
+      // الخادم — فقط حزمة الـack بعينها ضاعت/تأخرت على اتصال غير مستقر
+      // (لا الإرسال نفسه). الحل: عند فشل/انتهاء مهلة الـack تحديدًا، قبل
+      // الجزم بالفشل نمنح بثّ "chat.message" ذاته مهلة أخيرة قصيرة —
+      // المرسل نفسه عضو بغرفة الاجتماع فيستقبل بثّ رسالته هو أيضًا، فوصول
+      // رسالة بنفس نصّه ومرسِلها إثبات استقلالي على النجاح الفعلي حتى لو
+      // ضاع ردّ الـack بعينه. لا تُستخدم إلا بمسار timeout/الاستثناء
+      // فقط — رفض الخادم الصريح (ack.ok === false) يبقى نهائيًا وفوريًا
+      // كما هو، فهو ليس حالة غموض.
+      const myUserId = useAuthStore.getState().user?.user_id
+      let broadcastHandler: ((payload: { message: MeetingChatMessage }) => void) | null = null
+      const broadcastConfirmed = new Promise<true>((resolve) => {
+        broadcastHandler = (payload) => {
+          if (payload.message.body === body && payload.message.sender.user_id === myUserId) resolve(true)
+        }
+        socket.on('chat.message', broadcastHandler)
+      })
+
       try {
         const ack = (await socket.timeout(8000).emitWithAck('chat.send', { body })) as
           | { ok: true; message: MeetingChatMessage }
@@ -211,9 +232,20 @@ export function useMeetingRealtime(meetingId: string | undefined) {
         }
         return { ok: true }
       } catch (err) {
-        // socket.timeout(...) يرفض الـPromise لو انقضت المهلة بلا رد.
-        console.error('[useMeetingRealtime] chat.send: لم يصل رد (timeout/خطأ اتصال)', err)
+        // socket.timeout(...) يرفض الـPromise لو انقضت المهلة بلا رد —
+        // قبل إظهار خطأ للمستخدمة، تحققي أولًا هل وصل بثّ رسالتها فعليًا.
+        console.error(
+          '[useMeetingRealtime] chat.send: لم يصل رد (timeout/خطأ اتصال) — بانتظار تأكيد البث كإثبات بديل...',
+          err,
+        )
+        const confirmedViaBroadcast = await Promise.race([
+          broadcastConfirmed,
+          new Promise<false>((resolve) => setTimeout(() => resolve(false), 1500)),
+        ])
+        if (confirmedViaBroadcast) return { ok: true }
         return { ok: false, error: 'انتهت مهلة انتظار رد الخادم — تحققي من الاتصال وحاولي مجددًا.' }
+      } finally {
+        if (broadcastHandler) socket.off('chat.message', broadcastHandler)
       }
     },
     [],
@@ -221,10 +253,33 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   const announceAgoraUid = useCallback((agoraUid: number) => send('video.uid', { agora_uid: agoraUid }), [send])
   const raiseHand = useCallback(() => send('hand.raise'), [send])
   const lowerHand = useCallback(() => send('hand.lower'), [send])
+  // إصلاح 2026-09-14 (بلاغ لاما — رئيس اللجنة يضغط "بدء المناقشة" ولا
+  // يظهر له أي مؤشر، كأنه لم يضغط شيئًا): كانت announceDiscussing تستخدم
+  // send() العادي (بلا انتظار رد) — نفس عِلّة الدردشة قبل إصلاحها بالضبط.
+  // الآن emitWithAck حقيقي بنتيجة واضحة — راجعي agenda_discussing
+  // بـsocketio_server.py.
   const announceDiscussing = useCallback(
-    (agendaItemId: string, title: string) =>
-      send('agenda.discussing', { agenda_item_id: agendaItemId, title }),
-    [send],
+    async (agendaItemId: string, title: string): Promise<{ ok: boolean; error?: string }> => {
+      const socket = socketRef.current
+      if (!socket || !socket.connected) {
+        return { ok: false, error: 'لا يوجد اتصال بقناة الاجتماع حاليًا — تحققي من الاتصال وحاولي مجددًا.' }
+      }
+      try {
+        const ack = (await socket
+          .timeout(8000)
+          .emitWithAck('agenda.discussing', { agenda_item_id: agendaItemId, title })) as
+          | { ok: true }
+          | { ok: false; error?: string }
+          | undefined
+        if (!ack) return { ok: false, error: 'لم يصل رد من الخادم — حاولي مجددًا.' }
+        if (!ack.ok) return { ok: false, error: ack.error || 'تعذر بدء المناقشة.' }
+        return { ok: true }
+      } catch (err) {
+        console.error('[useMeetingRealtime] agenda.discussing: لم يصل رد (timeout/خطأ اتصال)', err)
+        return { ok: false, error: 'انتهت مهلة انتظار رد الخادم — تحققي من الاتصال وحاولي مجددًا.' }
+      }
+    },
+    [],
   )
 
   return {

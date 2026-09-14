@@ -3,6 +3,7 @@ import { Plus, Trash2, Vote as VoteIcon } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
+import { Avatar } from '@/components/ui/Avatar'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Spinner } from '@/components/ui/Spinner'
 import { DecisionStatusBadge } from '@/components/ui/StatusBadge'
@@ -208,6 +209,31 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
               </button>
             )
           })}
+
+          {/* إصلاح 2026-09-14 (بلاغ لاما — "عند التصويت ما يظهر مين اللي
+             ضغط موافق ومين اللي ضغط غير موافق، سوي نفس اللي بواجهة
+             القرارات"): نفس قائمة "مَن صوّت وبأي خيار" الموجودة أصلًا
+             بـDecisionDetailPage.tsx، بنسخة مختصرة تناسب عرض 340px هنا.
+             لا حاجة لفحص صلاحية إضافي بالواجهة — الباك-إند نفسه يحرّر
+             (يحذف) تصويتات البقية من decision.votes لمن لا يملك
+             decisions.vote.view_result (راجعي _redact_votes_if_unauthorized
+             بـdecision_service.py)، فعضو اللجنة العادي يرى صوته فقط تلقائيًا
+             هنا أيضًا — بلا أي تسريب خصوصية. */}
+          {decision.votes.length > 0 && (
+            <ul className="mt-1 flex flex-col gap-1 border-t border-border-default pt-2">
+              {decision.votes.map((v) => (
+                <li key={v.voter.user_id} className="flex items-center justify-between text-[11px]">
+                  <span className="flex items-center gap-1.5 text-text-secondary">
+                    <Avatar firstName={v.voter.first_name} lastName={v.voter.last_name} size={18} />
+                    {v.voter.first_name} {v.voter.last_name}
+                  </span>
+                  <span className={v.option.is_approving ? 'text-status-success-main' : 'text-text-muted'}>
+                    {v.option.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

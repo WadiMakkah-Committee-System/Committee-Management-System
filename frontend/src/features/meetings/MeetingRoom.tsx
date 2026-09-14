@@ -7,6 +7,7 @@ import { useCommittees } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
 import { useMeetingRealtime } from '@/hooks/useMeetingRealtime'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { useToast } from '@/components/ui/Toast'
 import { useAgoraConnection } from './room/useAgoraConnection'
 import { useAudioRecorder } from './room/useAudioRecorder'
 import { MeetingRoomAppRail } from './room/MeetingRoomAppRail'
@@ -57,6 +58,7 @@ export function MeetingRoom({
   onClose: () => void
 }) {
   const currentUser = useAuthStore((s) => s.user)
+  const { showToast } = useToast()
   // Polling أثناء بقاء الغرفة مفتوحة فقط (راجعي useMeetingDetail) — يكشف
   // انتهاء وقت الاجتماع (status → finished) بدون حاجة لإعادة فتح الصفحة.
   const meetingQuery = useMeetingDetail(meetingId, { refetchIntervalMs: MEETING_STATUS_POLL_MS })
@@ -76,6 +78,7 @@ export function MeetingRoom({
 
   const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
+  const [pendingAgendaItemId, setPendingAgendaItemId] = useState<string | null>(null)
   const [leaving, setLeaving] = useState(false)
 
   // عدد رسائل المحادثة "المُشاهَدة" — State حقيقي يُحدَّث فقط داخل معالج
@@ -109,8 +112,24 @@ export function MeetingRoom({
   // راجعي useMeetingRealtime.ts وsocketio_server.py::video_uid).
   const participantNames = realtime.videoUidNames
 
-  function handleStartDiscussing(item: MeetingAgendaItem) {
-    realtime.announceDiscussing(item.agenda_item_id, item.title)
+  // إصلاح 2026-09-14 (بلاغ لاما الثاني — ضغط رئيس اللجنة "بدء المناقشة"
+  // لا يعطيه أي مؤشر، كأن الزر ثابت لا يفعل شيئًا): announceDiscussing
+  // الآن Promise حقيقي بنتيجة واضحة (راجعي useMeetingRealtime.ts) —
+  // pendingAgendaItemId يعطّل البند أثناء الإرسال (يمنع ضغط مزدوج)،
+  // وtoast فوري يوضّح النجاح أو سبب الفشل الحقيقي، بدل انتظار بثّ
+  // "agenda.discussing" فقط كمؤشر وحيد على حدوث شيء.
+  async function handleStartDiscussing(item: MeetingAgendaItem) {
+    setPendingAgendaItemId(item.agenda_item_id)
+    try {
+      const result = await realtime.announceDiscussing(item.agenda_item_id, item.title)
+      if (result.ok) {
+        showToast(`بدأت مناقشة: ${item.title}`, 'success')
+      } else {
+        showToast(result.error || 'تعذر بدء المناقشة.', 'error')
+      }
+    } finally {
+      setPendingAgendaItemId(null)
+    }
   }
 
   async function handleConfirmLeave() {
@@ -152,6 +171,23 @@ export function MeetingRoom({
     currentUser &&
       meeting &&
       (scopeFor(currentUser, 'meetings.agenda.item.update') === 'all' ||
+        committees?.some(
+          (c) => c.committee_id === meeting.committee_id && c.chair_user_id === currentUser.user_id,
+        )),
+  )
+
+  // إصلاح 2026-09-14 (بلاغ لاما — عضو اللجنة العادي يقدر يبدأ التسجيل
+  // الصوتي من شريط التحكم السفلي، والمفترض يكون هذا لرئيس اللجنة فقط):
+  // الباك-إند أصلًا يرفض حفظ/رفع التسجيل لغير صاحب صلاحية
+  // meetings.record_audio (راجعي meeting_service.py::upload_recording)،
+  // لكن الواجهة كانت تعرض زر "تسجيل" بلا أي فحص — فيدخل العضو بتجربة
+  // تسجيل كاملة (getUserMedia + MediaRecorder محليًا، لا تحتاج إذن خادم
+  // لتبدأ) لتفشل فقط عند الرفع النهائي. نفس نمط canManageAgenda أعلاه
+  // بالضبط: رئيس اللجنة، أو صاحب صلاحية meetings.record_audio بنطاق عام.
+  const canRecord = Boolean(
+    currentUser &&
+      meeting &&
+      (scopeFor(currentUser, 'meetings.record_audio') === 'all' ||
         committees?.some(
           (c) => c.committee_id === meeting.committee_id && c.chair_user_id === currentUser.user_id,
         )),
@@ -242,6 +278,7 @@ export function MeetingRoom({
                     discussingAgendaItemId={realtime.discussingAgendaItem?.id ?? null}
                     onStartDiscussing={handleStartDiscussing}
                     canManage={canManageAgenda}
+                    pendingItemId={pendingAgendaItemId}
                   />
                 )}
                 {activePanel === 'decisions' && (
@@ -335,6 +372,7 @@ export function MeetingRoom({
                   sharingScreen={agora.sharingScreen}
                   handRaised={iRaisedHand}
                   isRecording={recorder.isRecording}
+                  canRecord={canRecord}
                   onToggleMic={agora.toggleMic}
                   onToggleCamera={agora.toggleCamera}
                   onToggleScreenShare={agora.toggleScreenShare}
