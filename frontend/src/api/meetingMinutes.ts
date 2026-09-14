@@ -1,5 +1,12 @@
 import { apiClient } from '@/lib/apiClient'
-import type { MeetingMinutes, MinutesSection, MinutesSummary, MinutesTemplate, MinutesTemplateId } from '@/types'
+import type {
+  MeetingMinutes,
+  MeetingMinutesDetail,
+  MinutesSection,
+  MinutesSummary,
+  MinutesTemplate,
+  MinutesTemplateId,
+} from '@/types'
 
 /**
  * وحدة "المحاضر" (SRS §7) — تقابل app/api/v1/meetings.py (مسارات
@@ -35,6 +42,19 @@ export async function fetchMinutesSummaries(meetingIds: string[]): Promise<Minut
 
 export async function fetchMeetingMinutes(meetingId: string): Promise<MeetingMinutes> {
   const { data } = await apiClient.get<MeetingMinutes>(`/meetings/${meetingId}/minutes`)
+  return data
+}
+
+/**
+ * إصلاح أداء (التوصية الثانية بتقرير أداء لاما 2026-09-14 — راجعي
+ * docstring MeetingMinutesDetailOut بالباك-إند): نداء واحد يجيب الاجتماع
+ * واللجنة والمحضر والقوالب والبنود المستخرجة معًا، بدل 5 طلبات منفصلة
+ * كانت MeetingMinutesPage.tsx تطلقها (واحد منها Network Waterfall حقيقي —
+ * طلب اللجنة كان ينتظر نتيجة طلب الاجتماع أولًا). تُستخدم حصرًا من تلك
+ * الصفحة (راجعي useMeetingMinutesDetail بـhooks/useMeetingMinutes.ts).
+ */
+export async function fetchMeetingMinutesDetail(meetingId: string): Promise<MeetingMinutesDetail> {
+  const { data } = await apiClient.get<MeetingMinutesDetail>(`/meetings/${meetingId}/minutes/detail`)
   return data
 }
 

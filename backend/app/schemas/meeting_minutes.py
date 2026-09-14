@@ -11,7 +11,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.meeting import MeetingMode, MeetingStatus
 from app.schemas.committee import CommitteeMemberUserOut
+from app.schemas.meeting import MeetingAgendaItemOut
+from app.schemas.meeting_extracted_item import MeetingExtractedItemOut
 
 MeetingMinutesStageOut = Literal["none", "preparing", "review", "approval", "signature", "completed"]
 MeetingMinutesReviewStatusOut = Literal["pending", "approved", "returned"]
@@ -108,6 +111,61 @@ class MinutesSummaryOut(BaseModel):
     approved_at: datetime | None
     signatures_total: int
     signatures_signed: int
+
+
+class MinutesDetailMeetingOut(BaseModel):
+    """نسخة خفيفة من MeetingOut (schemas/meeting.py) — حصرًا للحقول التي
+    تستخدمها فعليًا صفحة المحضر (MeetingMinutesPage.tsx، تحقّقتُ بـgrep
+    كامل على الملف): بدون creator (غير مستخدَم إطلاقًا بهذي الصفحة). جزء
+    من توحيد GET /{meeting_id}/minutes/detail (راجعي MeetingMinutesDetailOut
+    أدناه وget_minutes_detail بـservices/meeting_minutes_service.py) —
+    نفس فلسفة MinutesSummaryOut: سطح استجابة مبني خصيصًا لاستهلاك هذه
+    الصفحة تحديدًا، لا إعادة استخدام Schema عام أثقل مما يلزم."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    meeting_id: uuid.UUID
+    committee_id: uuid.UUID
+    title: str
+    description: str | None
+    mode: MeetingMode
+    location: str | None
+    scheduled_at: datetime
+    scheduled_end_at: datetime | None
+    status: MeetingStatus
+    participants: list[CommitteeMemberUserOut]
+    agenda_items: list[MeetingAgendaItemOut]
+    started_at: datetime | None
+    ended_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MinutesDetailCommitteeOut(BaseModel):
+    """نسخة خفيفة من CommitteeOut (schemas/committee.py) — حصرًا name
+    وchair_user_id، الحقلان الوحيدان اللذان تستخدمهما صفحة المحضر (عرض
+    اسم اللجنة + تحديد canManage/canApprove بمقارنة chair_user_id بالمستخدم
+    الحالي). بدون members/member_roles/lifecycle_state الثقيلة وغير
+    المستخدَمة هنا إطلاقًا — نفس فلسفة MinutesDetailMeetingOut أعلاه."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    committee_id: uuid.UUID
+    name: str
+    chair_user_id: uuid.UUID | None
+
+
+class MeetingMinutesDetailOut(BaseModel):
+    """استجابة GET /{meeting_id}/minutes/detail — توحّد بيانات الاجتماع
+    واللجنة والمحضر والقوالب والبنود المستخرجة بنداء HTTP واحد بدل 5
+    (راجعي docstring get_minutes_detail بـservices/meeting_minutes_service.py
+    للتصميم الكامل والدافع — التوصية الثانية بتقرير أداء لاما 2026-09-14)."""
+
+    meeting: MinutesDetailMeetingOut
+    committee: MinutesDetailCommitteeOut
+    minutes: MeetingMinutesOut
+    templates: list[MinutesTemplateOut]
+    extracted_items: list[MeetingExtractedItemOut]
 
 
 class SelectTemplateIn(BaseModel):
