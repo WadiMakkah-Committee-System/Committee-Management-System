@@ -156,7 +156,7 @@ async def perf_trace_middleware(request: Request, call_next):
         # app/db/session.py) — 15000 حرف صارت تقصّ تتبّع 65 استعلام
         # قبل نهايته. 30000 كافية له مع هامش، ولا تزال أقل من حدود
         # الـheader المعتادة عند أغلب البنى التحتية.
-        response.headers["X-Perf-Trace"] = trace_str[:30000]
+        response.headers["X-Perf-Trace"] = trace_str[:30000].encode("ascii", "ignore").decode("ascii")
     print(
         f"[PERF] {request.method} {request.url.path} total={total_ms}ms | {trace_str}",
         flush=True,
