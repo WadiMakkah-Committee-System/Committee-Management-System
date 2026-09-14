@@ -18,7 +18,7 @@ const schema = z
     statement: z.string().max(2000).optional(),
     start_date: z.string().min(1, 'تاريخ البداية مطلوب'),
     end_date: z.string().min(1, 'تاريخ النهاية مطلوب'),
-    proposed_member_ids: z.array(z.string()).min(1, 'اختاري عضوًا واحدًا على الأقل'),
+    proposed_member_ids: z.array(z.string()).min(1, 'اختر عضوًا واحدًا على الأقل'),
     // رئيس اللجنة (Committee Role مؤقت) — يُختار من ضمن الأعضاء المقترحين
     // فقط، وليس دورًا عامًا بجدول الأدوار (System Role)؛ نفس القيد مطبّق
     // بالباك-إند (CommitteeFormationRequestCreate._chair_must_be_a_proposed_member).
@@ -157,7 +157,7 @@ export function CommitteeRequestFormModal({
       description={
         isEdit
           ? `تعديل بيانات طلب "${request?.committee_name}"`
-          : 'أدخلي بيانات اللجنة المقترح تشكيلها — يُحفظ الطلب كمسودة، وتقدرين ترسلينه لاحقًا'
+          : 'يُرجى إدخال بيانات اللجنة المقترح تشكيلها — يُحفظ الطلب كمسودة، ويمكن إرساله لاحقًا'
       }
       size="lg"
       footer={

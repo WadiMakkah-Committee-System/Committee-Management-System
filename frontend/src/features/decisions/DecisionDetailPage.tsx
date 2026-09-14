@@ -175,7 +175,7 @@ export function DecisionDetailPage() {
 
     const cleaned = optionInputs.map((o) => ({ ...o, label: o.label.trim() })).filter((o) => o.label)
     if (cleaned.length < 2) {
-      setOptionsError('أدخلي خيارين على الأقل')
+      setOptionsError('يجب إدخال خيارين على الأقل')
       return
     }
     const labels = cleaned.map((o) => o.label)
@@ -389,7 +389,7 @@ export function DecisionDetailPage() {
         <Card>
           <h2 className="text-sm font-semibold text-text-primary">طرح القرار للتصويت</h2>
           <p className="mt-1 text-xs text-text-muted">
-            حدّدي خيارات التصويت بنفسك (موافق/غير موافق افتراضيًا، ويمكنك تعديلها أو إضافة خيارات أخرى).
+            حدِّد خيارات التصويت (موافق/غير موافق افتراضيًا، ويمكن تعديلها أو إضافة خيارات أخرى).
             علّمي "تُحسب موافقة" على أي خيار يُعتبر تأييدًا للقرار — تُستخدم لحساب الأغلبية تلقائيًا.
           </p>
 
@@ -522,7 +522,7 @@ export function DecisionDetailPage() {
             onClose={() => setDeleteOpen(false)}
             onConfirm={handleDelete}
             title="حذف القرار"
-            description={`سيتم حذف قرار "${decision.title}" نهائيًا. هل أنتِ متأكدة؟`}
+            description={`سيتم حذف قرار "${decision.title}" نهائيًا. هل أنت متأكد؟`}
             confirmLabel="حذف"
             loading={deleteMutation.isPending}
             errorMessage={deleteError}

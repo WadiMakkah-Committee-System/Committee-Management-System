@@ -63,8 +63,8 @@ describe('MemberPicker', () => {
   })
 
   it('يعرض رسالة الخطأ الممرَّرة', () => {
-    render(<MemberPicker users={USERS} selected={[]} onChange={() => {}} {...noopChair} error="اختاري عضوًا واحدًا على الأقل" />)
-    expect(screen.getByText('اختاري عضوًا واحدًا على الأقل')).toBeInTheDocument()
+    render(<MemberPicker users={USERS} selected={[]} onChange={() => {}} {...noopChair} error="اختر عضوًا واحدًا على الأقل" />)
+    expect(screen.getByText('اختر عضوًا واحدًا على الأقل')).toBeInTheDocument()
   })
 
   it('يفلتر القائمة بالبحث بالاسم', async () => {

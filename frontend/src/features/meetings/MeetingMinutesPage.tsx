@@ -444,7 +444,7 @@ export function MeetingMinutesPage() {
             return (
               <ErrorState
                 title="لا تملكين صلاحية عرض هذا المحضر"
-                description="تحتاجين صلاحية minutes.view أو عضوية فعلية بلجنة هذا الاجتماع"
+                description="تحتاج صلاحية minutes.view أو عضوية فعلية بلجنة هذا الاجتماع"
               />
             )
           }
@@ -563,7 +563,7 @@ export function MeetingMinutesPage() {
                   </div>
                   <p className="text-sm font-semibold text-text-primary">لم يتم اختيار قالب بعد</p>
                   <p className="max-w-sm text-sm text-text-secondary">
-                    اختاري أحد قوالب المحاضر المعتمدة لبدء إعداد المحضر.
+                    اختر أحد قوالب المحاضر المعتمدة لبدء إعداد المحضر.
                   </p>
                   {canManage && <Button onClick={() => setTab('templates')}>عرض القوالب</Button>}
                 </Card>
@@ -874,7 +874,7 @@ export function MeetingMinutesPage() {
               <Card className="lg:col-span-2">
                 <h3 className="text-sm font-semibold text-text-primary">مراجعة المحضر قبل الاعتماد</h3>
                 <p className="mt-1 text-xs text-text-muted">
-                  المراجعة مفتوحة تلقائيًا لكل أعضاء اللجنة بمجرد اختيار القالب — راجعي محتوى المحضر وسجّلي
+                  المراجعة مفتوحة تلقائيًا لكل أعضاء اللجنة بمجرد اختيار القالب — راجع محتوى المحضر وسجِّل
                   ملاحظاتك، ورئيس اللجنة يقدر يعتمد المحضر في أي وقت دون انتظار اكتمال المراجعات.
                 </p>
 
@@ -898,7 +898,7 @@ export function MeetingMinutesPage() {
                           value={reviewComment}
                           onChange={(e) => setReviewComment(e.target.value)}
                           rows={3}
-                          placeholder="اكتبي ملاحظات المراجعة (اختياري)…"
+                          placeholder="ملاحظات المراجعة (اختياري)…"
                           className="mt-4"
                         />
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -1108,7 +1108,7 @@ export function MeetingMinutesPage() {
         open={signatureOpen}
         onClose={() => setSignatureOpen(false)}
         title="التوقيع الإلكتروني"
-        description="ارسمي توقيعك داخل الإطار أدناه، ثم اضغطي حفظ التوقيع."
+        description="ارسم توقيعك داخل الإطار أدناه، ثم اضغط حفظ التوقيع."
         footer={
           <>
             <Button variant="ghost" onClick={() => sigPadRef.current?.clear()}>

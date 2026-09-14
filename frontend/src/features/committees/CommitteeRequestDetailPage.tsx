@@ -6,6 +6,7 @@ import {
   ArrowUpCircle,
   CalendarDays,
   CheckCircle2,
+  Crown,
   FileText,
   Mail,
   Pencil,
@@ -512,26 +513,44 @@ export function CommitteeRequestDetailPage() {
         {/* قائمة أعضاء بصف مرن بدل جدول — يتكيّف تلقائيًا على الجوال (البريد
             ينزل تحت الاسم) بدل جدول بعرض ثابت يحتاج تمريرًا أفقيًا. */}
         <ul>
-          {request.proposed_members.map((member, i) => (
-            <motion.li
-              key={member.user_id}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-              className="flex flex-col gap-1.5 border-b border-border-default px-4 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
-            >
-              <div className="flex items-center gap-3">
-                <Avatar firstName={member.first_name} lastName={member.last_name} />
-                <p className="font-medium text-text-primary">
-                  {member.first_name} {member.last_name}
-                </p>
-              </div>
-              <span className="flex items-center gap-1.5 text-sm text-text-secondary">
-                <Mail size={13} className="shrink-0" />
-                {member.email}
-              </span>
-            </motion.li>
-          ))}
+          {request.proposed_members.map((member, i) => {
+            const isChair = member.user_id === request.chair_user_id
+            return (
+              <motion.li
+                key={member.user_id}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
+                className="flex flex-col gap-2 border-b border-border-default px-4 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+              >
+                <div className="flex items-center gap-3">
+                  <Avatar firstName={member.first_name} lastName={member.last_name} />
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-medium text-text-primary">
+                        {member.first_name} {member.last_name}
+                      </p>
+                      {isChair && (
+                        <span className="flex items-center gap-1 rounded-full bg-brand-primary/10 px-2 py-0.5 text-[11px] font-semibold text-brand-primary">
+                          <Crown size={11} />
+                          رئيس اللجنة المقترح
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-text-muted">
+                      {member.job_title || 'مسمى وظيفي غير محدَّد'}
+                      {' — '}
+                      {member.department || 'بدون إدارة'}
+                    </p>
+                  </div>
+                </div>
+                <span className="flex items-center gap-1.5 text-sm text-text-secondary">
+                  <Mail size={13} className="shrink-0" />
+                  {member.email}
+                </span>
+              </motion.li>
+            )
+          })}
         </ul>
       </Card>
 
@@ -555,7 +574,7 @@ export function CommitteeRequestDetailPage() {
         onClose={() => setSubmitConfirmOpen(false)}
         onConfirm={handleSubmit}
         title="إرسال طلب تشكيل اللجنة"
-        description="بعد الإرسال، لن تقدري تعديل الطلب مباشرة إلا إذا أعاده المكتب التنفيذي إليك مع سبب. هل تريدين المتابعة؟"
+        description="بعد الإرسال، لن يمكن تعديل الطلب مباشرة إلا إذا أعاده المكتب التنفيذي مع سبب. هل تريد المتابعة؟"
         confirmLabel="إرسال الطلب"
         variant="primary"
         loading={submitMutation.isPending}
@@ -580,7 +599,7 @@ export function CommitteeRequestDetailPage() {
         onClose={() => setEscalateConfirmOpen(false)}
         onConfirm={handleEscalate}
         title="رفع الطلب للرئيس التنفيذي"
-        description="سيُرفَع الطلب للرئيس التنفيذي لاتخاذ قرار الاعتماد النهائي، ولن تقدري تعديله بعدها إلا إذا أرجعه لكم. هل تريدين المتابعة؟"
+        description="سيُرفَع الطلب للرئيس التنفيذي لاتخاذ قرار الاعتماد النهائي، ولن يمكن تعديله بعدها إلا إذا أرجعه لكم. هل تريد المتابعة؟"
         confirmLabel="رفع الطلب"
         variant="primary"
         loading={escalateMutation.isPending}
@@ -605,7 +624,7 @@ export function CommitteeRequestDetailPage() {
         onClose={() => setApproveConfirmOpen(false)}
         onConfirm={handleApprove}
         title="اعتماد طلب تشكيل اللجنة"
-        description="سيُعتمَد الطلب نهائيًا وتُشكَّل اللجنة رسميًا بالأعضاء المقترحين — لا يمكن التراجع عن هذا القرار. هل تريدين المتابعة؟"
+        description="سيُعتمَد الطلب نهائيًا وتُشكَّل اللجنة رسميًا بالأعضاء المقترحين — لا يمكن التراجع عن هذا القرار. هل تريد المتابعة؟"
         confirmLabel="اعتماد الطلب"
         variant="primary"
         loading={approveMutation.isPending}

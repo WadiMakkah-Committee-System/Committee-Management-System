@@ -136,7 +136,7 @@ export function DecisionFormModal({
     setOptionsError(null)
     const cleaned = optionInputs.map((o) => ({ ...o, label: o.label.trim() })).filter((o) => o.label)
     if (cleaned.length < 2) {
-      setOptionsError('أدخلي خيارين على الأقل')
+      setOptionsError('يجب إدخال خيارين على الأقل')
       return
     }
     const labels = cleaned.map((o) => o.label)
@@ -192,7 +192,7 @@ export function DecisionFormModal({
                 label="اللجنة"
                 required
                 disabled={isEdit}
-                placeholder="اختاري اللجنة"
+                placeholder="اختر اللجنة"
                 options={committeeOptions}
                 error={errors.committee_id?.message}
                 {...field}
@@ -253,7 +253,7 @@ export function DecisionFormModal({
               </h3>
             </div>
             <p className="-mt-1 text-xs text-text-muted">
-              موافق/غير موافق جاهزان افتراضيًا — عدّليهما أو أضيفي خيارات أخرى. علّمي "تُحسب موافقة" على
+              موافق/غير موافق جاهزان افتراضيًا — عدِّلهما أو أضف خيارات أخرى. علِّم "تُحسب موافقة" على
               أي خيار يُعتبر تأييدًا للقرار (تُستخدم لحساب الأغلبية تلقائيًا؛ اتركيها فارغة لاستطلاع رأي بحت).
             </p>
 

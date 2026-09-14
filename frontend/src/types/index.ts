@@ -261,6 +261,16 @@ export interface CommitteeMemberUser {
   email: string
 }
 
+/**
+ * نفس CommitteeMemberUser + المسمى الوظيفي والإدارة الحاليان — تُستخدم
+ * فقط بحقل proposed_members (راجعي ProposedMemberOut بالباك-إند). null
+ * تعني بلا مسمى وظيفي/إدارة محدَّدين حاليًا لهذا المستخدم.
+ */
+export interface ProposedMember extends CommitteeMemberUser {
+  job_title: string | null
+  department: string | null
+}
+
 export interface CommitteeFormationRequest {
   request_id: string
   committee_name: string
@@ -269,7 +279,7 @@ export interface CommitteeFormationRequest {
   end_date: string
   status: CommitteeRequestStatus
   requester: CommitteeMemberUser
-  proposed_members: CommitteeMemberUser[]
+  proposed_members: ProposedMember[]
   chair_user_id: string | null
   chair: CommitteeMemberUser | null
   /** معرّف اللجنة المعتمدة الناتجة عن هذا الطلب — null قبل الاعتماد (approved فقط). */

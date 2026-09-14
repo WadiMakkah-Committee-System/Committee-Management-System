@@ -174,7 +174,7 @@ export function DocumentFormModal({
     if (scope === 'public' && categoryIsDepartmentScoped) {
       setScope(null)
       setScopeError(
-        'تم إلغاء اختيار «عامة» تلقائيًا — التصنيف المختار خاص بإدارة معينة، ولا يمكن أن تكون الوثيقة عامة وتصنيفها خاص بإدارة في نفس الوقت. اختاري نطاقًا آخر.',
+        'تم إلغاء اختيار «عامة» تلقائيًا — التصنيف المختار خاص بإدارة معينة، ولا يمكن أن تكون الوثيقة عامة وتصنيفها خاص بإدارة في نفس الوقت. اختر نطاقًا آخر.',
       )
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -203,7 +203,7 @@ export function DocumentFormModal({
       return
     }
     if (!scope) {
-      setScopeError('اختاري نطاق الوثيقة أولًا (عامة/إدارة/لجنة/مستخدمون محددون)')
+      setScopeError('اختر نطاق الوثيقة أولًا (عامة/إدارة/لجنة/مستخدمون محددون)')
       return
     }
     if (scope === 'public' && categoryIsDepartmentScoped) {
@@ -211,15 +211,15 @@ export function DocumentFormModal({
       return
     }
     if (scope === 'department' && departmentIds.length === 0) {
-      setScopeError('اختاري إدارة واحدة على الأقل')
+      setScopeError('اختر إدارة واحدة على الأقل')
       return
     }
     if (scope === 'committee' && committeeIds.length === 0) {
-      setScopeError('اختاري لجنة واحدة على الأقل')
+      setScopeError('اختر لجنة واحدة على الأقل')
       return
     }
     if (scope === 'users' && userIds.length === 0) {
-      setScopeError('اختاري مستخدمًا واحدًا على الأقل')
+      setScopeError('اختر مستخدمًا واحدًا على الأقل')
       return
     }
     setScopeError(null)

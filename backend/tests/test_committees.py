@@ -305,15 +305,20 @@ async def test_office_can_edit_submitted_request_without_ownership(
     assert edit.json()["statement"] == "بيان معدَّل من المكتب التنفيذي"
 
 
-async def test_admin_sees_only_own_requests_office_sees_all(
+async def test_admin_sees_only_own_requests_office_sees_submitted_ones(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
+    """
+    قرار موثّق مع المستخدمة 2026-09-13: المكتب التنفيذي يشوف طلبات
+    البقية بعد إرسالها فقط (submitted فما بعده) — draft يبقى خاصًا
+    بمقدّمه وحده حتى لو كان عند المكتب صلاحية واسعة النطاق.
+    """
     actors = await _setup_actors(client, auth_headers, roles_by_name)
     other_admin_headers, _ = await _create_user_with_role(
         client, auth_headers, roles_by_name, username="cf_admin2", role_name="admin"
     )
 
-    await client.post(
+    create1 = await client.post(
         "/api/v1/committee-requests",
         json=_valid_payload(actors["member_id"], name="لجنة 1"),
         headers=actors["admin_headers"],
@@ -323,14 +328,159 @@ async def test_admin_sees_only_own_requests_office_sees_all(
         json=_valid_payload(actors["member_id"], name="لجنة 2"),
         headers=other_admin_headers,
     )
+    request1_id = create1.json()["request_id"]
 
     admin_view = await client.get("/api/v1/committee-requests", headers=actors["admin_headers"])
     assert admin_view.status_code == 200
     assert {r["committee_name"] for r in admin_view.json()} == {"لجنة 1"}
 
+    # لسا الاثنين draft — المكتب ما يشوف ولا وحدة منهم.
+    office_view_before_submit = await client.get(
+        "/api/v1/committee-requests", headers=actors["office_headers"]
+    )
+    assert office_view_before_submit.status_code == 200
+    assert office_view_before_submit.json() == []
+
+    await client.post(
+        f"/api/v1/committee-requests/{request1_id}/submit", headers=actors["admin_headers"]
+    )
+
+    office_view_after_submit = await client.get(
+        "/api/v1/committee-requests", headers=actors["office_headers"]
+    )
+    assert office_view_after_submit.status_code == 200
+    assert {r["committee_name"] for r in office_view_after_submit.json()} == {"لجنة 1"}
+
+
+async def test_president_sees_request_only_after_office_escalates_it(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+) -> None:
+    """
+    قرار موثّق مع المستخدمة 2026-09-13: الرئيس التنفيذي ما يشوف الطلب
+    فور إرساله للمكتب مباشرة — بس بعد ما المكتب يرفعه له فعليًا
+    (escalate → pending_approval).
+    """
+    actors = await _setup_actors(client, auth_headers, roles_by_name)
+    create = await client.post(
+        "/api/v1/committee-requests",
+        json=_valid_payload(actors["member_id"], name="لجنة الرفع"),
+        headers=actors["admin_headers"],
+    )
+    request_id = create.json()["request_id"]
+
+    # draft — لا المكتب ولا الرئيس يشوفها.
+    assert (
+        await client.get("/api/v1/committee-requests", headers=actors["office_headers"])
+    ).json() == []
+    assert (
+        await client.get("/api/v1/committee-requests", headers=actors["ceo_headers"])
+    ).json() == []
+    assert (
+        await client.get(f"/api/v1/committee-requests/{request_id}", headers=actors["ceo_headers"])
+    ).status_code == 403
+
+    await client.post(f"/api/v1/committee-requests/{request_id}/submit", headers=actors["admin_headers"])
+
+    # submitted/under_review — المكتب يشوفها، الرئيس لسا لا.
     office_view = await client.get("/api/v1/committee-requests", headers=actors["office_headers"])
-    assert office_view.status_code == 200
-    assert {r["committee_name"] for r in office_view.json()} == {"لجنة 1", "لجنة 2"}
+    assert {r["committee_name"] for r in office_view.json()} == {"لجنة الرفع"}
+    assert (
+        await client.get("/api/v1/committee-requests", headers=actors["ceo_headers"])
+    ).json() == []
+    assert (
+        await client.get(f"/api/v1/committee-requests/{request_id}", headers=actors["ceo_headers"])
+    ).status_code == 403
+
+    await client.post(f"/api/v1/committee-requests/{request_id}/escalate", headers=actors["office_headers"])
+
+    # pending_approval — الرئيس يشوفها الآن.
+    ceo_view = await client.get("/api/v1/committee-requests", headers=actors["ceo_headers"])
+    assert {r["committee_name"] for r in ceo_view.json()} == {"لجنة الرفع"}
+    assert (
+        await client.get(f"/api/v1/committee-requests/{request_id}", headers=actors["ceo_headers"])
+    ).status_code == 200
+
+
+async def test_proposed_members_include_job_title_and_department(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """
+    قرار موثّق مع المستخدمة 2026-09-13: الأعضاء المقترحون بطلب تشكيل
+    اللجنة يظهر جمبهم المسمى الوظيفي والإدارة الحاليان (ProposedMemberOut)
+    — يغطي القراءة عبر GET القائمة وGET التفاصيل معًا، ويتأكد إن عضوًا
+    بدون مسمى وظيفي/إدارة محدَّدين يرجع null بدل ما يفشل الطلب بالكامل.
+    """
+    dep_id = await _create_department(client, auth_headers, super_admin_user)
+
+    job_title_create = await client.post(
+        "/api/v1/job-titles", json={"name": "محلل أعمال"}, headers=auth_headers
+    )
+    assert job_title_create.status_code == 201, job_title_create.text
+    job_title_id = job_title_create.json()["job_title_id"]
+
+    member_with_info = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "س",
+            "middle_name": "ص",
+            "last_name": "ع",
+            "username": "cf_member_with_info",
+            "email": "cf_member_with_info@example.com",
+            "password": "StrongPass1",
+            "role_id": roles_by_name["admin"],
+            "dep_id": dep_id,
+            "job_title_id": job_title_id,
+        },
+        headers=auth_headers,
+    )
+    assert member_with_info.status_code == 201, member_with_info.text
+    member_with_info_id = member_with_info.json()["user_id"]
+
+    member_without_info = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "ك",
+            "middle_name": "ل",
+            "last_name": "م",
+            "username": "cf_member_without_info",
+            "email": "cf_member_without_info@example.com",
+            "password": "StrongPass1",
+            "role_id": roles_by_name["admin"],
+            "dep_id": None,
+        },
+        headers=auth_headers,
+    )
+    assert member_without_info.status_code == 201, member_without_info.text
+    member_without_info_id = member_without_info.json()["user_id"]
+
+    payload = {
+        "committee_name": "لجنة فحص المسميات",
+        "statement": None,
+        "start_date": "2026-09-01",
+        "end_date": "2026-12-01",
+        "proposed_member_ids": [member_with_info_id, member_without_info_id],
+        "chair_user_id": member_with_info_id,
+    }
+    create = await client.post("/api/v1/committee-requests", json=payload, headers=auth_headers)
+    assert create.status_code == 201, create.text
+    request_id = create.json()["request_id"]
+
+    by_id = {m["user_id"]: m for m in create.json()["proposed_members"]}
+    assert by_id[member_with_info_id]["job_title"] == "محلل أعمال"
+    assert by_id[member_with_info_id]["department"] is not None
+    assert by_id[member_without_info_id]["job_title"] is None
+    assert by_id[member_without_info_id]["department"] is None
+
+    detail = await client.get(f"/api/v1/committee-requests/{request_id}", headers=auth_headers)
+    assert detail.status_code == 200
+    detail_by_id = {m["user_id"]: m for m in detail.json()["proposed_members"]}
+    assert detail_by_id[member_with_info_id]["job_title"] == "محلل أعمال"
+
+    listing = await client.get("/api/v1/committee-requests", headers=auth_headers)
+    assert listing.status_code == 200
+    listed_request = next(r for r in listing.json() if r["request_id"] == request_id)
+    listed_by_id = {m["user_id"]: m for m in listed_request["proposed_members"]}
+    assert listed_by_id[member_with_info_id]["job_title"] == "محلل أعمال"
 
 
 async def test_invalid_dates_rejected(

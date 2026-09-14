@@ -274,7 +274,7 @@ export function DecisionsPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDeleteConfirm}
         title="حذف القرار"
-        description={`سيتم حذف قرار "${deleteTarget?.title}" نهائيًا. هل أنتِ متأكدة؟`}
+        description={`سيتم حذف قرار "${deleteTarget?.title}" نهائيًا. هل أنت متأكد؟`}
         confirmLabel="حذف"
         loading={deleteMutation.isPending}
         errorMessage={deleteError}

@@ -637,7 +637,7 @@ export function MeetingsPage() {
         onClose={() => setDeletingMeeting(null)}
         onConfirm={handleConfirmDelete}
         title="حذف الاجتماع"
-        description={`سيتم حذف اجتماع "${deletingMeeting?.title}" نهائيًا، وسيُرسَل إشعار لكل المشاركين. هل أنتِ متأكدة؟`}
+        description={`سيتم حذف اجتماع "${deletingMeeting?.title}" نهائيًا، وسيُرسَل إشعار لكل المشاركين. هل أنت متأكد؟`}
         confirmLabel="حذف"
         loading={deleteMutation.isPending}
         errorMessage={deleteError}
