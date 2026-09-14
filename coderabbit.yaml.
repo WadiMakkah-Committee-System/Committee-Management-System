@@ -1,0 +1,56 @@
+language: "en-US"
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Perform a comprehensive code review.
+
+        Do NOT only review the changed lines.
+        Analyze the surrounding code and identify problems that affect
+        the system as a whole.
+
+        Focus on:
+
+        1. Functional bugs and incorrect business logic.
+        2. Authentication and authorization vulnerabilities.
+        3. Broken access control and privilege escalation.
+        4. JWT, cookies, sessions, password handling and middleware.
+        5. SQL injection and unsafe database queries.
+        6. Input validation and missing sanitization.
+        7. API errors, incorrect status codes and inconsistent responses.
+        8. Race conditions and concurrency problems.
+        9. Missing error handling and unhandled exceptions.
+        10. React state management and incorrect useEffect behavior.
+        11. API/frontend integration problems.
+        12. Performance issues including unnecessary API calls,
+            database queries, N+1 queries and excessive rendering.
+        13. Memory leaks and resource cleanup.
+        14. Security-sensitive data exposed to the frontend.
+        15. Hardcoded secrets, credentials or environment variables.
+        16. CORS and security configuration problems.
+        17. Database integrity and relationship problems.
+        18. Missing constraints and incorrect validation.
+        19. Duplicate or dead code.
+        20. Maintainability and architecture problems.
+        21. Missing tests for critical functionality.
+        22. Problems that may only appear in production.
+
+        For every issue:
+        - Explain the exact problem.
+        - Explain why it is a problem.
+        - Give the affected file and code location.
+        - Explain the real-world scenario that could trigger it.
+        - Assign a severity: CRITICAL, HIGH, MEDIUM, or LOW.
+        - Provide a concrete fix.
+
+        Prioritize real bugs and security vulnerabilities over
+        formatting and stylistic issues.
+
+        Be skeptical. Do not assume that existing code is correct.
+        Trace important flows across frontend, backend and database.
