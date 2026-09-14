@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Search, X } from 'lucide-react'
+import { ChevronDown, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface MultiCheckPickerProps<T> {
@@ -8,6 +8,19 @@ interface MultiCheckPickerProps<T> {
   getId: (item: T) => string
   getLabel: (item: T) => string
   getSublabel?: (item: T) => string | null | undefined
+  /**
+   * تجميع اختياري قابل للطي (Accordion) — بلاغ من صاحبة المشروع
+   * 2026-09-14 (تعديل على تصميم أول كان يعرض المجموعات كلها مفتوحة دفعة
+   * وحدة): "خلي اللي ظاهر أسامي الإدارات، وإذا ضغطت على اسم الإدارة يطلع
+   * لي أعضاءها، بيكون أرتب". الآن: بدون بحث نشط، تظهر أسماء المجموعات
+   * فقط (بعدد أعضائها)، وتُفتَح كل مجموعة بالضغط عليها لعرض أعضائها.
+   * بمجرد كتابة أي نص بالبحث، تُفتَح المجموعات المطابقة تلقائيًا (بحث
+   * فعّال لا معنى لإخفاء نتائجه خلف طي).
+   *
+   * بلا هذا الخيار: قائمة مسطّحة كالسابق تمامًا (توافقًا خلفيًا مع بقية
+   * الاستخدامات الحالية لهذا المكوّن — إدارات/لجان بنفس نموذج الوثيقة).
+   */
+  getGroupLabel?: (item: T) => string | null | undefined
   selected: string[]
   onChange: (next: string[]) => void
   searchPlaceholder?: string
@@ -18,20 +31,21 @@ interface MultiCheckPickerProps<T> {
 /**
  * الهدف:
  * منتقي عام قابل لإعادة الاستخدام (Generic) لاختيار عدة عناصر من قائمة
- * طويلة عبر Checkboxes قابلة للبحث — نفس فكرة MemberPicker في وحدة اللجان
- * (features/committees/MemberPicker.tsx) لكن مُجرَّدة من أي منطق خاص
- * باللجان (رئيس اللجنة، التجميع حسب الإدارة) لتصلح لأي نوع عناصر: هنا
- * تُستخدم 3 مرات في نموذج رفع/تعديل الوثيقة (إدارات/لجان/مستخدمون محددون
- * لنطاق الرؤية المركّب)، بدل تكرار نفس واجهة الـCheckbox+بحث ثلاث مرات.
+ * طويلة عبر Checkboxes قابلة للبحث، مع تجميع اختياري قابل للطي (Accordion)
+ * — نفس فكرة MemberPicker في وحدة اللجان (features/committees/MemberPicker.tsx)
+ * لكن مُجرَّدة من أي منطق خاص باللجان (رئيس اللجنة) لتصلح لأي نوع عناصر:
+ * هنا تُستخدم 3 مرات في نموذج رفع/تعديل الوثيقة (إدارات/لجان/مستخدمون
+ * محددون لنطاق الرؤية المركّب).
  *
  * المسؤولية:
  * تعرض حقل بحث نصي يفلتر items حسب getLabel/getSublabel، وقائمة
- * Checkboxes قابلة للتمرير، مع شارات (Chips) قابلة للإزالة لما هو مُختار
- * حاليًا أعلى القائمة.
+ * Checkboxes قابلة للتمرير (مجمَّعة وقابلة للطي إن مُرِّر getGroupLabel)،
+ * مع شارات (Chips) قابلة للإزالة لما هو مُختار حاليًا أعلى القائمة.
  *
  * المدخلات:
  * - items: كل العناصر المتاحة للاختيار من بينها.
  * - getId/getLabel/getSublabel: كيف تُستخرج المعرّف والتسمية من كل عنصر.
+ * - getGroupLabel: تجميع اختياري قابل للطي — راجعي التعليق أعلى الخاصية.
  * - selected: قائمة المعرّفات المختارة حاليًا (Controlled).
  * - onChange: يُستدعى بالقائمة الجديدة الكاملة بعد أي إضافة/إزالة.
  *
@@ -44,6 +58,7 @@ export function MultiCheckPicker<T>({
   getId,
   getLabel,
   getSublabel,
+  getGroupLabel,
   selected,
   onChange,
   searchPlaceholder = 'ابحث...',
@@ -51,7 +66,9 @@ export function MultiCheckPicker<T>({
   error,
 }: MultiCheckPickerProps<T>) {
   const [search, setSearch] = useState('')
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const selectedSet = useMemo(() => new Set(selected), [selected])
+  const isSearching = search.trim().length > 0
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -62,9 +79,32 @@ export function MultiCheckPicker<T>({
     })
   }, [items, search, getLabel, getSublabel])
 
+  /** بدون getGroupLabel: مجموعة واحدة بعنوان فارغ — قائمة مسطّحة، لا طي. */
+  const groups = useMemo(() => {
+    if (!getGroupLabel) return [{ label: null as string | null, items: filtered }]
+    const map = new Map<string, T[]>()
+    for (const item of filtered) {
+      const label = getGroupLabel(item)?.trim() || 'بدون إدارة'
+      if (!map.has(label)) map.set(label, [])
+      map.get(label)!.push(item)
+    }
+    return [...map.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, 'ar'))
+      .map(([label, groupItems]) => ({ label, items: groupItems }))
+  }, [filtered, getGroupLabel])
+
   function toggle(id: string) {
     if (selectedSet.has(id)) onChange(selected.filter((s) => s !== id))
     else onChange([...selected, id])
+  }
+
+  function toggleGroup(label: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(label)) next.delete(label)
+      else next.add(label)
+      return next
+    })
   }
 
   const selectedItems = items.filter((item) => selectedSet.has(getId(item)))
@@ -117,42 +157,118 @@ export function MultiCheckPicker<T>({
 
       <div
         className={cn(
-          'max-h-44 overflow-y-auto rounded-sm border transition-colors',
+          'max-h-56 overflow-y-auto rounded-sm border transition-colors',
           error ? 'border-danger' : 'border-border-default',
         )}
       >
         {filtered.length === 0 ? (
           <p className="px-3 py-6 text-center text-xs text-text-muted">{emptyText}</p>
         ) : (
-          filtered.map((item) => {
-            const id = getId(item)
-            const isChecked = selectedSet.has(id)
-            const sub = getSublabel?.(item)
-            return (
-              <label
-                key={id}
-                className={cn(
-                  'flex cursor-pointer items-center gap-2.5 border-b border-border-default px-3 py-2 text-sm transition-colors last:border-0',
-                  'focus-within:bg-bg-elevated hover:bg-bg-elevated',
-                  isChecked && 'bg-brand-primary/5',
-                )}
-              >
-                <input
-                  type="checkbox"
-                  checked={isChecked}
-                  onChange={() => toggle(id)}
-                  className="h-4 w-4 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
+          groups.map((group) => {
+            // بدون تجميع (label === null): قائمة مسطّحة مباشرة، بلا عنوان قابل للطي.
+            if (group.label === null) {
+              return group.items.map((item) => (
+                <PickerRow
+                  key={getId(item)}
+                  item={item}
+                  isChecked={selectedSet.has(getId(item))}
+                  onToggle={() => toggle(getId(item))}
+                  getLabel={getLabel}
+                  getSublabel={getSublabel}
                 />
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-text-primary">{getLabel(item)}</p>
-                  {sub && <p className="truncate text-xs text-text-muted">{sub}</p>}
-                </div>
-              </label>
+              ))
+            }
+
+            const isOpen = isSearching || expanded.has(group.label)
+            const selectedCount = group.items.filter((item) => selectedSet.has(getId(item))).length
+
+            return (
+              <div key={group.label} className="border-b border-border-default last:border-0">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.label!)}
+                  className="flex w-full items-center justify-between gap-2 bg-bg-elevated px-3 py-2 text-right transition-colors hover:bg-bg-app"
+                >
+                  <span className="flex items-center gap-2 text-xs font-bold text-text-primary">
+                    {group.label}
+                    <span className="rounded-full bg-bg-surface px-1.5 py-0.5 text-[10px] font-medium text-text-muted">
+                      {group.items.length}
+                    </span>
+                    {selectedCount > 0 && (
+                      <span className="rounded-full bg-brand-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-primary">
+                        {selectedCount} محدَّد
+                      </span>
+                    )}
+                  </span>
+                  <ChevronDown
+                    size={14}
+                    className={cn('shrink-0 text-text-muted transition-transform', isOpen && 'rotate-180')}
+                  />
+                </button>
+                <AnimatePresence initial={false}>
+                  {isOpen && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                      className="overflow-hidden"
+                    >
+                      {group.items.map((item) => (
+                        <PickerRow
+                          key={getId(item)}
+                          item={item}
+                          isChecked={selectedSet.has(getId(item))}
+                          onToggle={() => toggle(getId(item))}
+                          getLabel={getLabel}
+                          getSublabel={getSublabel}
+                        />
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             )
           })
         )}
       </div>
       {error && <p className="text-xs font-medium text-danger">{error}</p>}
     </div>
+  )
+}
+
+function PickerRow<T>({
+  item,
+  isChecked,
+  onToggle,
+  getLabel,
+  getSublabel,
+}: {
+  item: T
+  isChecked: boolean
+  onToggle: () => void
+  getLabel: (item: T) => string
+  getSublabel?: (item: T) => string | null | undefined
+}) {
+  const sub = getSublabel?.(item)
+  return (
+    <label
+      className={cn(
+        'flex cursor-pointer items-center gap-2.5 border-b border-border-default px-3 py-2 text-sm transition-colors last:border-0',
+        'focus-within:bg-bg-elevated hover:bg-bg-elevated',
+        isChecked && 'bg-brand-primary/5',
+      )}
+    >
+      <input
+        type="checkbox"
+        checked={isChecked}
+        onChange={onToggle}
+        className="h-4 w-4 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
+      />
+      <div className="min-w-0">
+        <p className="truncate font-medium text-text-primary">{getLabel(item)}</p>
+        {sub && <p className="truncate text-xs text-text-muted">{sub}</p>}
+      </div>
+    </label>
   )
 }
