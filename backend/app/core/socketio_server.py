@@ -223,10 +223,22 @@ async def agenda_discussing(sid: str, data: dict[str, Any] | None) -> None:
     resolved = await _session_user_and_room(sid)
     if resolved is None:
         return
-    _user, meeting_id = resolved
+    user, meeting_id = resolved
     agenda_item_id = (data or {}).get("agenda_item_id")
     title = (data or {}).get("title")
     if not agenda_item_id or not title:
+        return
+    # إصلاح 2026-09-14 (بلاغ لاما): كان أي مشارك بالغرفة يقدر يبث هذا
+    # الحدث، لا رئيس اللجنة فقط — راجعي require_agenda_manage_access
+    # بـmeeting_chat_service.py للتفصيل الكامل. فشل الصلاحية هنا = تجاهل
+    # صامت (نفس نمط chat_send أعلاه) — الواجهة أصلًا لا تعرض زر الضغط
+    # إلا لرئيس اللجنة، فهذا فقط خط دفاع ثانٍ ضد استدعاء الحدث مباشرة.
+    try:
+        async with AsyncSessionLocal() as db:
+            await meeting_chat_service.require_agenda_manage_access(
+                db, actor=user, meeting_id=uuid.UUID(meeting_id)
+            )
+    except (MeetingChatForbiddenError, MeetingChatNotFoundError):
         return
     await sio.emit(
         "agenda.discussing",

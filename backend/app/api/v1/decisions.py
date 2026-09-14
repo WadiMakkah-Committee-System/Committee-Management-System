@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
+from app.core.socketio_server import sio
 from app.db.session import get_db
 from app.schemas.decision import (
     DecisionCreate,
@@ -71,7 +72,24 @@ async def create_decision(
     background_tasks.add_task(
         notification_service.notify_decision_created, decision, actor_user_id=current_user.user_id
     )
-    return DecisionOut.model_validate(decision)
+    decision_out = DecisionOut.model_validate(decision)
+    # إصلاح 2026-09-14 (بلاغ لاما — قرار ينشئه رئيس اللجنة داخل غرفة
+    # الاجتماع لا يظهر للأعضاء الآخرين الحاضرين إلا بعد تحديث الصفحة):
+    # لوحة القرارات داخل غرفة الاجتماع (DecisionsPanel) تعتمد كليًا على
+    # React Query بلا أي بث لحظي — كل مستخدم بمتصفحه الخاص بذاكرة تخزين
+    # منفصلة تمامًا، فنجاح الإنشاء بمتصفح الرئيس لا يصل لأحد غيره إطلاقًا
+    # (خلاف الدردشة/الحضور اللي تمر أصلًا عبر Socket.IO). بث بسيط هنا —
+    # بلا أي كتابة قاعدة بيانات إضافية، نفس نمط "minutes.updated" بـ
+    # socketio_server.py — يكفي الفرونت-إند لإعادة جلب قائمة القرارات
+    # فقط لمن بنفس غرفة الاجتماع، ولو كان القرار مستقلًا (بلا meeting_id)
+    # فلا بث أصلًا (لا غرفة اجتماع يخصّه).
+    if decision.meeting_id is not None:
+        await sio.emit(
+            "decision.created",
+            {"meeting_id": str(decision.meeting_id), "decision_id": str(decision.decision_id)},
+            room=f"meeting:{decision.meeting_id}",
+        )
+    return decision_out
 
 
 @router.get("", response_model=list[DecisionOut])

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { io, type Socket } from 'socket.io-client'
+import { decisionsKeys } from '@/hooks/useDecisions'
 import { API_BASE_URL } from '@/lib/apiClient'
 import { useAuthStore } from '@/store/authStore'
 import type { MeetingChatMessage } from '@/types'
@@ -59,6 +61,7 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
 
   const socketRef = useRef<Socket | null>(null)
+  const queryClient = useQueryClient()
 
   const pushActivity = useCallback((text: string) => {
     setActivityEvents((prev) =>
@@ -112,6 +115,16 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     socket.on('agenda.discussing', (payload: { agenda_item_id: string; title: string }) => {
       setDiscussingAgendaItem({ id: payload.agenda_item_id, title: payload.title })
       pushActivity(`بدأت مناقشة: ${payload.title}`)
+    })
+
+    // إصلاح 2026-09-14 (بلاغ لاما — قرار ينشئه رئيس اللجنة داخل الاجتماع
+    // لا يظهر للأعضاء الآخرين إلا بعد تحديث الصفحة يدويًا): DecisionsPanel
+    // يعتمد كليًا على React Query بلا أي بث لحظي — بث "decision.created"
+    // (جديد، راجعي app/api/v1/decisions.py) لا يحمل بيانات القرار نفسه،
+    // فقط إشارة لإعادة الجلب — نفس فلسفة "minutes.updated" الموجودة أصلًا.
+    socket.on('decision.created', (payload: { meeting_id: string }) => {
+      queryClient.invalidateQueries({ queryKey: decisionsKeys.byMeeting(payload.meeting_id) })
+      pushActivity('تم إنشاء قرار جديد')
     })
 
     // إصلاح 2026-09-13 (بلاغ لاما — عضو يفتح الاجتماع بعد غيره يرى البقية

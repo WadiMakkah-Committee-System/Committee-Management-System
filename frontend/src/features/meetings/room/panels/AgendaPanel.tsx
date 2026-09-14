@@ -7,10 +7,15 @@ export function AgendaPanel({
   agendaItems,
   discussingAgendaItemId,
   onStartDiscussing,
+  canManage,
 }: {
   agendaItems: MeetingAgendaItem[]
   discussingAgendaItemId: string | null
   onStartDiscussing: (item: MeetingAgendaItem) => void
+  /** إصلاح 2026-09-14 (بلاغ لاما) — بس رئيس اللجنة يقدر يبدأ/يغيّر بند
+   * المناقشة الحالي؛ الأعضاء يشوفون نفس الجدول للقراءة فقط بلا أي
+   * تفاعل، عشان ضغطة عضو عرضية ما تسرق الحالة من رئيس اللجنة. */
+  canManage: boolean
 }) {
   const sorted = [...agendaItems].sort((a, b) => a.sort_order - b.sort_order)
 
@@ -30,12 +35,15 @@ export function AgendaPanel({
           <button
             key={item.agenda_item_id}
             type="button"
-            onClick={() => onStartDiscussing(item)}
+            disabled={!canManage}
+            onClick={() => canManage && onStartDiscussing(item)}
             className={cn(
               'flex flex-col gap-2 rounded-md border p-3 text-right transition-colors',
               isCurrent
                 ? 'border-brand-primary/40 bg-brand-primary/5'
-                : 'border-border-default bg-bg-surface hover:border-border-strong',
+                : 'border-border-default bg-bg-surface',
+              canManage && !isCurrent && 'hover:border-border-strong',
+              !canManage && 'cursor-default',
             )}
           >
             <div className="flex items-center gap-2">
@@ -57,9 +65,9 @@ export function AgendaPanel({
                   <>
                     <PlayCircle size={12} /> قيد المناقشة الآن
                   </>
-                ) : (
+                ) : canManage ? (
                   'انقر لبدء المناقشة'
-                )}
+                ) : null}
               </span>
             </div>
             <p className="text-[13px] font-semibold leading-relaxed text-text-primary">{item.title}</p>

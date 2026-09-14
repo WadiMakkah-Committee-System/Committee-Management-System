@@ -76,6 +76,24 @@ async def require_realtime_access(db: AsyncSession, *, actor: User, meeting_id: 
     return meeting
 
 
+# إصلاح 2026-09-14 (بلاغ لاما — أي مشارك (عضو عادي، مو بس رئيس اللجنة)
+# يقدر يضغط أي بند بجدول الأجندة ويغيّر "قيد المناقشة الآن" لكل الحاضرين؛
+# هذا يفسّر ظاهريًا شكوى الرئيسة "ما يضغط عدل" — أي عضو ثاني يضغط بند
+# غير قصدًا (أو فضول) يبدّل الحالة لحظيًا فوق ما ضغطته الرئيسة، فتبدو
+# الواجهة "ما تستجيب صح" من منظورها رغم إن كل ضغطة تشتغل فعليًا كما
+# يُفترض — فقط آخر ضغطة (من أي شخص) هي اللي تفوز). الصلاحية المستخدَمة:
+# "meetings.agenda.item.update" — نفس الكود الممنوح فعليًا لرئيس اللجنة
+# فقط بجدول role_permissions (تحقّقتُ مباشرة)، الأنسب دلاليًا من بين
+# صلاحيات meetings.agenda.* الموجودة لتحديد/تغيير حالة بند حي.
+async def require_agenda_manage_access(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
+) -> Meeting:
+    meeting, committee = await _load_meeting_and_committee(db, meeting_id)
+    if not await _has_access(db, actor, committee, "meetings.agenda.item.update"):
+        raise MeetingChatForbiddenError("ليست لديك صلاحية إدارة بنود هذا الاجتماع")
+    return meeting
+
+
 async def list_messages(
     db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, limit: int = 100
 ) -> list[MeetingChatMessage]:

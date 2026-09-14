@@ -135,6 +135,22 @@ export function MeetingRoom({
         )),
   )
 
+  // إصلاح 2026-09-14 (بلاغ لاما — الرئيس يضغط "بدء المناقشة" وأي عضو
+  // ثاني بالغرفة يقدر يضغط بند غيره فتتغيّر الحالة لحظيًا فوق ضغطته،
+  // فتبدو الواجهة "ما تستجيب صح" من منظورها): بس رئيس اللجنة (أو صاحب
+  // صلاحية meetings.agenda.item.update عامة) يقدر يبدأ/يغيّر بند
+  // المناقشة الحالي — الأعضاء يشوفون الجدول للقراءة فقط. نفس نمط
+  // canCreateDecision أعلاه بالضبط؛ التحقق الفعلي مكرَّر بالباك-إند
+  // (require_agenda_manage_access) لأن هذا مجرد تحسين واجهة.
+  const canManageAgenda = Boolean(
+    currentUser &&
+      meeting &&
+      (scopeFor(currentUser, 'meetings.agenda.item.update') === 'all' ||
+        committees?.some(
+          (c) => c.committee_id === meeting.committee_id && c.chair_user_id === currentUser.user_id,
+        )),
+  )
+
   // تعديل لاما 2026-09-06: "انتهى وقت الاجتماع وما اغلق تلقائيًا" — الحالة
   // نفسها تُحسَب فعليًا بالباك-إند (_maybe_transition_status، تحويل كسول
   // موثّق بلا Scheduler منفصل)، لكن أحدًا لم يكن يطلب قراءة جديدة أثناء
@@ -219,6 +235,7 @@ export function MeetingRoom({
                     agendaItems={meeting.agenda_items}
                     discussingAgendaItemId={realtime.discussingAgendaItem?.id ?? null}
                     onStartDiscussing={handleStartDiscussing}
+                    canManage={canManageAgenda}
                   />
                 )}
                 {activePanel === 'decisions' && (

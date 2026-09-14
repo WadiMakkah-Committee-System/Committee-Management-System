@@ -320,9 +320,12 @@ export function MeetingFormModal({
             />
           )}
           {selectedMode === 'remote' && (
+            // تعديل 2026-09-14 (بلاغ لاما): الصياغة القديمة "سيُربط...
+            // لاحقًا" أوحت بأن الأمر مؤجَّل/غير مؤكَّد — لاما تبي توضيحًا
+            // مباشرًا إن الاجتماع نفسه يُعقد على Microsoft Teams.
             <p className="flex items-center gap-1.5 text-xs text-text-muted">
               <Video size={13} />
-              سيُربط هذا الاجتماع بـMicrosoft Teams لاحقًا
+              يُعقد هذا الاجتماع عبر Microsoft Teams
             </p>
           )}
         </FormSection>
