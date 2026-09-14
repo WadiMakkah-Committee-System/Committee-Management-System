@@ -35,7 +35,7 @@ export interface RemoteParticipant {
   videoTrack: IAgoraRTCRemoteUser['videoTrack']
 }
 
-export function useAgoraConnection(meetingId: string) {
+export function useAgoraConnection(meetingId: string, onJoined?: (agoraUid: number) => void) {
   const joinMutation = useJoinMeeting()
   const leaveMutation = useLeaveMeeting()
 
@@ -91,6 +91,12 @@ export function useAgoraConnection(meetingId: string) {
         const joinInfo = await joinMutation.mutateAsync(meetingId)
         if (cancelled) return
         agoraUidRef.current = joinInfo.uid
+        // إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو
+        // يظهر كرقم بدل اسمها): تبث المكوّن الأب (MeetingRoom.tsx) هذا
+        // الـuid عبر قناة Socket.IO (useMeetingRealtime.ts::announceAgoraUid)
+        // ليعرف بقية المشاركين مَن صاحب مربّع الفيديو هذا — راجعي تعليق
+        // video_uid بـsocketio_server.py للتفصيل الكامل.
+        onJoined?.(joinInfo.uid)
 
         const { default: AgoraRTC } = await import('agora-rtc-sdk-ng')
         if (cancelled) return

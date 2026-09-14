@@ -59,6 +59,10 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   )
   const [activityEvents, setActivityEvents] = useState<LiveActivityEvent[]>([])
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
+  // إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
+  // كرقم بدل اسمها): يربط agora_uid (رقمي، مختلف عن user_id) باسم صاحبه
+  // الحقيقي — راجعي تعليق video_uid بـsocketio_server.py للتفصيل الكامل.
+  const [videoUidNames, setVideoUidNames] = useState<Map<string, string>>(new Map())
 
   const socketRef = useRef<Socket | null>(null)
   const queryClient = useQueryClient()
@@ -98,6 +102,21 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     socket.on('chat.message', (payload: { message: MeetingChatMessage }) => {
       setLiveMessages((prev) => [...prev, payload.message])
     })
+
+    socket.on('video.uid', (payload: { user_id: string; full_name: string; agora_uid: number }) => {
+      setVideoUidNames((prev) => new Map(prev).set(String(payload.agora_uid), payload.full_name))
+    })
+
+    socket.on(
+      'video.roster',
+      (payload: { entries: { user_id: string; full_name: string; agora_uid: number }[] }) => {
+        setVideoUidNames((prev) => {
+          const next = new Map(prev)
+          for (const entry of payload.entries) next.set(String(entry.agora_uid), entry.full_name)
+          return next
+        })
+      },
+    )
 
     socket.on('hand.raised', (payload: { user_id: string; full_name: string }) => {
       setRaisedHands((prev) =>
@@ -161,7 +180,45 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     socketRef.current?.emit(event, payload)
   }, [])
 
-  const sendChatMessage = useCallback((body: string) => send('chat.send', { body }), [send])
+  // إصلاح 2026-09-14 (بلاغ لاما — رسالة الدردشة "تختفي، ما أدري وصلت ولا
+  // لا"): send() أعلاه (لا تزال تُستخدم لأحداث بلا حاجة لتأكيد: رفع/خفض
+  // اليد، بث بند الأجندة قيد المناقشة) كانت نفسها المستخدَمة سابقًا
+  // لإرسال الدردشة أيضًا — emit عادي بلا أي انتظار لرد، فمهما حدث بجهة
+  // الخادم (نجاح، رفض صلاحية، خطأ DB) الفرونت لا يعرف شيئًا إطلاقًا.
+  // sendChatMessage الآن تستخدم emitWithAck (socket.io-client v4.5+، مع
+  // .timeout() لتفادي انتظار أبدي لو الاتصال ميت فعليًا لكن لم يُطلق
+  // حدث disconnect بعد) وتُرجع Promise حقيقي بنتيجة الإرسال، ليقرر
+  // ChatPanel.tsx بناءً عليها: مسح الحقل فقط عند النجاح الفعلي، وإظهار
+  // خطأ واضح للمستخدم عند الفشل بدل صمت الواجهة. الخادم (socketio_server.
+  // py::chat_send) يُرجع الآن {ok, error?} أو {ok, message} من كل مسار —
+  // راجعي تعليقه المقابل هناك.
+  const sendChatMessage = useCallback(
+    async (body: string): Promise<{ ok: boolean; error?: string }> => {
+      const socket = socketRef.current
+      if (!socket || !socket.connected) {
+        return { ok: false, error: 'لا يوجد اتصال بقناة الدردشة حاليًا — تحققي من الاتصال وحاولي مجددًا.' }
+      }
+      try {
+        const ack = (await socket.timeout(8000).emitWithAck('chat.send', { body })) as
+          | { ok: true; message: MeetingChatMessage }
+          | { ok: false; error?: string }
+          | undefined
+        if (!ack) {
+          return { ok: false, error: 'لم يصل رد من الخادم — حاولي مجددًا.' }
+        }
+        if (!ack.ok) {
+          return { ok: false, error: ack.error || 'تعذر إرسال الرسالة.' }
+        }
+        return { ok: true }
+      } catch (err) {
+        // socket.timeout(...) يرفض الـPromise لو انقضت المهلة بلا رد.
+        console.error('[useMeetingRealtime] chat.send: لم يصل رد (timeout/خطأ اتصال)', err)
+        return { ok: false, error: 'انتهت مهلة انتظار رد الخادم — تحققي من الاتصال وحاولي مجددًا.' }
+      }
+    },
+    [],
+  )
+  const announceAgoraUid = useCallback((agoraUid: number) => send('video.uid', { agora_uid: agoraUid }), [send])
   const raiseHand = useCallback(() => send('hand.raise'), [send])
   const lowerHand = useCallback(() => send('hand.lower'), [send])
   const announceDiscussing = useCallback(
@@ -177,9 +234,11 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     discussingAgendaItem,
     activityEvents,
     onlineUserIds,
+    videoUidNames,
     sendChatMessage,
     raiseHand,
     lowerHand,
     announceDiscussing,
+    announceAgoraUid,
   }
 }

@@ -102,7 +102,19 @@ export function TasksPage() {
     return committees.filter((c) => c.chair_user_id === user.user_id)
   }, [committees, user])
 
-  const canCreateAnyTask = chairableCommittees.length > 0
+  // إصلاح 2026-09-14 (بلاغ لاما — قاعدة عمل: لا يجوز إنشاء مهمة جديدة
+  // للجنة منتهية): chairableCommittees أعلاه يبقى كما هو (يُستخدَم أيضًا
+  // لتعديل مهمة قائمة للجنتها — عرض/تعديل بيانات قديمة يبقى مسموحًا)،
+  // لكن قائمة "إنشاء مهمة جديدة" يجب ألا تعرض لجنة منتهية كخيار إطلاقًا.
+  // lifecycle_state من الباك-إند (Committee.lifecycle_state_today) — نفس
+  // المصدر المستخدَم فعليًا لرفض الإنشاء بالباك-إند (assert_committee_not_expired
+  // بـtask_service.create_task)، لا حساب تاريخ منفصل هنا.
+  const creatableCommittees = useMemo(
+    () => chairableCommittees.filter((c) => c.lifecycle_state !== 'ended'),
+    [chairableCommittees],
+  )
+
+  const canCreateAnyTask = creatableCommittees.length > 0
 
   const manageableCommitteeIds = useMemo(
     () => new Set(chairableCommittees.map((c) => c.committee_id)),
@@ -461,7 +473,7 @@ export function TasksPage() {
       <TaskFormModal
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        committees={chairableCommittees}
+        committees={creatableCommittees}
         onSubmit={handleCreate}
         loading={createMutation.isPending}
         serverError={formError}

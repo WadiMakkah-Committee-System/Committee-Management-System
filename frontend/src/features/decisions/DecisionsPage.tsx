@@ -55,7 +55,19 @@ export function DecisionsPage() {
     return committees.filter((c) => c.chair_user_id === user.user_id)
   }, [committees, user])
 
-  const canCreateAnyDecision = chairableCommittees.length > 0
+  // إصلاح 2026-09-14 (بلاغ لاما — قاعدة عمل: لا يجوز إصدار قرار جديد
+  // للجنة منتهية): chairableCommittees أعلاه يبقى كما هو (يُستخدَم أيضًا
+  // لتحديد ظهور زر حذف قرار قائم — سلوك غير متعلق بالإنشاء ولا يجب
+  // المساس به)، لكن نموذج "إصدار قرار جديد" يجب ألا يعرض لجنة منتهية
+  // كخيار. lifecycle_state من الباك-إند — نفس المصدر المستخدَم فعليًا
+  // لرفض الإنشاء بالباك-إند (assert_committee_not_expired بـ
+  // decision_service.create_decision).
+  const creatableCommittees = useMemo(
+    () => chairableCommittees.filter((c) => c.lifecycle_state !== 'ended'),
+    [chairableCommittees],
+  )
+
+  const canCreateAnyDecision = creatableCommittees.length > 0
 
   const filtered = useMemo(() => {
     if (!decisions) return []
@@ -263,7 +275,7 @@ export function DecisionsPage() {
       <DecisionFormModal
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        committees={chairableCommittees}
+        committees={creatableCommittees}
         onSubmit={handleCreate}
         loading={createMutation.isPending || openVotingMutation.isPending}
         serverError={formError}

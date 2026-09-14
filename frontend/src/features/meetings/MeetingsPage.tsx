@@ -146,10 +146,22 @@ export function MeetingsPage() {
    * غير مؤثر عمليًا حاليًا لأن لا دور نظامي يملك meetings.schedule بنطاق
    * department فعليًا بالكتالوج الحالي (فقط 'all' لسوبر أدمن، أو لا شيء).
    */
+  // إصلاح 2026-09-14 (بلاغ لاما — قاعدة عمل: لا يجوز إنشاء اجتماع جديد
+  // للجنة منتهية): كانت كل اللجان (بمن فيها المنتهية) تظهر كخيار عند
+  // إنشاء اجتماع جديد هنا — القيد الوحيد المطبَّق فعليًا كان "هل أنا
+  // رئيسها؟"، بلا أي فحص لتاريخ الانتهاء. lifecycle_state تصل جاهزة من
+  // الباك-إند (Committee.lifecycle_state_today — راجعي committee.py)،
+  // نفس المصدر الوحيد المستخدَم فعليًا بفحص الباك-إند (committee_period.
+  // assert_committee_not_expired) لرفض إنشاء اجتماع للجنة منتهية — لا
+  // حساب تاريخ منفصل هنا، اتساقًا تامًا مع نفس المصدر ومنطقة الوقت. هذا
+  // فلترة عرض فقط (تجربة مستخدم) — الرفض الحقيقي يبقى بالباك-إند دائمًا
+  // (راجعي create_meeting بmeeting_service.py) حتى لو أُرسل معرّف لجنة
+  // منتهية مباشرة للـAPI بتجاوز الواجهة.
   const chairableCommittees = useMemo(() => {
     if (!committees || !user) return []
-    if (scopeFor(user, 'meetings.schedule') === 'all') return committees
-    return committees.filter((c) => c.chair_user_id === user.user_id)
+    const notEnded = committees.filter((c) => c.lifecycle_state !== 'ended')
+    if (scopeFor(user, 'meetings.schedule') === 'all') return notEnded
+    return notEnded.filter((c) => c.chair_user_id === user.user_id)
   }, [committees, user])
 
   const canCreateAnyMeeting = chairableCommittees.length > 0

@@ -29,7 +29,7 @@ export function ChatPanel({
   meetingId: string
   liveMessages: MeetingChatMessage[]
   currentUserId: string
-  onSend: (body: string) => void
+  onSend: (body: string) => Promise<{ ok: boolean; error?: string }>
   /** تعديل لاما 2026-09-06: "لما اكتب بالدردشة ما تظهر ولا تحفظ" — بلا أي
    * مؤشر مرئي سابقًا لحالة اتصال WebSocket، فرسالة لم تُرسَل فعليًا (الاتصال
    * ما زال يحاول الاتصال، أو انقطع) كانت تبدو تمامًا كصمت الواجهة العادي.
@@ -38,6 +38,8 @@ export function ChatPanel({
 }) {
   const historyQuery = useMeetingChatHistory(meetingId)
   const [draft, setDraft] = useState('')
+  const [isSending, setIsSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
 
   const messages = useMemo(
@@ -49,11 +51,33 @@ export function ChatPanel({
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
   }, [messages.length])
 
-  function handleSend() {
+  // إصلاح 2026-09-14 (بلاغ لاما — Bug 1: الرسالة تختفي من الحقل عند
+  // الإرسال بلا أي ظهور بالدردشة ولا معرفة هل حُفظت): كانت تمسح الحقل
+  // فورًا بعد استدعاء onSend بلا انتظار أي نتيجة — الآن onSend ترجع
+  // Promise حقيقي بنتيجة الإرسال الفعلية من الخادم (راجعي
+  // useMeetingRealtime.ts::sendChatMessage). الحقل يُمسح فقط عند نجاح
+  // فعلي؛ عند الفشل يبقى نص الرسالة كما هو (لا فقدان لما كتبته المستخدمة)
+  // ويظهر خطأ واضح تحت صندوق الإدخال، مع تسجيل السبب الحقيقي بالكونسول
+  // — بلا أي catch(() => {}) صامت.
+  async function handleSend() {
     const trimmed = draft.trim()
-    if (!trimmed) return
-    onSend(trimmed)
-    setDraft('')
+    if (!trimmed || isSending) return
+    setIsSending(true)
+    setSendError(null)
+    try {
+      const result = await onSend(trimmed)
+      if (result.ok) {
+        setDraft('')
+      } else {
+        setSendError(result.error || 'تعذر إرسال الرسالة.')
+        console.error('[ChatPanel] فشل إرسال رسالة الدردشة:', result.error)
+      }
+    } catch (err) {
+      setSendError('تعذر إرسال الرسالة بسبب خطأ غير متوقع.')
+      console.error('[ChatPanel] خطأ غير متوقع أثناء إرسال رسالة الدردشة:', err)
+    } finally {
+      setIsSending(false)
+    }
   }
 
   return (
@@ -110,22 +134,30 @@ export function ChatPanel({
       <div className="flex items-center gap-2 border-t border-border-default p-2.5">
         <input
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            if (sendError) setSendError(null)
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleSend()
           }}
           placeholder="اكتب رسالة..."
-          className="h-9 flex-1 rounded-sm border border-border-default bg-bg-surface px-3 text-[12px] text-text-primary placeholder:text-text-muted focus:border-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-accent/40"
+          disabled={isSending}
+          className="h-9 flex-1 rounded-sm border border-border-default bg-bg-surface px-3 text-[12px] text-text-primary placeholder:text-text-muted focus:border-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-accent/40 disabled:opacity-60"
         />
         <button
           type="button"
           onClick={handleSend}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-brand-primary text-white transition-colors hover:bg-brand-primary-hover"
+          disabled={isSending || !draft.trim()}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-brand-primary text-white transition-colors hover:bg-brand-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
           aria-label="إرسال"
         >
           <Send size={15} />
         </button>
       </div>
+      {sendError && (
+        <p className="border-t border-border-default px-2.5 py-1 text-[11px] text-danger">{sendError}</p>
+      )}
     </div>
   )
 }

@@ -34,6 +34,7 @@ expire_on_commit=False (راجعي db/session.py)، بالضبط نفس افتر
 القديم (current_user كان يُمرَّر لكل الحلقة من نفس التحميل الأول).
 """
 
+import logging
 import uuid
 from typing import Any
 
@@ -54,6 +55,8 @@ sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins="*" if settings.ENVIRONMENT == "development" else settings.cors_origins_list,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _room(meeting_id: str) -> str:
@@ -122,6 +125,11 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
     # استعلام DB إضافي) ونرسلها لهذا الاتصال فقط (to=sid، لا بث للغرفة)
     # كصورة أولية — presence.joined يبقى كما هو لبث الانضمامات اللاحقة.
     existing_user_ids: set[str] = set()
+    # إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
+    # كرقم/معرّف غريب بدل اسمها الحقيقي، مثال ليليان): نفس منطق
+    # presence.roster أدناه بالضبط، لكن لـ"من هو صاحب أي agora_uid" —
+    # راجعي تعليق video_uid تحت لتفصيل الجذر الحقيقي للمشكلة.
+    existing_video_uids: list[dict[str, Any]] = []
     for other_sid, _eio_sid in sio.manager.get_participants("/", room):
         try:
             other_session = await sio.get_session(other_sid)
@@ -130,11 +138,22 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
         other_user: User | None = other_session.get("user")
         if other_user is not None:
             existing_user_ids.add(str(other_user.user_id))
+            other_agora_uid = other_session.get("agora_uid")
+            if other_agora_uid is not None:
+                existing_video_uids.append(
+                    {
+                        "user_id": str(other_user.user_id),
+                        "full_name": other_user.full_name,
+                        "agora_uid": other_agora_uid,
+                    }
+                )
 
     sio.enter_room(sid, room)
 
     if existing_user_ids:
         await sio.emit("presence.roster", {"user_ids": list(existing_user_ids)}, to=sid)
+    if existing_video_uids:
+        await sio.emit("video.roster", {"entries": existing_video_uids}, to=sid)
 
     await sio.emit(
         "presence.joined",
@@ -173,25 +192,86 @@ async def _session_user_and_room(sid: str) -> tuple[User, str] | None:
     return user, meeting_id
 
 
+# إصلاح 2026-09-14 (بلاغ لاما — "أرسل رسالة، تختفي من الحقل، ما تظهر
+# بالدردشة، ما أدري وصلت ولا لا"): المعالج القديم كان بلا Acknowledgment
+# إطلاقًا (Socket.IO يدعم إرجاع قيمة من المعالج تصل تلقائيًا كـ callback
+# بجهة العميل — socket.emit(event, payload, callback) بدل emit عادي بلا
+# رد) — فالفرونت (useMeetingRealtime.ts::send) كان ينادي socket.emit
+# بلا أي callback إطلاقًا، أي حتى لو أُرجعت قيمة هنا، ما أحد يستقبلها.
+# الأخطر: كان يُمسك ValueError فقط ثم return صامتة — أي استثناء آخر
+# (MeetingChatForbiddenError/MeetingChatNotFoundError من
+# require_realtime_access داخل send_message، أو أي خطأ DB/تسلسل غير
+# متوقع) يخرج من المعالج بلا معالجة؛ python-socketio يبتلعه داخليًا
+# (يسجّله بـstderr فقط) بلا أي إشعار للعميل — فتبدو الرسالة "اختفت
+# بصمت" رغم عدم حفظها إطلاقًا. الحل: (1) إرجاع dict ack من كل مسار
+# (نجاح/فشل) ليصل كـcallback حقيقي للمرسل تحديدًا (لا بث)، (2) الإمساك
+# بكل فئات الفشل المعروفة صراحة (تحقق/صلاحية/عدم-وجود) مع رسالة عربية
+# واضحة لكل حالة، (3) لوغ فعلي (logger.exception) لأي خطأ غير متوقع بدل
+# ابتلاعه، بدل try/except عام صامت. البث لبقية أعضاء الغرفة (بما فيها
+# المرسل نفسه، لأنه منضم لنفس الغرفة) يبقى كما هو تمامًا عند النجاح
+# فقط — هذا الجزء لم يتغير، كان يعمل صحيحًا أصلًا.
 @sio.on("chat.send")
-async def chat_send(sid: str, data: dict[str, Any] | None) -> None:
+async def chat_send(sid: str, data: dict[str, Any] | None) -> dict[str, Any]:
     resolved = await _session_user_and_room(sid)
     if resolved is None:
-        return
+        return {"ok": False, "error": "انتهت صلاحية جلسة الاتصال — أعيدي تحميل الصفحة."}
     user, meeting_id = resolved
     body = str((data or {}).get("body", "")).strip()
     if not body:
-        return
+        return {"ok": False, "error": "نص الرسالة لا يمكن أن يكون فارغًا."}
     try:
         async with AsyncSessionLocal() as db:
             message = await meeting_chat_service.send_message(
                 db, actor=user, meeting_id=uuid.UUID(meeting_id), body=body
             )
-    except ValueError:
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc) or "نص الرسالة غير صالح."}
+    except (MeetingChatForbiddenError, MeetingChatNotFoundError) as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception(
+            "chat.send: فشل غير متوقع بحفظ رسالة الدردشة — meeting_id=%s user_id=%s",
+            meeting_id,
+            user.user_id,
+        )
+        return {"ok": False, "error": "تعذر إرسال الرسالة بسبب خطأ بالخادم — حاولي مجددًا."}
+
+    payload = {"message": MeetingChatMessageOut.model_validate(message).model_dump(mode="json")}
+    await sio.emit("chat.message", payload, room=_room(meeting_id))
+    return {"ok": True, "message": payload["message"]}
+
+
+# إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
+# كرقم غريب بدل اسمها الحقيقي): الجذر الحقيقي ليس بربط بيانات المستخدم
+# (participants يرجع أصلًا first_name/last_name كاملة — راجعي
+# schemas/meeting.py::MeetingOut.participants) بل بمكوّن الفيديو نفسه —
+# MeetingStage.tsx::nameFor يبحث بخريطة participantNames المبنية بمفتاح
+# user_id (UUID من قاعدة البيانات)، بينما المفتاح الفعلي لكل مربّع فيديو
+# بمكتبة Agora هو agora_uid (رقم عشوائي 6 خانات مُولَّد لكل جلسة انضمام —
+# راجعي meeting_service.join_meeting) — لا علاقة له بـuser_id إطلاقًا،
+# فالبحث يفشل دائمًا لأي مشارك (لا لليليان فقط)، ويظهر بدلًا منه نص
+# احتياطي "مشارك #<agora_uid>". الحل: بث ربط user_id↔agora_uid لحظيًا عبر
+# نفس قناة Socket.IO الموجودة أصلًا (بنفس نمط presence.roster/joined
+# تمامًا، بلا أي بنية جديدة) فور انضمام العميل فعليًا لقناة Agora —
+# راجعي useAgoraConnection.ts وuseMeetingRealtime.ts بالفرونت للطرف الآخر.
+@sio.on("video.uid")
+async def video_uid(sid: str, data: dict[str, Any] | None) -> None:
+    resolved = await _session_user_and_room(sid)
+    if resolved is None:
         return
+    user, meeting_id = resolved
+    agora_uid = (data or {}).get("agora_uid")
+    if agora_uid is None:
+        return
+    try:
+        session = await sio.get_session(sid)
+    except KeyError:
+        return
+    session["agora_uid"] = agora_uid
+    await sio.save_session(sid, session)
     await sio.emit(
-        "chat.message",
-        {"message": MeetingChatMessageOut.model_validate(message).model_dump(mode="json")},
+        "video.uid",
+        {"user_id": str(user.user_id), "full_name": user.full_name, "agora_uid": agora_uid},
         room=_room(meeting_id),
     )
 

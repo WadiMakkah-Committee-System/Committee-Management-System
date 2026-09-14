@@ -66,8 +66,12 @@ export function MeetingRoom({
   // الفحص هنا بالضبط: رئيس هذه اللجنة تحديدًا، أو decisions.create
   // بنطاق 'all' فعليًا.
   const { data: committees } = useCommittees()
-  const agora = useAgoraConnection(meetingId)
   const realtime = useMeetingRealtime(meetingId)
+  // إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
+  // كرقم بدل اسمها): realtime يجب إنشاؤها قبل useAgoraConnection هنا
+  // لتمرير announceAgoraUid لها — تُستدعى فور نجاح انضمام Agora الفعلي
+  // (راجعي useAgoraConnection.ts وتعليق video_uid بـsocketio_server.py).
+  const agora = useAgoraConnection(meetingId, realtime.announceAgoraUid)
   const recorder = useAudioRecorder(meetingId)
 
   const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
@@ -95,13 +99,15 @@ export function MeetingRoom({
   )
   const iRaisedHand = currentUser ? raisedHandUserIds.has(currentUser.user_id) : false
 
-  const participantNames = useMemo(() => {
-    const map = new Map<string, string>()
-    meetingQuery.data?.participants.forEach((p) => {
-      map.set(p.user_id, `${p.first_name} ${p.last_name}`)
-    })
-    return map
-  }, [meetingQuery.data?.participants])
+  // إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
+  // كرقم غريب بدل اسمها الحقيقي، مثال ليليان): كانت هذي الخريطة مبنية
+  // بمفتاح user_id (UUID من قاعدة البيانات)، لكن MeetingStage.tsx يبحث
+  // فيها بمفتاح agora_uid (رقم عشوائي مختلف تمامًا يولّده Agora لكل جلسة
+  // انضمام فيديو — راجعي meeting_service.join_meeting) — عدم تطابق مفاتيح
+  // دائم لأي مشارك، لا علاقة له بهوية المستخدم نفسها. المصدر الصحيح الآن:
+  // realtime.videoUidNames (يُبنى من بث video.uid/video.roster اللحظي —
+  // راجعي useMeetingRealtime.ts وsocketio_server.py::video_uid).
+  const participantNames = realtime.videoUidNames
 
   function handleStartDiscussing(item: MeetingAgendaItem) {
     realtime.announceDiscussing(item.agenda_item_id, item.title)
