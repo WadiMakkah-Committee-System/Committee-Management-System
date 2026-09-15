@@ -168,6 +168,12 @@ export function MeetingMinutesPage() {
     if (!canManage && tab === 'templates') setTab('editor')
   }, [canManage, tab])
 
+  // نفس الاحتياط الدفاعي أعلاه، لتبويب "الاعتماد" المخفي الآن عن غير
+  // canApprove (تصحيح 2026-09-15 — راجعي تعليق tabItems أعلاه).
+  useEffect(() => {
+    if (!canApprove && tab === 'approval') setTab('editor')
+  }, [canApprove, tab])
+
   const updateSectionsMutation = useUpdateMinutesSections()
   const selectTemplateMutation = useSelectMinutesTemplate()
   const approveReviewMutation = useApproveMinutesReview()
@@ -196,10 +202,24 @@ export function MeetingMinutesPage() {
 
   // تبويب "القوالب" لرئيس اللجنة/الأدمن فقط (FR-MIN-003 — الأعضاء لا
   // يُفترض أن تُعرض لهم قائمة القوالب إطلاقًا، فقط اسم القالب المختار).
-  const tabItems = useMemo(
-    () => (canManage ? TAB_ITEMS : TAB_ITEMS.filter((t) => t.key !== 'templates')),
-    [canManage],
-  )
+  //
+  // تصحيح 2026-09-15 (بلاغ لاما — "الاعتماد ما يفترض يطلع للعضو، بس
+  // الرئيس"): تبويب "الاعتماد" نفسه كان يظهر لكل الأعضاء بلا استثناء —
+  // الزر بداخله (اعتماد المحضر) كان محميًا بـcanApprove بالفعل (معطَّل
+  // فقط، disabled={!approvableStage || !canApprove} أدناه بمحتوى التبويب)،
+  // لكن التبويب والمحتوى المحيط بالزر (حالة المحضر/عدد موافقات المراجعين)
+  // يبقى مرئيًا لأي عضو رغم إنه لا يقدر يضغط الزر فعليًا — نفس مشكلة تبويب
+  // "القوالب" قبل إصلاحها بالضبط، فحُلّت بنفس الطريقة: إخفاء تبويب
+  // "الاعتماد" كاملًا لغير canApprove. لا علاقة لهذا بزر "اعتماد المراجعة"
+  // المنفصل كليًا (تبويب "المراجعة") — ذاك مقصود ومتاح لكل الأعضاء حسب
+  // قرار لاما 2026-09-10 الموثّق أعلاه (كل عضو يعتمد مراجعته الخاصة فقط،
+  // ليس المحضر كاملًا).
+  const tabItems = useMemo(() => {
+    let items = TAB_ITEMS
+    if (!canManage) items = items.filter((t) => t.key !== 'templates')
+    if (!canApprove) items = items.filter((t) => t.key !== 'approval')
+    return items
+  }, [canManage, canApprove])
 
   function persistSections(next: MinutesSection[]) {
     if (!meetingId) return
