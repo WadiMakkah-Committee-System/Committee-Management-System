@@ -45,7 +45,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, noload, selectinload
 
 from app.core import agora_client, gemini_client, storage_client
 from app.core.committee_period import assert_committee_not_expired, assert_within_committee_period
@@ -201,6 +201,53 @@ def sync_meeting_status(meeting: Meeting) -> None:
 
 async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
     result = await db.execute(select(Meeting).where(Meeting.meeting_id == meeting_id))
+    meeting = result.scalar_one_or_none()
+    if meeting is None or meeting.is_deleted:
+        raise MeetingNotFoundError("الاجتماع غير موجود")
+    sync_meeting_status(meeting)
+    return meeting
+
+
+async def _load_meeting_for_draft_access(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
+    """
+    تحقيق أداء لاما 2026-09-15 (تحليل.pdf — بند "meeting_service._load_meeting()
+    is too broad for multiple endpoint types"، مؤكَّد بتتبّع GET
+    /meetings/{meeting_id}/extracted-items الفعلي — "نفس 30-second role and
+    permission query storm بمسار المحضر"): _load_meeting العادية أعلاه بلا
+    أي خيار تحميل صريح، فتعتمد بالكامل على lazy="selectin" الافتراضي على
+    مستوى الموديل (Meeting.committee/creator/participants/agenda_items +
+    Committee.chair/members/member_roles + تسلسل User.role/job_title لكل
+    مستخدم بهذي القوائم) — يعني كل استدعاء واحد لها يجرّ معه شجرة كاملة
+    حتى لو الدالة المستدعية تحتاج فقط فحص صلاحية بسيط.
+
+    هذي نسخة مخصَّصة **فقط** لعائلة "meetings.draft.*" (get_draft/
+    list_extracted_items/extract_meeting_items/add_manual_extracted_item/
+    delete_extracted_item) — تحقّقت من كل دالة بهذي العائلة صراحة قبل هذا
+    التعديل: كلها تكتفي بـ committee = meeting.committee ثم _require_access
+    (الذي بدوره لا يقرأ إلا committee.committee_id وcommittee.chair.dep_id
+    — راجعي _system_scope_allows/_has_access أعلاه)، بلا أي لمسة لـ
+    committee.members/member_roles أو meeting.participants/creator/
+    agenda_items بعد فحص الصلاحية. noload هنا يقطع فقط ما تحقّقت أنه غير
+    مُستخدَم بهذي الدوال الخمس تحديدًا — **لا تُستخدم هذي الدالة لأي مسار
+    آخر** (بقية الاستدعاءات الـ20+ لـ_load_meeting تبقى كما هي تمامًا،
+    لأن بعضها فعليًا يحتاج meeting.participants/committee.members لاحقًا
+    بمنطقه الخاص ولم يُدقَّق كل واحد منها بعد — تعديلها دفعة واحدة بلا
+    اختبارات آلية للمشروع مخاطرة غير مبرَّرة الآن، راجعي رسالتي للمستخدمة).
+    """
+    result = await db.execute(
+        select(Meeting)
+        .where(Meeting.meeting_id == meeting_id)
+        .options(
+            selectinload(Meeting.committee).options(
+                selectinload(Committee.chair).options(noload(User.role), noload(User.job_title)),
+                noload(Committee.members),
+                noload(Committee.member_roles),
+            ),
+            noload(Meeting.participants),
+            noload(Meeting.creator),
+            noload(Meeting.agenda_items),
+        )
+    )
     meeting = result.scalar_one_or_none()
     if meeting is None or meeting.is_deleted:
         raise MeetingNotFoundError("الاجتماع غير موجود")
@@ -1006,7 +1053,7 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
 
 async def get_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingDraft:
     """يتطلب meetings.draft.view."""
-    meeting = await _load_meeting(db, meeting_id)
+    meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض مسودة هذا الاجتماع"
@@ -1050,7 +1097,7 @@ async def list_extracted_items(
     db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
 ) -> list[MeetingExtractedItem]:
     """يتطلب meetings.draft.view."""
-    meeting = await _load_meeting(db, meeting_id)
+    meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض بنود هذا الاجتماع"
@@ -1065,7 +1112,7 @@ async def extract_meeting_items(
     بالذكاء الاصطناعي (شرط أن تكون مكتملة). كل استدعاء يضيف دفعة جديدة
     بدون حذف/دمج مع البنود السابقة — لا يوجد شرط Idempotency موثّق بـSRS؛
     رئيس اللجنة يحذف يدويًا أي بند مكرر (FR-TASK-009)."""
-    meeting = await _load_meeting(db, meeting_id)
+    meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
@@ -1101,7 +1148,7 @@ async def add_manual_extracted_item(
     db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, text: str
 ) -> MeetingExtractedItem:
     """FR-TASK-007/UC4: إضافة بند يدوي لقائمة البنود المعروضة."""
-    meeting = await _load_meeting(db, meeting_id)
+    meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
@@ -1137,7 +1184,7 @@ async def delete_extracted_item(db: AsyncSession, *, actor: User, item_id: uuid.
     """FR-TASK-009/UC6: يزيل البند نهائيًا بدون تحويله لمهمة أو قرار —
     متاح فقط طالما البند لم يُعيَّن بعد (pending)."""
     item = await _load_extracted_item(db, item_id)
-    meeting = await _load_meeting(db, item.meeting_id)
+    meeting = await _load_meeting_for_draft_access(db, item.meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
