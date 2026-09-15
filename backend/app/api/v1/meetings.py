@@ -61,7 +61,10 @@ from app.schemas.meeting_extracted_item import (
     MeetingExtractedItemOut,
 )
 from app.schemas.meeting_minutes import (
+    MeetingMinutesDetailOut,
     MeetingMinutesOut,
+    MinutesDetailCommitteeOut,
+    MinutesDetailMeetingOut,
     MinutesSection,
     MinutesSummaryOut,
     MinutesTemplateOut,
@@ -818,6 +821,42 @@ def _minutes_out(minutes) -> MeetingMinutesOut:
         completed_at=minutes.completed_at,
         created_at=minutes.created_at,
         updated_at=minutes.updated_at,
+    )
+
+
+def _minutes_detail_meeting_out(meeting) -> MinutesDetailMeetingOut:
+    # from_attributes=True (راجعي MinutesDetailMeetingOut) — نفس نمط
+    # MeetingOut.model_validate(meeting) المستخدَم ببقية راوتات هذا الملف،
+    # بدل بناء يدوي حقل-حقل عرضة للأخطاء.
+    return MinutesDetailMeetingOut.model_validate(meeting)
+
+
+def _minutes_detail_committee_out(committee) -> MinutesDetailCommitteeOut:
+    return MinutesDetailCommitteeOut.model_validate(committee)
+
+
+@router.get("/{meeting_id}/minutes/detail", response_model=MeetingMinutesDetailOut)
+async def get_meeting_minutes_detail(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingMinutesDetailOut:
+    """توحيد أداء (التوصية الثانية بتقرير أداء لاما 2026-09-14 — راجعي
+    docstring get_minutes_detail بـservices/meeting_minutes_service.py
+    للتصميم الكامل): نقطة واحدة تستبدل 5 طلبات منفصلة كانت
+    MeetingMinutesPage.tsx تطلقها (اجتماع/لجنة/محضر/قوالب/بنود مستخرجة)،
+    أهمها إلغاء Network Waterfall حقيقي كان موجودًا (طلب اللجنة كان ينتظر
+    نتيجة طلب الاجتماع أولًا لمعرفة committee_id قبل أن يبدأ أصلًا)."""
+    try:
+        detail = await meeting_minutes_service.get_minutes_detail(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return MeetingMinutesDetailOut(
+        meeting=_minutes_detail_meeting_out(detail["meeting"]),
+        committee=_minutes_detail_committee_out(detail["committee"]),
+        minutes=_minutes_out(detail["minutes"]),
+        templates=[MinutesTemplateOut(**t) for t in detail["templates"]],
+        extracted_items=[_extracted_item_out(item) for item in detail["extracted_items"]],
     )
 
 

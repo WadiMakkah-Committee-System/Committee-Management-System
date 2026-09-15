@@ -130,7 +130,15 @@ async def perf_trace_middleware(request: Request, call_next):
     buffering/تشفير إضافي من Render/الشبكة نفسها — هذا الفرق تحديدًا هو
     ما يحدد هل العائق داخل تطبيقنا أو خارجه بالطبقات الأدنى: proxy/
     keep-alive/cold start). يطبع سطر PERF واحد بـstdout (يظهر بـRender
-    Logs مباشرة) + يرجع X-Perf-Trace/X-Perf-Total-Ms كـheaders."""
+    Logs مباشرة) + يرجع X-Perf-Trace/X-Perf-Total-Ms كـheaders.
+
+    تحديث 2026-09-14 (إيقاف الأداة بالإنتاج): التحقيق الأصلي خلص، وإبقاء
+    هذا الـmiddleware شغّالًا على كل طلب بالإنتاج يسبب تكلفة أداء حقيقية
+    (قياس + طباعة stdout بكل طلب) ويسرّب نص استعلامات SQL الفعلي عبر
+    X-Perf-Trace header لأي عميل يفحص الـheaders. من الآن يعمل فقط
+    بالتطوير — بأي بيئة ثانية يمر الطلب مباشرة بدون أي قياس."""
+    if settings.ENVIRONMENT != "development":
+        return await call_next(request)
     perf_probe.start_trace()
     t0 = _perf_time.perf_counter()
     # تشخيص 2026-09-13: caller افتراضي على مستوى الطلب كامل — أي استعلام
@@ -156,7 +164,7 @@ async def perf_trace_middleware(request: Request, call_next):
         # app/db/session.py) — 15000 حرف صارت تقصّ تتبّع 65 استعلام
         # قبل نهايته. 30000 كافية له مع هامش، ولا تزال أقل من حدود
         # الـheader المعتادة عند أغلب البنى التحتية.
-        response.headers["X-Perf-Trace"] = trace_str[:30000]
+        response.headers["X-Perf-Trace"] = trace_str[:30000].encode("ascii", "ignore").decode("ascii")
     print(
         f"[PERF] {request.method} {request.url.path} total={total_ms}ms | {trace_str}",
         flush=True,
