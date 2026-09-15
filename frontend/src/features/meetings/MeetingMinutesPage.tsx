@@ -93,9 +93,26 @@ export function MeetingMinutesPage() {
   const committeeQuery = useCommitteeDetail(meeting?.committee_id)
   const committee = committeeQuery.data
 
+  // canManage/canApprove تحتاج تُحسب قبل templatesQuery أدناه (بخلاف
+  // ترتيبها الأصلي بعد كل الـqueries) — تحديث 2026-09-15: قائمة القوالب
+  // الكاملة محمية برئيس اللجنة/الأدمن فقط (minutes.templates.view)، فلازم
+  // نعرف canManage قبل تفعيل/تعطيل هذا الاستعلام أصلًا (enabled أدناه).
+  const canManage =
+    scopeFor(user, 'minutes.update', 'minutes.templates.select') === 'all' ||
+    (!!committee && committee.chair_user_id === user?.user_id)
+
+  const canApprove =
+    scopeFor(user, 'minutes.approve') === 'all' || (!!committee && committee.chair_user_id === user?.user_id)
+
   const minutesQuery = useMeetingMinutes(meetingId)
   const minutes = minutesQuery.data
-  const templatesQuery = useMinutesTemplates(meetingId)
+  // الأعضاء لا يُفترض أن تُعرض لهم قائمة القوالب إطلاقًا (FR-MIN-003) —
+  // enabled: canManage يمنع انطلاق هذا الطلب أصلًا لغير رئيس اللجنة/الأدمن،
+  // فلا يصطدم بـ403 من الباك-إند (تصحيح 2026-09-15، راجعي رأس
+  // meeting_minutes_service.list_templates_for_meeting). اسم القالب
+  // المختار متاح لكل الأدوار مباشرة عبر minutes.template_name بلا حاجة
+  // لهذا الاستعلام.
+  const templatesQuery = useMinutesTemplates(meetingId, canManage)
   const templates = templatesQuery.data ?? []
 
   const extractedItemsQuery = useMeetingExtractedItems(meetingId)
@@ -137,6 +154,14 @@ export function MeetingMinutesPage() {
     }
   }, [])
 
+  // احتياط دفاعي: تبويب "القوالب" مخفي أصلًا عن غير canManage بـTAB_ITEMS
+  // أدناه، لكن لو تغيّر canManage أثناء وجود المستخدم على هذا التبويب
+  // (مثلًا استبدال رئيس اللجنة لحظيًا) نرجّعه لتبويب "محرر المحضر" بدل
+  // ترك تبويب لا يملك بياناته (templatesQuery معطّل لغير canManage).
+  useEffect(() => {
+    if (!canManage && tab === 'templates') setTab('editor')
+  }, [canManage, tab])
+
   const updateSectionsMutation = useUpdateMinutesSections()
   const selectTemplateMutation = useSelectMinutesTemplate()
   const approveReviewMutation = useApproveMinutesReview()
@@ -147,13 +172,6 @@ export function MeetingMinutesPage() {
   const signMutation = useSignMinutes()
 
   const meetingEnded = !!meeting && (meeting.status === 'finished' || meeting.status === 'recorded')
-
-  const canManage =
-    scopeFor(user, 'minutes.update', 'minutes.templates.select') === 'all' ||
-    (!!committee && committee.chair_user_id === user?.user_id)
-
-  const canApprove =
-    scopeFor(user, 'minutes.approve') === 'all' || (!!committee && committee.chair_user_id === user?.user_id)
 
   const myReviewer = minutes?.reviewers.find((r) => r.user.user_id === user?.user_id) ?? null
   // تحديث 2026-09-10: محاضر قديمة تكوّنت قبل هذا التحديث ممكن تكون
@@ -168,6 +186,13 @@ export function MeetingMinutesPage() {
   const sortedAgendaItems = useMemo(
     () => (meeting ? [...meeting.agenda_items].sort((a, b) => a.sort_order - b.sort_order) : []),
     [meeting],
+  )
+
+  // تبويب "القوالب" لرئيس اللجنة/الأدمن فقط (FR-MIN-003 — الأعضاء لا
+  // يُفترض أن تُعرض لهم قائمة القوالب إطلاقًا، فقط اسم القالب المختار).
+  const tabItems = useMemo(
+    () => (canManage ? TAB_ITEMS : TAB_ITEMS.filter((t) => t.key !== 'templates')),
+    [canManage],
   )
 
   function persistSections(next: MinutesSection[]) {
@@ -463,7 +488,7 @@ export function MeetingMinutesPage() {
                 <div>
                   <MinutesStageBadge stage={minutes.stage} />
                   <span className="mt-1 block text-xs text-text-muted">
-                    القالب: {templates.find((t) => t.id === minutes.template_id)?.name ?? 'لم يُختر بعد'} · آخر
+                    القالب: {minutes.template_name ?? 'لم يُختر بعد'} · آخر
                     تحديث: {formatRelativeTime(minutes.updated_at)}
                   </span>
                 </div>
@@ -477,7 +502,7 @@ export function MeetingMinutesPage() {
             <StageTimeline stage={minutes.stage} />
           </Card>
 
-          <Tabs items={TAB_ITEMS} value={tab} onChange={setTab} />
+          <Tabs items={tabItems} value={tab} onChange={setTab} />
 
           {tab === 'templates' && (
             <div className="grid gap-4 lg:grid-cols-3">
@@ -561,11 +586,23 @@ export function MeetingMinutesPage() {
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-neutral-bg text-neutral">
                     <FileText size={22} />
                   </div>
-                  <p className="text-sm font-semibold text-text-primary">لم يتم اختيار قالب بعد</p>
-                  <p className="max-w-sm text-sm text-text-secondary">
-                    اختر أحد قوالب المحاضر المعتمدة لبدء إعداد المحضر.
-                  </p>
-                  {canManage && <Button onClick={() => setTab('templates')}>عرض القوالب</Button>}
+                  {canManage ? (
+                    <>
+                      <p className="text-sm font-semibold text-text-primary">لم يتم اختيار قالب بعد</p>
+                      <p className="max-w-sm text-sm text-text-secondary">
+                        اختر أحد قوالب المحاضر المعتمدة لبدء إعداد المحضر.
+                      </p>
+                      <Button onClick={() => setTab('templates')}>عرض القوالب</Button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-semibold text-text-primary">بانتظار اختيار رئيس اللجنة للقالب</p>
+                      <p className="max-w-sm text-sm text-text-secondary">
+                        لم يتم اختيار قالب المحضر بعد من قبل رئيس اللجنة. لا يمكنك المشاركة في إعداد المحضر
+                        حتى يتم اختيار القالب.
+                      </p>
+                    </>
+                  )}
                 </Card>
               ) : (
                 <div className="grid gap-4 xl:grid-cols-[220px_1fr_300px]">
@@ -607,7 +644,7 @@ export function MeetingMinutesPage() {
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-default px-4 py-2.5">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-text-muted">
-                          {templates.find((t) => t.id === minutes.template_id)?.name ?? minutes.template_id}
+                          {minutes.template_name ?? minutes.template_id}
                         </span>
                         {editable && (
                           <Button size="sm" variant="ghost" onClick={() => setTab('templates')}>

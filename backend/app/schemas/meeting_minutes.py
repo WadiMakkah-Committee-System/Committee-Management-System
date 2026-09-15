@@ -67,6 +67,11 @@ class MeetingMinutesOut(BaseModel):
     minutes_id: uuid.UUID
     meeting_id: uuid.UUID
     template_id: MinutesTemplateId | None
+    # اسم القالب المختار جاهزًا من الباك-إند (FR-MIN-003 البند الثالث) —
+    # يتيح للأعضاء معرفة اسم القالب المختار بدون الحاجة لاستدعاء
+    # GET /{meeting_id}/minutes/templates المحمي برئيس اللجنة فقط
+    # (minutes.templates.view). None إذا لم يُختر قالب بعد.
+    template_name: str | None
     stage: MeetingMinutesStageOut
     owner: CommitteeMemberUserOut | None
     sections: list[MinutesSection]

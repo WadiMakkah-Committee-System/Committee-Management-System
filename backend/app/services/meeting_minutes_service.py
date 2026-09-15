@@ -372,21 +372,38 @@ def list_templates() -> list[dict]:
 async def list_templates_for_meeting(
     db: AsyncSession, *, meeting_id: uuid.UUID, actor: User
 ) -> list[dict]:
-    """FR-MIN-003 — عرض قوالب المحاضر المعتمدة فقط (بدون إنشاء صف محضر
-    كأثر جانبي، بخلاف get_or_create_minutes أدناه — الاختيار الفعلي هو
-    ما ينشئ الصف)."""
+    """FR-MIN-003 — عرض قوالب المحاضر المعتمدة، لرئيس اللجنة فقط (استعراض
+    القوالب واختيار أحدها كلاهما من مسؤولية رئيس اللجنة حصرًا بالمواصفة؛
+    الأعضاء لا يُفترض أن تُعرض لهم القوالب إطلاقًا — فقط اسم القالب المختار
+    بعد اعتماده، عبر MeetingMinutesOut.template_name أدناه).
+
+    تصحيح 2026-09-15 (بلاغ لاما — الأعضاء كانوا يشوفون تبويب/قائمة القوالب
+    كاملة رغم عدم قدرتهم على الاختيار، يخالف FR-MIN-003 صراحة): كان هذا
+    التحقق مخفَّفًا مؤقتًا إلى "minutes.view" (إصلاح 2026-09-13) لأن الفرونت
+    وقتها كان يستدعي هذا الـendpoint تلقائيًا لكل زائر لصفحة المحضر بلا
+    استثناء، فكان يفشل بـ403 لأي عضو عادي بمجرد فتح التبويب. الإصلاح الجذري
+    الصحيح: الفرونت الآن لا يستدعي هذا الـendpoint إطلاقًا إلا لرئيس
+    اللجنة/الأدمن (canManage — راجعي MeetingMinutesPage.tsx)، فرجعت هذي
+    الصلاحية لتطابق التوثيق والمواصفة الأصليين حرفيًا بدل تخفيفها.
+    """
     meeting, committee = await _load_meeting_and_committee(db, meeting_id)
     _require_meeting_finished(meeting)
-    # إصلاح 2026-09-13: الكود كان يتحقق فعليًا من صلاحية "minutes.templates.view"
-    # منفصلة — لكنها غير ممنوحة لدور "عضو اللجنة" أصلًا بجدول role_permissions
-    # (الممنوح له فقط: view/update/sign/export)، فكان أي عضو عادي (وليس رئيس
-    # اللجنة) يحصل على 403 بمجرد فتح تبويب محضر أي اجتماع منتهٍ — يخالف تمامًا
-    # التوثيق الأصلي بأعلى الدالة القائل إن هذي القائمة (ثابتة بالكود، بلا بيانات
-    # حساسة) يُفترض التحقق منها ضمنيًا عبر "minutes.view" فقط، والاختيار الفعلي
-    # وحده محمي بصلاحية "minutes.templates.select" الأدق (بند 852 بـmeetings.py).
-    # الإصلاح: مطابقة الكود للتوثيق الأصلي بدل تغيير بيانات الصلاحيات.
-    await _require_access(db, actor, committee, "minutes.view", "ليست لديك صلاحية لعرض محضر هذا الاجتماع")
+    await _require_access(
+        db, actor, committee, "minutes.templates.view", "ليست لديك صلاحية عرض قوالب المحضر"
+    )
     return list_templates()
+
+
+def template_name_for(template_id: str | None) -> str | None:
+    """اسم القالب المعروض (عربي) لمعرّف قالب معيّن — تستخدمها طبقة الـAPI
+    (meetings.py::_minutes_out) لتضمين اسم القالب المختار مباشرة بـ
+    MeetingMinutesOut.template_name، بحيث يعرف الأعضاء اسم القالب المختار
+    (FR-MIN-003 البند الثالث) بدون حاجتهم لاستدعاء list_templates_for_meeting
+    المحمي برئيس اللجنة فقط."""
+    if template_id is None:
+        return None
+    template = MINUTES_TEMPLATES.get(template_id)
+    return template["name"] if template else None
 
 
 def _build_sections_from_template(template_id: str, meeting: Meeting) -> list[dict]:

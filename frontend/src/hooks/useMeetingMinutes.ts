@@ -15,11 +15,25 @@ export function useMeetingMinutes(meetingId: string | undefined) {
   })
 }
 
-export function useMinutesTemplates(meetingId: string | undefined) {
+/**
+ * الهدف: جلب قوالب المحضر المعتمدة لاجتماع معيّن (FR-MIN-003).
+ *
+ * المدخلات:
+ * - meetingId: معرّف الاجتماع.
+ * - enabled: تفعيل الاستعلام فعليًا (افتراضيًا true) — مرّري false لغير
+ *   رئيس اللجنة/الأدمن (canManage بـMeetingMinutesPage.tsx)، لأن هذا
+ *   الـendpoint محمي بالباك-إند بصلاحية "minutes.templates.view" الخاصة
+ *   برئيس اللجنة فقط (تصحيح 2026-09-15 — الأعضاء لا يُفترض أن تُعرض لهم
+ *   قائمة القوالب إطلاقًا، فقط اسم القالب المختار عبر minutes.template_name).
+ *   تمرير enabled=false هنا يمنع الطلب من الانطلاق أصلًا فيمنع 403 لا داعي له.
+ *
+ * الصلاحيات: استدعِها فقط من داخل شرط canManage بالواجهة.
+ */
+export function useMinutesTemplates(meetingId: string | undefined, enabled = true) {
   return useQuery({
     queryKey: templatesKey(meetingId ?? ''),
     queryFn: () => minutesApi.fetchMinutesTemplates(meetingId ?? ''),
-    enabled: !!meetingId,
+    enabled: !!meetingId && enabled,
   })
 }
 

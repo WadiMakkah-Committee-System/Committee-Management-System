@@ -760,6 +760,11 @@ export interface MeetingMinutes {
   minutes_id: string
   meeting_id: string
   template_id: MinutesTemplateId | null
+  /** اسم القالب المختار جاهزًا من الباك-إند (FR-MIN-003) — متاح لكل من
+   * يملك صلاحية عرض المحضر (بمن فيهم الأعضاء)، بخلاف قائمة القوالب
+   * الكاملة (minutes/templates) المحمية برئيس اللجنة فقط. null إذا لم
+   * يُختر قالب بعد. */
+  template_name: string | null
   stage: MeetingMinutesStage
   owner: CommitteeMemberUser | null
   sections: MinutesSection[]

@@ -789,6 +789,7 @@ def _minutes_out(minutes) -> MeetingMinutesOut:
         minutes_id=minutes.minutes_id,
         meeting_id=minutes.meeting_id,
         template_id=minutes.template_id,
+        template_name=meeting_minutes_service.template_name_for(minutes.template_id),
         stage=minutes.stage.value,
         owner=CommitteeMemberUserOut.model_validate(minutes.owner) if minutes.owner else None,
         sections=[MinutesSection.model_validate(s) for s in minutes.sections],
@@ -854,10 +855,12 @@ async def get_minutes_summaries(
 async def list_minutes_templates(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[MinutesTemplateOut]:
-    """FR-MIN-003: عرض قوالب المحاضر المعتمدة — نفس صلاحية عرض المحضر
-    (minutes.templates.view يُتحقَّق منه ضمنيًا عبر minutes.view هنا
-    لأن القائمة نفسها ثابتة بالكود بلا بيانات حساسة؛ الاختيار الفعلي
-    محمي بـminutes.templates.select أدناه)."""
+    """FR-MIN-003: عرض قوالب المحاضر المعتمدة — لرئيس اللجنة/الأدمن فقط
+    (minutes.templates.view، تصحيح 2026-09-15 — راجعي رأس
+    meeting_minutes_service.list_templates_for_meeting للتفاصيل). الفرونت
+    لا يستدعي هذا المسار إلا لمن يملك canManage؛ الأعضاء العاديون يشوفون
+    اسم القالب المختار فقط عبر MeetingMinutesOut.template_name بالمسار
+    العادي GET /{meeting_id}/minutes."""
     try:
         templates = await meeting_minutes_service.list_templates_for_meeting(
             db, meeting_id=meeting_id, actor=current_user
