@@ -563,6 +563,21 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
     )
     await _require_access(db, actor, committee, "minutes.view", "ليست لديك صلاحية لعرض محضر هذا الاجتماع")
 
+    # إضافة 2026-09-15 (بلاغ لجين — عضوة لجنة عادية جرّبت تكتب بمحضر
+    # فما قدرت رغم امتلاكها صلاحية minutes.update فعليًا حسب دورها باللجنة):
+    # الفرونت (MeetingMinutesPage.tsx) كان يقرر "تقدر تعدّل؟" محليًا بشرط
+    # مبسّط وناقص (رئيسة اللجنة حرفيًا أو صلاحية نظامية عامة 'all' فقط) —
+    # يتجاهل تمامًا صلاحيات الدور *داخل هذي اللجنة تحديدًا* (committee_role_
+    # codes عبر _has_access أدناه، نفس القناة اللي تتحقق منها فعليًا نقطة
+    # PUT /minutes/sections الحقيقية — راجعي update_sections بالأسفل). يعني
+    # عضوة عندها صلاحية "تعديل المحضر" فعلًا بحكم دورها باللجنة كانت تشوف
+    # حقول للقراءة فقط رغم إن الباك-إند كان سيقبل تعديلها فعليًا لو وصلته.
+    # الحل: نحسب can_edit هنا بنفس _has_access الحقيقية (مصدر الحقيقة
+    # الوحيد للصلاحيات — راجعي تعليق رأس الملف بـMeetingMinutesPage.tsx:
+    # "الصلاحيات بالفرونت تقريب بصري فقط") ونُرجعها صراحة، فيعرض الفرونت
+    # زر الكتابة تبعًا لصلاحية حقيقية بدل تخمين محلي ناقص.
+    can_edit = await _has_access(db, actor, committee, "minutes.update")
+
     minutes = await _load_minutes_row(db, meeting_id)
     if minutes is None:
         _require_meeting_finished(meeting)
@@ -591,6 +606,7 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
         "minutes": minutes,
         "templates": templates,
         "extracted_items": extracted_items,
+        "can_edit": can_edit,
     }
 
 

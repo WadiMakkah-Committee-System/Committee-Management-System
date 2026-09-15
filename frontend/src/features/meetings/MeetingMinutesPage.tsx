@@ -80,6 +80,16 @@ const TEMPLATE_ICONS: Record<string, LucideIcon> = {
   detailed: ListChecks,
 }
 
+// إصلاح 2026-09-15 (بلاغ لجين — التحرير الجماعي: يفترض إن كتابة عضوة
+// بقسم توقف القسم *هذا فقط* عن باقي الأعضاء، لا كل الأقسام). collaborators
+// (من useMinutesRealtime) يُحدَّث فقط بحدث minutes.editing عند كل تعديل —
+// ما فيه حدث "توقفت عن التحرير" صريح بالباك-إند حاليًا (راجعي
+// socketio_server.py::minutes_editing)، فالقفل البصري هنا يعتمد على مهلة:
+// أي عضوة لم تُحدِّث القسم خلال آخر LOCK_TTL_MS تُعتبر متوقفة تلقائيًا
+// (أطول من فاصل Autosave 1200ms بالأسفل عشان الكتابة المتواصلة ما "ترمش"
+// بين مقفول/مفتوح كل حرف). نفس فكرة "يكتب الآن..." بتطبيقات الدردشة.
+const LOCK_TTL_MS = 4000
+
 const TAB_ITEMS: TabItem[] = [
   { key: 'templates', label: 'القوالب', icon: <FileText size={15} /> },
   { key: 'editor', label: 'محرر المحضر', icon: <PenLine size={15} /> },
@@ -126,6 +136,24 @@ export function MeetingMinutesPage() {
   const { collaborators, remoteSections, announceEditing, broadcastUpdate } = useMinutesRealtime(meetingId)
   const { showToast } = useToast()
 
+  // نبضة كل ثانية فقط أثناء وجود متعاونين فعليًا — تجبر إعادة رسم القفل
+  // (lockedSectionEditor أدناه) عشان ينفك تلقائيًا بعد LOCK_TTL_MS من آخر
+  // حرف كتبته العضوة الأخرى، بدون هذي النبضة القفل ما ينفك أبدًا إلا لما
+  // React يعيد الرسم لسبب آخر (مثال: العضوة الأخرى تكتب بقسم مختلف).
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (collaborators.length === 0) return
+    const id = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [collaborators.length])
+
+  function lockedSectionEditor(sectionId: string) {
+    const entry = collaborators.find((c) => c.sectionId === sectionId && c.userId !== user?.user_id)
+    if (!entry) return null
+    if (Date.now() - entry.at > LOCK_TTL_MS) return null
+    return entry
+  }
+
   const [tab, setTab] = useState('editor')
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
   const [sections, setSections] = useState<MinutesSection[]>([])
@@ -144,10 +172,27 @@ export function MeetingMinutesPage() {
     if (!dirty) setSections(minutes.sections)
   }, [minutes, dirty])
 
+  // إصلاح 2026-09-15 (بلاغ لجين — "كتبت بحقل واحد فقفل كل الحقول ومحد
+  // قدر يعدل"): هذا الـeffect كان يستبدل sections بالكامل بأي بث
+  // minutes.updated وارد من عضو آخر (كل ما يحفظ Autosave تلقائيًا لديه —
+  // كل 1.2 ثانية من الكتابة المتواصلة)، بلا أي تحقق من dirty، خلافًا
+  // تمامًا لنفس effect تحميل minutes الأولي فوق (يتحقق من !dirty قبل
+  // الاستبدال). النتيجة: أي عضو يكتب بأي حقل (dirty=true محليًا) كان
+  // يفقد ما كتبه فورًا فور وصول حفظ عضو آخر — تبدو كأن الكتابة "تتجمد"
+  // بكل الحقول دفعة وحدة (مو حقل واحد فقط) لأن sections بالكامل تُستبدل
+  // لا قسم واحد فقط. حتى المُرسِل نفسه يستقبل بث حفظه (الباك-إند يبث
+  // للغرفة كاملة بما فيها المُرسِل — راجعي minutes_updated بـ
+  // socketio_server.py) فلو كتب حرفًا جديدًا فورًا بعد الحفظ، احتمال ضياعه
+  // بنفس السباق. الحل: نفس منطق !dirty المستخدَم فوق بالضبط — تجاهل بث
+  // التحديث البعيد طالما لدى المستخدمة الحالية تعديل محلي غير محفوظ بعد؛
+  // فور اكتمال حفظها (dirty يرجع false)، الـeffect يعيد التنفيذ تلقائيًا
+  // (dirty ضمن قائمة الاعتماديات) ويطبّق آخر remoteSections معروف فيلحق
+  // بالتحديثات الفائتة بدل ضياعها كليًا.
   useEffect(() => {
     if (!remoteSections) return
+    if (dirty) return
     setSections(remoteSections.sections)
-  }, [remoteSections])
+  }, [remoteSections, dirty])
 
   useEffect(() => {
     if (sections.length > 0 && !activeSectionId) setActiveSectionId(sections[0].id)
@@ -187,7 +232,15 @@ export function MeetingMinutesPage() {
   // لأي محضر قديم عالق بإحدى هالمرحلتين.
   const approvableStage =
     minutes?.stage === 'preparing' || minutes?.stage === 'review' || minutes?.stage === 'approval'
-  const editable = canManage && approvableStage
+  // إصلاح 2026-09-15 (بلاغ لجين — "المفروض رئيس اللجنة وعضو اللجنة يقدرو
+  // يكتبو بالمحضر"، وليس رئيسة اللجنة فقط): canManage فوق تقريب محلي ناقص
+  // (رئاسة اللجنة حرفيًا أو صلاحية نظامية عامة فقط) — لا يعرف شيئًا عن
+  // صلاحية عضوة عادية بحكم دورها *داخل هذي اللجنة تحديدًا*. detail.can_edit
+  // محسوبة بالباك-إند بنفس _has_access الحقيقية (نفس ما يتحقق منه PUT
+  // /minutes/sections فعليًا — راجعي get_minutes_detail بالباك-إند)، فهي
+  // مصدر الحقيقة الأدق. أبقيت canManage بالـOR (بدل استبدالها) كشبكة أمان
+  // لرئيسة اللجنة تحديدًا — إضافي فقط، ما يقلّل صلاحية أي أحد أبدًا.
+  const editable = (canManage || !!detail?.can_edit) && approvableStage
 
   const sortedAgendaItems = useMemo(
     () => (meeting ? [...meeting.agenda_items].sort((a, b) => a.sort_order - b.sort_order) : []),
@@ -232,6 +285,11 @@ export function MeetingMinutesPage() {
     setDirty(true)
     const next = sections.map((s) => (s.id === sectionId ? { ...s, title } : s))
     setSections(next)
+    // إصلاح 2026-09-15 (بلاغ لجين): كانت مفقودة هنا (موجودة فقط بتعديل
+    // متن القسم updateSectionBody أعلاه) — بدونها تعديل عنوان القسم فقط
+    // (بلا لمس متنه) ما يُعلَن للبقية إطلاقًا، فلا يظهر قفل لهذا القسم رغم
+    // إن عضوة تكتب فيه فعليًا الآن.
+    announceEditing(sectionId)
     scheduleAutosave(next)
   }
 
@@ -684,7 +742,14 @@ export function MeetingMinutesPage() {
                         </p>
                       </div>
                       {sections.map((s) => {
-                        const editorHere = collaborators.find((c) => c.sectionId === s.id)
+                        // إصلاح 2026-09-15 (بلاغ لجين — التحرير الجماعي: قفل حقل
+                        // واحد بدل كل الحقول): editorHere هنا تحديدًا "عضوة
+                        // *أخرى* غيري تكتب بهذا القسم الآن" (استبعاد نفسي عمدًا —
+                        // راجعي lockedSectionEditor فوق) — القسم اللي أنا نفسي
+                        // أكتب فيه يبقى مفتوحًا لي دائمًا، وبقية الأقسام كذلك ما
+                        // لم تكن عضوة أخرى بالضبط داخلها الآن.
+                        const editorHere = lockedSectionEditor(s.id)
+                        const lockedForMe = !!editorHere
                         return (
                           <div
                             key={s.id}
@@ -699,7 +764,11 @@ export function MeetingMinutesPage() {
                                   value={s.title}
                                   onChange={(e) => updateSectionTitle(s.id, e.target.value)}
                                   onFocus={() => setActiveSectionId(s.id)}
-                                  className="w-full rounded-sm border-0 bg-transparent text-sm font-bold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-accent/40"
+                                  readOnly={lockedForMe}
+                                  className={cn(
+                                    'w-full rounded-sm border-0 bg-transparent text-sm font-bold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-accent/40',
+                                    lockedForMe && 'cursor-not-allowed opacity-60',
+                                  )}
                                 />
                               ) : (
                                 <h3 className="text-sm font-bold text-text-primary">{s.title}</h3>
@@ -707,7 +776,8 @@ export function MeetingMinutesPage() {
                               {editable && sections.length > 1 && (
                                 <button
                                   onClick={() => removeSection(s.id)}
-                                  className="shrink-0 rounded-sm p-1 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+                                  disabled={lockedForMe}
+                                  className="shrink-0 rounded-sm p-1 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
                                   aria-label="حذف القسم"
                                 >
                                   <Trash2 size={14} />
@@ -718,13 +788,16 @@ export function MeetingMinutesPage() {
                               value={s.body}
                               onFocus={() => setActiveSectionId(s.id)}
                               onChange={(e) => updateSectionBody(s.id, e.target.value)}
-                              readOnly={!editable}
+                              readOnly={!editable || lockedForMe}
                               rows={Math.max(3, Math.ceil(s.body.length / 90))}
-                              className="resize-none border-0 bg-transparent p-0 text-sm leading-8 shadow-none focus:ring-0"
+                              className={cn(
+                                'resize-none border-0 bg-transparent p-0 text-sm leading-8 shadow-none focus:ring-0',
+                                lockedForMe && 'cursor-not-allowed opacity-60',
+                              )}
                             />
                             {editorHere && (
                               <div className="mt-2 rounded-sm border border-info-border/30 bg-info-bg px-3 py-2 text-[11px] text-info">
-                                <span className="font-semibold">{editorHere.fullName}</span> تُحرّر هذا القسم الآن…
+                                <span className="font-semibold">{editorHere.fullName}</span> تُحرّر هذا القسم الآن — القسم مقفول مؤقتًا لبقية الأعضاء.
                               </div>
                             )}
                           </div>
