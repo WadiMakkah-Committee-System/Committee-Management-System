@@ -25,7 +25,6 @@ import uuid
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -38,6 +37,7 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import agora_client, perf_probe, storage_client
+from app.core.background import run_detached
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.schemas.committee import CommitteeMemberUserOut
@@ -172,7 +172,6 @@ def _agora_error_to_http(exc: agora_client.AgoraError) -> HTTPException:
 async def create_meeting(
     payload: MeetingCreate,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingOut:
     try:
@@ -190,11 +189,13 @@ async def create_meeting(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    # إشعار بريدي لأعضاء اللجنة كـBackgroundTask (بعد commit الناجح) — لا
-    # يُبطئ استجابة إنشاء الاجتماع، ولا يُفشلها لو تعذّر إرسال البريد
-    # (راجعي core/email_client.py وservices/notification_service.py).
-    background_tasks.add_task(
-        notification_service.notify_meeting_created, meeting, actor_user_id=current_user.user_id
+    # إشعار بريدي لأعضاء اللجنة عبر run_detached (بعد commit الناجح) — لا
+    # يُبطئ استجابة إنشاء الاجتماع، ولا يُفشلها لو تعذّر إرسال البريد، ولا
+    # يُبقي جلسة db الخاصة بهذا الطلب محجوزة أثناء انتظار SMTP (تحقيق أداء
+    # لاما 2026-09-15 — راجعي core/background.py وcore/email_client.py
+    # وservices/notification_service.py).
+    run_detached(
+        notification_service.notify_meeting_created(meeting, actor_user_id=current_user.user_id)
     )
     return MeetingOut.model_validate(meeting)
 
@@ -223,7 +224,6 @@ async def update_meeting(
     meeting_id: uuid.UUID,
     payload: MeetingUpdate,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingOut:
     try:
@@ -247,11 +247,10 @@ async def update_meeting(
     # قرار لاما 2026-09-06. notify_meeting_updated نفسها لا ترسل شيئًا لو
     # changes فارغة، فالفحص هنا للوضوح فقط (تفادي جدولة Task فارغة).
     if changes:
-        background_tasks.add_task(
-            notification_service.notify_meeting_updated,
-            meeting,
-            changes,
-            actor_user_id=current_user.user_id,
+        run_detached(
+            notification_service.notify_meeting_updated(
+                meeting, changes, actor_user_id=current_user.user_id
+            )
         )
     return MeetingOut.model_validate(meeting)
 
@@ -260,7 +259,6 @@ async def update_meeting(
 async def delete_meeting(
     meeting_id: uuid.UUID,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> None:
     try:
@@ -271,9 +269,11 @@ async def delete_meeting(
     # (committee/participants كلاهما lazy="selectin")، رغم إن db.commit()
     # صار قبله مباشرة داخل meeting_service.delete_meeting —
     # expire_on_commit=False بـdb/session.py يضمن بقاء القيم المحمَّلة أصلًا
-    # صالحة بلا استعلام إضافي (راجعي notification_service.py).
-    background_tasks.add_task(
-        notification_service.notify_meeting_cancelled, meeting, actor_user_id=current_user.user_id
+    # صالحة بلا استعلام إضافي (راجعي notification_service.py). run_detached
+    # بدل background_tasks.add_task (تحقيق أداء لاما 2026-09-15 — راجعي
+    # core/background.py): لا يُبقي جلسة db لهذا الطلب محجوزة أثناء SMTP.
+    run_detached(
+        notification_service.notify_meeting_cancelled(meeting, actor_user_id=current_user.user_id)
     )
 
 
@@ -720,7 +720,6 @@ async def assign_extracted_item_as_task(
     item_id: uuid.UUID,
     payload: ExtractedItemAssignAsTask,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingExtractedItemOut:
     """FR-TASK-010/011/UC7/UC8: تعيين البند كمهمة — ينشئ Task حقيقيًا عبر
@@ -740,8 +739,8 @@ async def assign_extracted_item_as_task(
     # إشعار المُسنَد إليه — بنفس استدعاء POST /tasks تمامًا (راجعي
     # docstring meeting_service.assign_extracted_item_as_task: هذا
     # المسار كان يتخطى tasks.py فيفوّت الإشعار قبل هذا الإصلاح).
-    background_tasks.add_task(
-        notification_service.notify_task_created, task, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_task_created(task, actor_user_id=current_user.user_id)
     )
     return _extracted_item_out(item)
 
@@ -755,7 +754,6 @@ async def assign_extracted_item_as_decision(
     item_id: uuid.UUID,
     payload: ExtractedItemAssignAsDecision,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingExtractedItemOut:
     """FR-DEC-004/UC7: تعيين البند كقرار — ينشئ Decision حقيقيًا عبر
@@ -773,8 +771,8 @@ async def assign_extracted_item_as_decision(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_decision_created, decision, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_decision_created(decision, actor_user_id=current_user.user_id)
     )
     return _extracted_item_out(item)
 
@@ -1034,7 +1032,6 @@ async def return_minutes_for_edit(
 @router.post("/{meeting_id}/minutes/signature/send", response_model=MeetingMinutesOut)
 async def send_minutes_for_signature(
     meeting_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingMinutesOut:
@@ -1045,11 +1042,10 @@ async def send_minutes_for_signature(
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     meeting = await meeting_minutes_service.load_meeting(db, meeting_id)
-    background_tasks.add_task(
-        notification_service.notify_minutes_sent_for_signature,
-        minutes,
-        meeting,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_minutes_sent_for_signature(
+            minutes, meeting, actor_user_id=current_user.user_id
+        )
     )
     return _minutes_out(minutes)
 
@@ -1058,7 +1054,6 @@ async def send_minutes_for_signature(
 async def sign_meeting_minutes(
     meeting_id: uuid.UUID,
     payload: SignMinutesIn,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingMinutesOut:
@@ -1070,7 +1065,7 @@ async def sign_meeting_minutes(
         raise _handle_errors(exc) from exc
     if minutes.stage.value == "completed":
         meeting = await meeting_minutes_service.load_meeting(db, meeting_id)
-        background_tasks.add_task(notification_service.notify_minutes_completed, minutes, meeting)
+        run_detached(notification_service.notify_minutes_completed(minutes, meeting))
     return _minutes_out(minutes)
 
 

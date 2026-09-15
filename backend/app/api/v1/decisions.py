@@ -6,9 +6,10 @@ app/services/decision_service.py للتفويض والاجتهادات المو�
 
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import run_detached
 from app.core.committee_period import CommitteePeriodError
 from app.core.dependencies import CurrentUser
 from app.core.socketio_server import sio
@@ -56,7 +57,6 @@ def _handle_errors(exc: Exception) -> Exception:
 @router.post("", response_model=DecisionOut, status_code=status.HTTP_201_CREATED)
 async def create_decision(
     payload: DecisionCreate,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
@@ -73,8 +73,8 @@ async def create_decision(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_decision_created, decision, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_decision_created(decision, actor_user_id=current_user.user_id)
     )
     decision_out = DecisionOut.model_validate(decision)
     # إصلاح 2026-09-14 (بلاغ لاما — قرار ينشئه رئيس اللجنة داخل غرفة
@@ -112,7 +112,6 @@ async def list_decisions(
 @router.get("/{decision_id}", response_model=DecisionOut)
 async def get_decision(
     decision_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
@@ -123,7 +122,7 @@ async def get_decision(
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     if just_rejected:
-        background_tasks.add_task(notification_service.notify_decision_rejected, decision)
+        run_detached(notification_service.notify_decision_rejected(decision))
     return DecisionOut.model_validate(decision)
 
 
@@ -163,7 +162,6 @@ async def delete_decision(
 async def open_voting(
     decision_id: uuid.UUID,
     payload: DecisionOpenVoting,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
@@ -181,10 +179,10 @@ async def open_voting(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_decision_voting_opened,
-        decision,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_decision_voting_opened(
+            decision, actor_user_id=current_user.user_id
+        )
     )
     return DecisionOut.model_validate(decision)
 
@@ -193,7 +191,6 @@ async def open_voting(
 async def cast_vote(
     decision_id: uuid.UUID,
     payload: DecisionVoteCast,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
@@ -204,14 +201,13 @@ async def cast_vote(
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     if just_rejected:
-        background_tasks.add_task(notification_service.notify_decision_rejected, decision)
+        run_detached(notification_service.notify_decision_rejected(decision))
     return DecisionOut.model_validate(decision)
 
 
 @router.post("/{decision_id}/approve", response_model=DecisionOut)
 async def approve_decision(
     decision_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
@@ -221,7 +217,7 @@ async def approve_decision(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_decision_approved, decision, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_decision_approved(decision, actor_user_id=current_user.user_id)
     )
     return DecisionOut.model_validate(decision)

@@ -6,9 +6,10 @@
 
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import run_detached
 from app.core.committee_period import CommitteePeriodError
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
@@ -56,7 +57,6 @@ def _handle_errors(exc: Exception) -> Exception:
 @router.post("", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
 async def create_task(
     payload: TaskCreate,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> TaskOut:
@@ -74,8 +74,8 @@ async def create_task(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_task_created, task, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_task_created(task, actor_user_id=current_user.user_id)
     )
     return TaskOut.model_validate(task)
 
@@ -145,7 +145,6 @@ async def delete_task(
 async def update_task_status(
     task_id: uuid.UUID,
     payload: TaskStatusUpdate,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> TaskOut:
@@ -155,8 +154,8 @@ async def update_task_status(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_task_status_changed, task, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_task_status_changed(task, actor_user_id=current_user.user_id)
     )
     return TaskOut.model_validate(task)
 
@@ -165,7 +164,6 @@ async def update_task_status(
 async def reassign_task(
     task_id: uuid.UUID,
     payload: TaskReassign,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> TaskOut:
@@ -175,7 +173,7 @@ async def reassign_task(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_task_reassigned, task, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_task_reassigned(task, actor_user_id=current_user.user_id)
     )
     return TaskOut.model_validate(task)
