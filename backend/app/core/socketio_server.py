@@ -148,7 +148,17 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
                     }
                 )
 
-    sio.enter_room(sid, room)
+    # إصلاح 2026-09-15 (تحقيق أداء لاما — تحليل.pdf، البند رقم 8): sio.enter_room
+    # بـAsyncServer هو coroutine فعليًا (موثّق صراحة بمصدر python-socketio:
+    # "Note: this method is a coroutine") — استدعاؤه بدون await كان يُنشئ
+    # كائن coroutine ولا يُنفَّذه إطلاقًا، أي هذا الـsid لم يكن ينضم لغرفة
+    # الاجتماع فعليًا رغم نجاح connect() ورجوع True. الأثر: presence.joined/
+    # chat.message/hand.raised/agenda.discussing/minutes.updated/video.uid —
+    # كل بث لاحق عبر room=room (وكلها تمر بنفس هذا المسار) كان لا يصل أبدًا
+    # لهذا الاتصال تحديدًا (بينما الرسائل المباشرة to=sid، مثل presence.roster
+    # أعلاه، كانت تصل بشكل طبيعي لأنها لا تعتمد على عضوية الغرفة). الإصلاح:
+    # إضافة await فقط — لا تغيير بالمنطق.
+    await sio.enter_room(sid, room)
 
     if existing_user_ids:
         await sio.emit("presence.roster", {"user_ids": list(existing_user_ids)}, to=sid)
