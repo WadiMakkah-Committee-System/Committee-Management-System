@@ -1,37 +1,115 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/authStore'
 import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute } from '@/routes/ProtectedRoute'
-import { LoginPage } from '@/features/auth/LoginPage'
-import { UsersPage } from '@/features/users/UsersPage'
-import { RolesPermissionsPage } from '@/features/roles/RolesPermissionsPage'
-import { RoleDetailPage } from '@/features/roles/RoleDetailPage'
-import { JobTitlesPage } from '@/features/jobTitles/JobTitlesPage'
-import { DepartmentsPage } from '@/features/departments/DepartmentsPage'
-import { DashboardPage } from '@/features/dashboard/DashboardPage'
-import { DepartmentDetailPage } from '@/features/departments/DepartmentDetailPage'
-import { CommitteeRequestsPage } from '@/features/committees/CommitteeRequestsPage'
-import { CommitteeRequestDetailPage } from '@/features/committees/CommitteeRequestDetailPage'
-import { CommitteesPage } from '@/features/committees/CommitteesPage'
-import { CommitteeDetailPage } from '@/features/committees/CommitteeDetailPage'
-import { DocumentsPage } from '@/features/documents/DocumentsPage'
-import { DocumentDetailPage } from '@/features/documents/DocumentDetailPage'
-import { DocumentsSmartSearchPage } from '@/features/documents/DocumentsSmartSearchPage'
-import { MeetingsPage } from '@/features/meetings/MeetingsPage'
-import { MeetingDetailPage } from '@/features/meetings/MeetingDetailPage'
-import { MeetingMinutesPage } from '@/features/meetings/MeetingMinutesPage'
-import { MinutesListPage } from '@/features/meetings/MinutesListPage'
-import { DecisionsPage } from '@/features/decisions/DecisionsPage'
-import { DecisionDetailPage } from '@/features/decisions/DecisionDetailPage'
-import { TasksPage } from '@/features/tasks/TasksPage'
-import { TaskDetailPage } from '@/features/tasks/TaskDetailPage'
-import { ProfilePage } from '@/features/profile/ProfilePage'
-import { NotificationsPage } from '@/features/notifications/NotificationsPage'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { usersKeys } from '@/hooks/useUsers'
 import * as usersApi from '@/api/users'
+
+/**
+ * إصلاح أداء (تحليل.pdf — Medium severity، المرحلة الخامسة، بعد المراحل
+ * 1-4 المُنفَّذة سابقًا): تقسيم الكود بمستوى الصفحات (Route-level code
+ * splitting) — لم يكن مستخدَمًا إطلاقًا قبل هذا التعديل. كل صفحات
+ * التطبيق الـ24 كانت مستوردة Statically بأعلى App.tsx (import عادي)،
+ * فتنتهي كلها ضمن حزمة JS أولية واحدة ضخمة يجب تحميلها كاملة حتى لو
+ * المستخدمة فتحت صفحة تسجيل الدخول فقط أو صفحة واحدة بسيطة كـ"الملف
+ * الشخصي".
+ *
+ * الحل: كل مكوّن صفحة أدناه يُستورَد الآن عبر React.lazy(() =>
+ * import(...)) بدل import ثابت بالأعلى — Vite يتكفّل تلقائيًا بتحويل كل
+ * import() ديناميكي كهذا إلى حزمة (chunk) منفصلة تُحمَّل فقط عند أول
+ * زيارة فعلية لمسارها، بلا أي إعداد إضافي بـvite.config. غلاف <Suspense>
+ * واحد فقط حول <Routes> بالأسفل يكفي (يلتقط أي تعليق Lazy داخل الشجرة
+ * كاملة، حتى عبر Outlet بـAppShell/ProtectedRoute اللي بقيا Static عمدًا
+ * لأنهما هيكل التوجيه نفسه لا محتوى صفحة). PageSpinner نفسه المستخدَم
+ * أصلًا بـAppBootstrap بالأسفل تمامًا — فلا فرق بصري يُذكر عن السلوك
+ * الحالي أثناء التحميل الأول (Cold)، وبعده أي عودة لصفحة زارتها المستخدمة
+ * سابقًا تكون فورية كليًا (Cache المتصفح الطبيعي على حزمة تلك الصفحة).
+ *
+ * ملاحظة تقنية: كل صفحات هذا الملف مُصدَّرة بتصدير مُسمّى (export
+ * function X)، لا Default export — لذا .then(m => ({ default: m.X }))
+ * بكل سطر أدناه (النمط الموثّق رسميًا بـReact لتحويل تصدير مُسمّى إلى
+ * الشكل اللي يتوقعه React.lazy). تحققت من اسم كل تصدير فعليًا بالكود
+ * الحالي (grep على "export function"/"export const" بكل ملف) قبل كتابة
+ * هذا التحويل — تطابق تام بلا استثناء. تحويل ميكانيكي بحت لا يمس أي منطق
+ * توجيه/صلاحيات/عرض — نفس بنية <Routes>/<Route> بالأسفل حرفيًا بلا أي
+ * تغيير.
+ */
+const LoginPage = lazy(() => import('@/features/auth/LoginPage').then((m) => ({ default: m.LoginPage })))
+const UsersPage = lazy(() => import('@/features/users/UsersPage').then((m) => ({ default: m.UsersPage })))
+const RolesPermissionsPage = lazy(() =>
+  import('@/features/roles/RolesPermissionsPage').then((m) => ({ default: m.RolesPermissionsPage })),
+)
+const RoleDetailPage = lazy(() =>
+  import('@/features/roles/RoleDetailPage').then((m) => ({ default: m.RoleDetailPage })),
+)
+const JobTitlesPage = lazy(() =>
+  import('@/features/jobTitles/JobTitlesPage').then((m) => ({ default: m.JobTitlesPage })),
+)
+const DepartmentsPage = lazy(() =>
+  import('@/features/departments/DepartmentsPage').then((m) => ({ default: m.DepartmentsPage })),
+)
+const DashboardPage = lazy(() =>
+  import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
+)
+const DepartmentDetailPage = lazy(() =>
+  import('@/features/departments/DepartmentDetailPage').then((m) => ({ default: m.DepartmentDetailPage })),
+)
+const CommitteeRequestsPage = lazy(() =>
+  import('@/features/committees/CommitteeRequestsPage').then((m) => ({ default: m.CommitteeRequestsPage })),
+)
+const CommitteeRequestDetailPage = lazy(() =>
+  import('@/features/committees/CommitteeRequestDetailPage').then((m) => ({
+    default: m.CommitteeRequestDetailPage,
+  })),
+)
+const CommitteesPage = lazy(() =>
+  import('@/features/committees/CommitteesPage').then((m) => ({ default: m.CommitteesPage })),
+)
+const CommitteeDetailPage = lazy(() =>
+  import('@/features/committees/CommitteeDetailPage').then((m) => ({ default: m.CommitteeDetailPage })),
+)
+const DocumentsPage = lazy(() =>
+  import('@/features/documents/DocumentsPage').then((m) => ({ default: m.DocumentsPage })),
+)
+const DocumentDetailPage = lazy(() =>
+  import('@/features/documents/DocumentDetailPage').then((m) => ({ default: m.DocumentDetailPage })),
+)
+const DocumentsSmartSearchPage = lazy(() =>
+  import('@/features/documents/DocumentsSmartSearchPage').then((m) => ({
+    default: m.DocumentsSmartSearchPage,
+  })),
+)
+const MeetingsPage = lazy(() =>
+  import('@/features/meetings/MeetingsPage').then((m) => ({ default: m.MeetingsPage })),
+)
+const MeetingDetailPage = lazy(() =>
+  import('@/features/meetings/MeetingDetailPage').then((m) => ({ default: m.MeetingDetailPage })),
+)
+const MeetingMinutesPage = lazy(() =>
+  import('@/features/meetings/MeetingMinutesPage').then((m) => ({ default: m.MeetingMinutesPage })),
+)
+const MinutesListPage = lazy(() =>
+  import('@/features/meetings/MinutesListPage').then((m) => ({ default: m.MinutesListPage })),
+)
+const DecisionsPage = lazy(() =>
+  import('@/features/decisions/DecisionsPage').then((m) => ({ default: m.DecisionsPage })),
+)
+const DecisionDetailPage = lazy(() =>
+  import('@/features/decisions/DecisionDetailPage').then((m) => ({ default: m.DecisionDetailPage })),
+)
+const TasksPage = lazy(() => import('@/features/tasks/TasksPage').then((m) => ({ default: m.TasksPage })))
+const TaskDetailPage = lazy(() =>
+  import('@/features/tasks/TaskDetailPage').then((m) => ({ default: m.TaskDetailPage })),
+)
+const ProfilePage = lazy(() =>
+  import('@/features/profile/ProfilePage').then((m) => ({ default: m.ProfilePage })),
+)
+const NotificationsPage = lazy(() =>
+  import('@/features/notifications/NotificationsPage').then((m) => ({ default: m.NotificationsPage })),
+)
 
 /**
  * عند تحديث الصفحة يوجد accessToken في التخزين لكن user في الحالة يكون
@@ -72,7 +150,8 @@ function AppBootstrap({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <AppBootstrap>
-      <Routes>
+      <Suspense fallback={<PageSpinner />}>
+        <Routes>
         <Route path="/login" element={<LoginPage />} />
 
         <Route element={<ProtectedRoute />}>
@@ -173,6 +252,7 @@ function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+      </Suspense>
     </AppBootstrap>
   )
 }
