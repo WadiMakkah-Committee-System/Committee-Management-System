@@ -828,6 +828,10 @@ export interface MeetingMinutesDetail {
   minutes: MeetingMinutes
   templates: MinutesTemplate[]
   extracted_items: MeetingExtractedItem[]
+  /** إضافة 2026-09-15 (بلاغ لجين) — محسوبة فعليًا بالباك-إند عبر
+   * _has_access (تشمل صلاحية الدور داخل هذي اللجنة تحديدًا، لا رئاسة
+   * اللجنة فقط) — راجعي docstring can_edit بـschemas/meeting_minutes.py. */
+  can_edit: boolean
 }
 
 export interface MeetingDraft {

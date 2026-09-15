@@ -159,13 +159,19 @@ class MeetingMinutesDetailOut(BaseModel):
     """استجابة GET /{meeting_id}/minutes/detail — توحّد بيانات الاجتماع
     واللجنة والمحضر والقوالب والبنود المستخرجة بنداء HTTP واحد بدل 5
     (راجعي docstring get_minutes_detail بـservices/meeting_minutes_service.py
-    للتصميم الكامل والدافع — التوصية الثانية بتقرير أداء لاما 2026-09-14)."""
+    للتصميم الكامل والدافع — التوصية الثانية بتقرير أداء لاما 2026-09-14).
+
+    can_edit: إضافة 2026-09-15 (بلاغ لجين — عضوة لجنة عادية بصلاحية تعديل
+    فعلية حسب دورها باللجنة كانت تشوف حقول للقراءة فقط): يحسبها الباك-إند
+    فعليًا بنفس _has_access الحقيقية (مصدر الحقيقة الوحيد) بدل ما يخمّن
+    الفرونت محليًا (رئيسة اللجنة فقط) — راجعي get_minutes_detail."""
 
     meeting: MinutesDetailMeetingOut
     committee: MinutesDetailCommitteeOut
     minutes: MeetingMinutesOut
     templates: list[MinutesTemplateOut]
     extracted_items: list[MeetingExtractedItemOut]
+    can_edit: bool
 
 
 class SelectTemplateIn(BaseModel):
