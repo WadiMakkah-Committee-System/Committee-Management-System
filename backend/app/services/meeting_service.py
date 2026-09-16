@@ -976,6 +976,32 @@ async def download_recording(db: AsyncSession, *, actor: User, meeting_id: uuid.
     return recording, content
 
 
+async def _all_recordings(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> list[MeetingRecording]:
+    """
+    تحديث 2026-09-16 (طلب لاما — "بحال الرئيس شغّل التسجيل وطفّاه أكثر من
+    مرة بنفس الاجتماع، تجمع كل الكلام؟"): كل تسجيلات الاجتماع بترتيبها
+    الزمني الصاعد (وليس آخر واحد فقط كـget_latest_recording أعلاه) —
+    تُستخدَم حصرًا من generate_draft أدناه لتوليد مسودة تغطي كل المقاطع
+    معًا بدل أحدثها فقط. نفس صلاحية get_latest_recording بالضبط
+    (meetings.record_audio) — من يقدر يسجّل يقدر يراجع كل مقاطعه.
+    """
+    meeting = await _load_meeting(db, meeting_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
+    await _require_access(
+        db, actor, committee, "meetings.record_audio", "ليست لديك صلاحية الوصول لتسجيل هذا الاجتماع"
+    )
+
+    result = await db.execute(
+        select(MeetingRecording)
+        .where(MeetingRecording.meeting_id == meeting_id, MeetingRecording.deleted_at.is_(None))
+        .order_by(MeetingRecording.recorded_at.asc())
+    )
+    recordings = list(result.scalars().unique().all())
+    if not recordings:
+        raise RecordingNotFoundError("لا يوجد تسجيل صوتي لهذا الاجتماع بعد")
+    return recordings
+
+
 async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingDraft:
     """يتطلب meetings.draft.summarize (FR-AI-001) — بشرط وجود تسجيل صوتي
     فعلي مسبقًا (MeetingValidationError إن لم يوجد، مطابقةً لنص المتطلب
@@ -994,23 +1020,27 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     )
 
     try:
-        recording = await get_latest_recording(db, actor=actor, meeting_id=meeting_id)
+        recordings = await _all_recordings(db, actor=actor, meeting_id=meeting_id)
     except RecordingNotFoundError as exc:
         raise MeetingValidationError(
             "لا يمكن توليد مسودة بدون تسجيل صوتي — يجب رفع تسجيل الاجتماع أولًا"
         ) from exc
 
+    # تحديث 2026-09-16 (طلب لاما): recording_id يبقى عمود مرجعي واحد
+    # (أحدث مقطع) — التوليد الفعلي أدناه يستخدم كل مقاطع recordings معًا
+    # بغض النظر عن هذا المرجع (راجعي gemini_client.generate_meeting_draft).
+    latest_recording = recordings[-1]
     result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         draft = MeetingDraft(
             meeting_id=meeting_id,
-            recording_id=recording.recording_id,
+            recording_id=latest_recording.recording_id,
             generated_by=actor.user_id,
         )
         db.add(draft)
     else:
-        draft.recording_id = recording.recording_id
+        draft.recording_id = latest_recording.recording_id
         draft.generated_by = actor.user_id
     draft.status = MeetingDraftStatus.processing
     draft.error_message = None
@@ -1018,15 +1048,20 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     await db.refresh(draft)
 
     participant_names = [member.full_name for member in _all_committee_members(committee)]
-    audio_content = await storage_client.download_object(recording.storage_path)
+    audio_segments = [
+        gemini_client.AudioSegment(
+            content=await storage_client.download_object(r.storage_path),
+            mime_type=r.mime_type,
+            file_name=r.file_name,
+        )
+        for r in recordings
+    ]
 
     try:
         generated = await gemini_client.generate_meeting_draft(
             meeting_title=meeting.title,
             participant_names=participant_names,
-            audio_content=audio_content,
-            audio_mime_type=recording.mime_type,
-            audio_file_name=recording.file_name,
+            audio_segments=audio_segments,
         )
     except gemini_client.GeminiError as exc:
         draft.status = MeetingDraftStatus.failed

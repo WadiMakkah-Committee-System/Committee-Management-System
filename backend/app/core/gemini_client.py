@@ -28,6 +28,7 @@ db/migrations/0025_meeting_recordings_and_drafts.sql لقرار اختيار Gem
 
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import Literal
 
 import httpx
@@ -48,6 +49,17 @@ class GeminiNotConfiguredError(GeminiError):
     """GEMINI_API_KEY غير مُعبّأ بالبيئة الحالية."""
 
 
+@dataclass(frozen=True)
+class AudioSegment:
+    """مقطع تسجيل صوتي واحد يُرفع لـGemini — تحديث 2026-09-16: قائمة من
+    هذا النوع (وليس ملفًا واحدًا) هي مدخل generate_meeting_draft الآن،
+    لدعم اجتماع أوقف رئيسه التسجيل واستأنفه أكثر من مرة."""
+
+    content: bytes
+    mime_type: str
+    file_name: str
+
+
 def _require_api_key() -> str:
     if not settings.GEMINI_API_KEY:
         raise GeminiNotConfiguredError("إعدادات Gemini غير مكتملة (GEMINI_API_KEY)")
@@ -61,7 +73,13 @@ def _require_api_key() -> str:
 # _RESPONSE_SCHEMA (الحقول/الأنواع يجب أن تتطابق تمامًا).
 _PROMPT_TEMPLATE = """أنتِ مساعدة ذكاء اصطناعي متخصصة في تحليل تسجيلات اجتماعات اللجان الرسمية بالعربية.
 
-سيُزوَّدك بملف صوتي كامل لاجتماع لجنة باسم: "{meeting_title}"
+سيُزوَّدك بملف صوتي كامل (أو أكثر من ملف — لو أوقف رئيس اللجنة التسجيل
+واستأنفه أكثر من مرة أثناء نفس الاجتماع) لاجتماع لجنة باسم: "{meeting_title}"
+لو زُوِّدت بأكثر من ملف، عامليها كمقاطع متتالية لنفس الاجتماع المتصل
+بترتيب إرفاقها بالضبط (الأول فالثاني...)، لا كاجتماعات منفصلة — ولا
+تفترضي أن الوقت (mm:ss) بكل مقطع يتصل تلقائيًا برقم الوقت بالمقطع الذي
+قبله (كل ملف يبدأ عدّه من 00:00 في الغالب)؛ ركّزي على استمرارية الحديث
+والمتحدثين نفسها بدل الوقت الدقيق عبر الملفات.
 
 قائمة المشاركين المسجَّلين رسميًا بهذا الاجتماع (استخدميها لمطابقة الأصوات
 بالأسماء الحقيقية):
@@ -286,18 +304,30 @@ _GENERATE_RETRY_BASE_DELAY_SECONDS = 3
 
 
 async def _generate_content_with_retry(
-    client: httpx.AsyncClient, api_key: str, *, prompt: str, audio_mime_type: str, file_uri: str
+    client: httpx.AsyncClient, api_key: str, *, prompt: str, audio_parts: list[tuple[str, str]]
 ) -> httpx.Response:
     """Gemini يرجّع أحيانًا 503 (UNAVAILABLE — ضغط مؤقت على الموديل) —
     إعادة محاولة قصيرة بتأخير متصاعد أفضل من فشل التوليد فورًا وإجبار
     المستخدم يضغط الزر يدويًا من جديد. أي status code ثاني (400/401/404...)
-    يرجع فورًا بدون إعادة محاولة لأنه خطأ دائم مو مؤقت."""
+    يرجع فورًا بدون إعادة محاولة لأنه خطأ دائم مو مؤقت.
+
+    تحديث 2026-09-16 (طلب لاما — دمج مقاطع تسجيل متعددة لنفس الاجتماع):
+    audio_parts قائمة (file_uri, mime_type) بدل ملف واحد — عادة عنصر
+    واحد فقط، أو أكثر لو تعدّد مقاطع الرفع لهذا الاجتماع
+    (get_latest_recording → _all_recordings بـmeeting_service.py). كل
+    عنصر يُدرَج كـfile_data منفصل ضمن نفس مصفوفة parts بنفس طلب
+    generateContent الواحد، بترتيبها الزمني — Gemini يقبل عدة ملفات صوت
+    بنفس الطلب ويعالجها كمدخل واحد، فلا حاجة لأي دمج صوتي فعلي على
+    السيرفر (ffmpeg أو غيره)، ولا استدعاء Gemini إضافي لكل مقطع."""
     request_body = {
         "contents": [
             {
                 "parts": [
                     {"text": prompt},
-                    {"file_data": {"mime_type": audio_mime_type, "file_uri": file_uri}},
+                    *[
+                        {"file_data": {"mime_type": mime_type, "file_uri": file_uri}}
+                        for file_uri, mime_type in audio_parts
+                    ],
                 ]
             }
         ],
@@ -415,26 +445,49 @@ async def extract_meeting_items(*, summary: str) -> list[str]:
 
 
 async def generate_meeting_draft(
-    *, meeting_title: str, participant_names: list[str], audio_content: bytes, audio_mime_type: str, audio_file_name: str
+    *, meeting_title: str, participant_names: list[str], audio_segments: list[AudioSegment]
 ) -> dict:
-    """يرفع التسجيل، يستدعي Gemini، ويرجع dict مطابق تمامًا لـ_RESPONSE_SCHEMA
-    (نفس مفاتيح أعمدة meeting_drafts). يرمي GeminiError عند أي فشل —
-    الطبقة المستدعية (meeting_draft_service.generate_draft) مسؤولة عن
-    حفظ status='failed' + error_message بدل السماح للاستثناء يتسرب للـAPI مباشرة."""
+    """يرفع كل مقاطع التسجيل، يستدعي Gemini، ويرجع dict مطابق تمامًا
+    لـ_RESPONSE_SCHEMA (نفس مفاتيح أعمدة meeting_drafts). يرمي GeminiError
+    عند أي فشل — الطبقة المستدعية (meeting_service.generate_draft) مسؤولة
+    عن حفظ status='failed' + error_message بدل السماح للاستثناء يتسرب
+    للـAPI مباشرة.
+
+    تحديث 2026-09-16 (طلب لاما — "بحال التسجيل كان أكثر من مرة، تجمع كل
+    الكلام؟"): كانت تأخذ ملفًا صوتيًا واحدًا فقط (أحدث تسجيل — راجعي
+    get_latest_recording القديمة بـmeeting_service.py)، فأي مقاطع سابقة
+    من نفس الاجتماع (لو أوقف رئيس اللجنة التسجيل واستأنفه) كانت تُتجاهَل
+    كليًا من المسودة بصمت. الآن تقبل audio_segments (كل تسجيلات الاجتماع
+    بترتيبها الزمني)، وتُرفَع كلها لـGemini Files API بالتوازي
+    (asyncio.gather — الرفع مستقل تمامًا لكل مقطع)، ثم تُدرَج معًا كأجزاء
+    متعددة بنفس طلب generateContent الواحد (راجعي _generate_content_with_retry
+    أدناه) — لا استدعاء Gemini منفصل لكل مقطع، ولا أي دمج صوتي فعلي على
+    السيرفر (ffmpeg أو مشابه): Gemini نفسه يقبل عدة ملفات صوت بنفس الطلب.
+    الأثر على الأداء تقريبًا معدوم عمليًا: يحدث فقط لحظة توليد المسودة
+    يدويًا بعد انتهاء الاجتماع (ليس أثناءه)، وتكلفة معالجة Gemini تتبع
+    مجموع مدة الصوت الفعلية بغض النظر عن عدد الملفات، لا عددها."""
+    if not audio_segments:
+        raise GeminiError("لا توجد مقاطع تسجيل صوتي لتوليد المسودة منها")
+
     api_key = _require_api_key()
     prompt = build_prompt(meeting_title=meeting_title, participant_names=participant_names)
 
     async with httpx.AsyncClient(timeout=180.0) as client:
-        file_uri = await _upload_audio_file(
-            client, api_key, content=audio_content, mime_type=audio_mime_type, display_name=audio_file_name
+        file_uris = await asyncio.gather(
+            *[
+                _upload_audio_file(
+                    client, api_key, content=segment.content, mime_type=segment.mime_type, display_name=segment.file_name
+                )
+                for segment in audio_segments
+            ]
         )
+        audio_parts = [(file_uri, segment.mime_type) for file_uri, segment in zip(file_uris, audio_segments)]
 
         generate_response = await _generate_content_with_retry(
             client,
             api_key,
             prompt=prompt,
-            audio_mime_type=audio_mime_type,
-            file_uri=file_uri,
+            audio_parts=audio_parts,
         )
     if generate_response.status_code >= 400:
         raise GeminiError(f"فشل استدعاء Gemini لتوليد المسودة: {generate_response.status_code} — {generate_response.text[:300]}")
