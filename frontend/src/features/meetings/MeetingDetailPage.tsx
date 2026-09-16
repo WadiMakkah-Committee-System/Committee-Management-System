@@ -311,6 +311,15 @@ export function MeetingDetailPage() {
   // FR-TASK-005 إلى FR-TASK-012 + FR-DEC-001 إلى FR-DEC-004 — راجعي رأس
   // app/services/meeting_service.py (قسم "البنود المستخرجة من الاجتماع").
   const extractedItemsQuery = useMeetingExtractedItems(meetingEnded ? meetingId : undefined)
+  // إصلاح 2026-09-16 (بلاغ لاما — منحت meetings.draft.view/ai_items.view
+  // لـ"عضو اللجنة" من شاشة الأدوار والصلاحيات، وما زال القسم لا يظهر
+  // له): القسم أدناه كان مشروطًا بـcanManage (رئيس اللجنة/صلاحية نظامية
+  // فقط) بصرف النظر كليًا عن صلاحية Committee Role الفعلية الممنوحة —
+  // نفس نمط recordingForbidden أعلاه بالضبط (الاعتماد على 403 الحقيقي
+  // القادم من الباك-إند، لا تخمين حالة العضو بالفرونت-إند).
+  const extractedItemsForbidden =
+    (extractedItemsQuery.error as { response?: { status?: number } } | undefined)?.response
+      ?.status === 403
   const extractItemsMutation = useExtractMeetingItems()
   const addManualItemMutation = useAddManualExtractedItem()
   const deleteExtractedItemMutation = useDeleteExtractedItem()
@@ -1054,7 +1063,9 @@ export function MeetingDetailPage() {
                     </div>
 
                     {draftTab === 'transcript' ? (
-                      !draftQuery.data.full_transcript?.length ? (
+                      !draftQuery.data.can_view_transcript ? (
+                        <p className="text-text-muted">ليست لديك صلاحية عرض التفريغ الصوتي.</p>
+                      ) : !draftQuery.data.full_transcript?.length ? (
                         <p className="text-text-muted">لا يوجد تفريغ متاح لهذه المسودة.</p>
                       ) : (
                         <div className="flex max-h-96 flex-col gap-2 overflow-y-auto rounded-sm border border-border-default bg-surface-secondary p-2">
@@ -1073,7 +1084,11 @@ export function MeetingDetailPage() {
                       <div className="flex flex-col gap-3">
                         <div>
                           <p className="mb-1 font-semibold text-text-primary">الملخص</p>
-                          <p className="leading-relaxed text-text-secondary">{draftQuery.data.summary}</p>
+                          {!draftQuery.data.can_view_summary ? (
+                            <p className="text-text-muted">ليست لديك صلاحية عرض ملخص الاجتماع.</p>
+                          ) : (
+                            <p className="leading-relaxed text-text-secondary">{draftQuery.data.summary}</p>
+                          )}
                         </div>
                         {!!draftQuery.data.decisions?.length && (
                           <div>
@@ -1172,95 +1187,106 @@ export function MeetingDetailPage() {
         </Card>
       )}
 
-      {canManage && meetingEnded && draftQuery.data?.status === 'completed' && (
+      {meetingEnded && (
         <Card className="p-0">
           <div className="flex items-center justify-between gap-2 border-b border-border-default px-4 py-3">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
               <ClipboardList size={16} className="text-text-muted" />
               البنود المستخرجة
             </h3>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Sparkles size={14} />}
-              onClick={handleExtractItems}
-              loading={extractItemsMutation.isPending}
-            >
-              استخراج بنود من الملخص
-            </Button>
-          </div>
-
-          <div className="flex flex-col gap-3 px-4 py-3">
-            <div className="flex gap-2">
-              <Input
-                placeholder="أضف بندًا يدويًا..."
-                value={manualItemText}
-                onChange={(e) => setManualItemText(e.target.value)}
-                className="flex-1"
-              />
+            {canManage && draftQuery.data?.status === 'completed' && (
               <Button
                 size="sm"
                 variant="secondary"
-                icon={<Plus size={14} />}
-                onClick={handleAddManualItem}
-                loading={addManualItemMutation.isPending}
-                disabled={!manualItemText.trim()}
+                icon={<Sparkles size={14} />}
+                onClick={handleExtractItems}
+                loading={extractItemsMutation.isPending}
               >
-                إضافة
+                استخراج بنود من الملخص
               </Button>
-            </div>
+            )}
+          </div>
 
-            {extractedItemsQuery.isLoading ? (
-              <Skeleton className="h-16 w-full" />
-            ) : !extractedItemsQuery.data?.length ? (
-              <p className="text-xs text-text-muted">
-                لا توجد بنود بعد — اضغط "استخراج بنود من الملخص" لتحويل نقاط الاجتماع إلى مهام أو
-                قرارات، أو أضف بندًا يدويًا.
-              </p>
+          <div className="flex flex-col gap-3 px-4 py-3">
+            {extractedItemsForbidden ? (
+              <p className="text-xs text-text-muted">ليست لديك صلاحية عرض بنود هذا الاجتماع.</p>
             ) : (
-              <ul className="flex flex-col gap-2">
-                {extractedItemsQuery.data.map((item) => (
-                  <li
-                    key={item.item_id}
-                    className="flex items-center justify-between gap-3 rounded-sm border border-border-default px-3 py-2 text-sm"
-                  >
-                    <span className="flex-1 text-text-primary">{item.text}</span>
-                    {item.status === 'pending' ? (
-                      <div className="flex shrink-0 items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          icon={<ArrowLeftRight size={14} />}
-                          onClick={() => {
-                            setAssignModalItem(item)
-                            setAssignModalError(null)
-                          }}
-                        >
-                          تعيين
-                        </Button>
-                        <button
-                          onClick={() => setDeletingExtractedItemId(item.item_id)}
-                          className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
-                          aria-label="حذف البند"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ) : (
-                      <span
-                        className={cn(
-                          'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold',
-                          item.status === 'assigned_task'
-                            ? 'border-info-border/30 bg-info-bg text-info'
-                            : 'border-success-border/30 bg-success-bg text-success',
-                        )}
+              <>
+                {canManage && (
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="أضف بندًا يدويًا..."
+                      value={manualItemText}
+                      onChange={(e) => setManualItemText(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<Plus size={14} />}
+                      onClick={handleAddManualItem}
+                      loading={addManualItemMutation.isPending}
+                      disabled={!manualItemText.trim()}
+                    >
+                      إضافة
+                    </Button>
+                  </div>
+                )}
+
+                {extractedItemsQuery.isLoading ? (
+                  <Skeleton className="h-16 w-full" />
+                ) : !extractedItemsQuery.data?.length ? (
+                  <p className="text-xs text-text-muted">
+                    {canManage
+                      ? 'لا توجد بنود بعد — اضغط "استخراج بنود من الملخص" لتحويل نقاط الاجتماع إلى مهام أو قرارات، أو أضف بندًا يدويًا.'
+                      : 'لا توجد بنود لهذا الاجتماع بعد.'}
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-2">
+                    {extractedItemsQuery.data.map((item) => (
+                      <li
+                        key={item.item_id}
+                        className="flex items-center justify-between gap-3 rounded-sm border border-border-default px-3 py-2 text-sm"
                       >
-                        {item.status === 'assigned_task' ? 'حُوِّل لمهمة' : 'حُوِّل لقرار'}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                        <span className="flex-1 text-text-primary">{item.text}</span>
+                        {item.status === 'pending' ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              icon={<ArrowLeftRight size={14} />}
+                              onClick={() => {
+                                setAssignModalItem(item)
+                                setAssignModalError(null)
+                              }}
+                            >
+                              تعيين
+                            </Button>
+                            <button
+                              onClick={() => setDeletingExtractedItemId(item.item_id)}
+                              className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+                              aria-label="حذف البند"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <span
+                            className={cn(
+                              'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+                              item.status === 'assigned_task'
+                                ? 'border-info-border/30 bg-info-bg text-info'
+                                : 'border-success-border/30 bg-success-bg text-success',
+                            )}
+                          >
+                            {item.status === 'assigned_task' ? 'حُوِّل لمهمة' : 'حُوِّل لقرار'}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         </Card>

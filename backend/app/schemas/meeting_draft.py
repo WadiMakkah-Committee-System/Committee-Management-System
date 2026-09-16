@@ -75,6 +75,15 @@ class MeetingDraftOut(BaseModel):
 
     full_transcript: list[TranscriptSegment] | None
     summary: str | None
+    #: هل يملك الطالب فعليًا صلاحية عرض full_transcript/summary أعلاه —
+    #: تحديث 2026-09-16 (تفصيل صلاحيات المسودة): full_transcript/summary
+    #: قد يكونان None لأحد سببين مختلفين تمامًا يلزم تمييزهما بالواجهة:
+    #: (1) لا توجد بيانات أصلًا بالمسودة، أو (2) الطالب لا يملك الصلاحية
+    #: (تم إخفاء القيمة الحقيقية عمدًا — راجعي app/api/v1/meetings.py::
+    #: _draft_out). القيمتان دائمًا True لمن يملك meetings.draft.view
+    #: الكاملة.
+    can_view_transcript: bool
+    can_view_summary: bool
     decisions: list[DecisionDraftItem] | None
     action_items: list[ActionItemDraftItem] | None
     key_points: list[str] | None

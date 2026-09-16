@@ -514,20 +514,40 @@ def _recording_out(recording) -> MeetingRecordingOut:
     )
 
 
-def _draft_out(draft) -> MeetingDraftOut:
+def _draft_out(
+    draft,
+    *,
+    can_view_transcript: bool = True,
+    can_view_summary: bool = True,
+    can_view_full: bool = True,
+) -> MeetingDraftOut:
+    """
+    تحديث 2026-09-16 (تفصيل صلاحيات عرض المسودة — راجعي رأس
+    db/migrations/0035 وmeeting_service.get_draft للخلفية الكاملة):
+    كل المعاملات افتراضيًا True هنا (مسار generate_meeting_draft أدناه —
+    لا يصله إلا من يملك meetings.draft.summarize أصلًا، فمن المنطقي يشوف
+    كل ما ولّده لتوّه) — get_meeting_draft وحدها تُمرّر القيم الفعلية
+    المحسوبة من get_draft. can_view_full تحديدًا تتحكم بالحقول
+    "الإدارية" (القرارات/المهام/نقاط مهمة/التوصيات/نقاط معلّقة/ملاحظات
+    الالتزام) التي لم تطلب لاما توسيعها لعضو اللجنة — تبقى حصرًا لمن يملك
+    meetings.draft.view الكاملة، حتى لو مَلَك transcript.view/summary.view
+    فقط. الإخفاء هنا استبدال بـNone/[] فقط عند False، وليس حذفًا للحقل.
+    """
     return MeetingDraftOut(
         draft_id=draft.draft_id,
         meeting_id=draft.meeting_id,
         status=draft.status.value,
         error_message=draft.error_message,
-        full_transcript=draft.full_transcript,
-        summary=draft.summary,
-        decisions=draft.decisions,
-        action_items=draft.action_items,
-        key_points=draft.key_points,
-        recommendations=draft.recommendations,
-        open_items=draft.open_items,
-        compliance_notes=draft.compliance_notes,
+        full_transcript=draft.full_transcript if can_view_transcript else None,
+        summary=draft.summary if can_view_summary else None,
+        can_view_transcript=can_view_transcript,
+        can_view_summary=can_view_summary,
+        decisions=draft.decisions if can_view_full else None,
+        action_items=draft.action_items if can_view_full else None,
+        key_points=draft.key_points if can_view_full else None,
+        recommendations=draft.recommendations if can_view_full else None,
+        open_items=draft.open_items if can_view_full else None,
+        compliance_notes=draft.compliance_notes if can_view_full else None,
         generated_by=CommitteeMemberUserOut.model_validate(draft.generator),
         generated_at=draft.generated_at,
         created_at=draft.created_at,
@@ -630,10 +650,17 @@ async def get_meeting_draft(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> MeetingDraftOut:
     try:
-        draft = await meeting_service.get_draft(db, actor=current_user, meeting_id=meeting_id)
+        draft, can_view_transcript, can_view_summary, can_view_full = await meeting_service.get_draft(
+            db, actor=current_user, meeting_id=meeting_id
+        )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    return _draft_out(draft)
+    return _draft_out(
+        draft,
+        can_view_transcript=can_view_transcript,
+        can_view_summary=can_view_summary,
+        can_view_full=can_view_full,
+    )
 
 
 # ============================== البنود المستخرجة من الاجتماع ==============================

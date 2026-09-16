@@ -126,6 +126,19 @@ async def _require_access(
         raise MeetingForbiddenError(message)
 
 
+async def _has_any_access(
+    db: AsyncSession, actor: User, committee: Committee, codes: list[str]
+) -> bool:
+    """يكفي امتلاك واحد من عدّة أكواد بديلة (OR) — تُستخدم لصلاحيات العرض
+    الجزئي (meetings.transcript.view/meetings.summary.view/ai_items.view)
+    التي تُغني عن meetings.draft.view الكاملة لكل حقل على حدة (تحديث
+    2026-09-16، راجعي رأس db/migrations/0035 للخلفية الكاملة)."""
+    for code in codes:
+        if await _has_access(db, actor, committee, code):
+            return True
+    return False
+
+
 async def _committee_ids_with_committee_role_code(
     db: AsyncSession, actor: User, code: str
 ) -> set[uuid.UUID]:
@@ -1086,19 +1099,37 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     return draft
 
 
-async def get_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingDraft:
-    """يتطلب meetings.draft.view."""
+async def get_draft(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
+) -> tuple[MeetingDraft, bool, bool, bool]:
+    """
+    تحديث 2026-09-16 (طلب لاما — تفصيل صلاحيات عرض المسودة إلى ثلاث):
+    كانت meetings.draft.view وحدها تتحكم بعرض المسودة كلها دفعة واحدة —
+    الآن يكفي امتلاك meetings.draft.view (وصول كامل، رئيس اللجنة عادةً)
+    **أو** إحدى الصلاحيتين الجزئيتين (meetings.transcript.view لحقل
+    full_transcript، meetings.summary.view لحقل summary) للوصول أصلًا —
+    403 فقط إن لم يملك أيًّا من الثلاث. الحقول التي لا يملك صلاحيتها
+    تحديدًا تُخفى (redact) بمستوى الـAPI (راجعي app/api/v1/meetings.py::
+    _draft_out) بالاعتماد على القيم الثلاث المُعادة هنا — بقية حقول
+    المسودة (القرارات/المهام/نقاط مهمة...المستخرَجة آليًا) تبقى حصرًا لمن
+    يملك meetings.draft.view الكاملة تحديدًا (القيمة الرابعة can_full —
+    لم تطلب لاما توسيع هذه الحقول تحديدًا لعضو اللجنة، فمنح
+    meetings.transcript.view/meetings.summary.view وحدهما لا يكفي
+    لرؤيتها، تفاديًا لتسريب بيانات لم تُطلَب).
+    """
     meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
-    await _require_access(
-        db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض مسودة هذا الاجتماع"
-    )
+    can_full = await _has_access(db, actor, committee, "meetings.draft.view")
+    can_transcript = can_full or await _has_access(db, actor, committee, "meetings.transcript.view")
+    can_summary = can_full or await _has_access(db, actor, committee, "meetings.summary.view")
+    if not (can_full or can_transcript or can_summary):
+        raise MeetingForbiddenError("ليست لديك صلاحية عرض مسودة هذا الاجتماع")
 
     result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         raise DraftNotFoundError("لا توجد مسودة مولَّدة لهذا الاجتماع بعد")
-    return draft
+    return draft, can_transcript, can_summary, can_full
 
 # ============================== البنود المستخرجة من الاجتماع ==============================
 # FR-TASK-005 إلى FR-TASK-012 + FR-DEC-001 إلى FR-DEC-004 (§4.2/§5.2 SRS،
@@ -1131,12 +1162,13 @@ async def _list_extracted_items_query(
 async def list_extracted_items(
     db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
 ) -> list[MeetingExtractedItem]:
-    """يتطلب meetings.draft.view."""
+    """يتطلب meetings.draft.view (وصول كامل) أو ai_items.view (وصول جزئي
+    مخصَّص لهذه القائمة تحديدًا — تحديث 2026-09-16 لطلب لاما، أول ربط
+    فعلي لهذا الكود المزروع بالكتالوج منذ 0006 دون استخدام حتى الآن)."""
     meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
-    await _require_access(
-        db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض بنود هذا الاجتماع"
-    )
+    if not await _has_any_access(db, actor, committee, ["meetings.draft.view", "ai_items.view"]):
+        raise MeetingForbiddenError("ليست لديك صلاحية عرض بنود هذا الاجتماع")
     return await _list_extracted_items_query(db, meeting_id)
 
 

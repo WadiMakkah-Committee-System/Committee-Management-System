@@ -846,6 +846,13 @@ export interface MeetingDraft {
   error_message: string | null
   full_transcript: MeetingDraftTranscriptSegment[] | null
   summary: string | null
+  /** هل يملك المستخدم الحالي صلاحية عرض full_transcript/summary أعلاه —
+   * تحديث 2026-09-16 (تفصيل صلاحيات عرض المسودة): القيمة null بالحقل
+   * المقابل قد تعني "لا توجد بيانات" أو "لا تملك الصلاحية" — ميّزي بينهما
+   * عبر هاتين القيمتين، لا بفحص null وحده. راجعي backend/app/api/v1/
+   * meetings.py::_draft_out. */
+  can_view_transcript: boolean
+  can_view_summary: boolean
   decisions: MeetingDraftDecisionItem[] | null
   action_items: MeetingDraftActionItem[] | null
   key_points: string[] | null
