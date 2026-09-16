@@ -325,6 +325,10 @@ async def approve_committee_request(
             actor_user_id=current_user.user_id,
         )
     )
+    # تحديث 2026-09-16 (طلب لاما): بريد لكل أعضاء اللجنة نفسها (وليس فقط
+    # صاحب الطلب أعلاه) — request.committee محمَّلة فعليًا هنا (راجعي
+    # populate_existing=True بـcommittee_service._load_request).
+    run_detached(notification_service.notify_committee_created(request.committee))
     return CommitteeFormationRequestOut.model_validate(request)
 
 

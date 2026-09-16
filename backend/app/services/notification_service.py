@@ -116,6 +116,19 @@ def _participant_emails(meeting: Meeting) -> list[str]:
     return [p.email for p in meeting.participants if p.email]
 
 
+def _committee_member_emails(committee: Committee) -> list[str]:
+    return [m.email for m in committee.members if m.email]
+
+
+# تحديث 2026-09-16 (طلب لاما): تسميات عربية لأولوية المهمة داخل بريد
+# "مهمة جديدة" أدناه — TaskPriority نفسها إنجليزية (low/medium/high).
+_TASK_PRIORITY_LABELS_AR: dict[str, str] = {
+    "low": "منخفضة",
+    "medium": "متوسطة",
+    "high": "عالية",
+}
+
+
 def _wrap_html(body_inner: str) -> str:
     return (
         '<div dir="rtl" style="font-family: Tahoma, Arial, sans-serif; '
@@ -356,9 +369,26 @@ _TASK_STATUS_LABELS: dict[TaskStatus, str] = {
 
 
 async def notify_task_created(task: Task, *, actor_user_id: uuid.UUID) -> None:
-    """FR-TASK-001/002: إشعار المسؤول الأول عن المهمة عند إنشائها (ما لم يكن هو المنشئ نفسه)."""
+    """
+    FR-TASK-001/002: إشعار المسؤول الأول عن المهمة عند إنشائها (ما لم يكن
+    هو المنشئ نفسه) — داخل النظام. تحديث 2026-09-16 (طلب لاما): بريد
+    إلكتروني لنفس المستلم أيضًا. لا يوجد حقل "وصف" بنموذج Task حاليًا،
+    فمحتوى البريد يقتصر على العنوان/تاريخ الاستحقاق/الأولوية/اسم اللجنة.
+    """
     if task.assignee_user_id == actor_user_id:
         return
+    if task.assignee.email:
+        subject = f"مهمة جديدة: {task.title}"
+        body = _wrap_html(
+            f"<p>تم إسناد مهمة جديدة إليك ضمن لجنة <strong>{task.committee.name}</strong>:</p>"
+            f"<h3>{task.title}</h3>"
+            "<ul>"
+            f"<li><strong>تاريخ الاستحقاق:</strong> {task.end_date.strftime('%Y-%m-%d')}</li>"
+            f"<li><strong>الأولوية:</strong> "
+            f"{_TASK_PRIORITY_LABELS_AR.get(task.priority.value, task.priority.value)}</li>"
+            "</ul>"
+        )
+        await send_email(to=[task.assignee.email], subject=subject, html_body=body)
     await _notify_user(
         task.assignee_user_id,
         event_type="task_created",
@@ -533,7 +563,8 @@ async def notify_committee_request_escalated(
 async def notify_committee_request_approved(
     request: CommitteeFormationRequest, *, actor_user_id: uuid.UUID
 ) -> None:
-    """إشعار صاحب الطلب باعتماده نهائيًا."""
+    """إشعار صاحب الطلب باعتماده نهائيًا (داخل النظام فقط — راجعي
+    notify_committee_created أدناه للبريد الموجَّه لأعضاء اللجنة أنفسهم)."""
     if request.requested_by == actor_user_id:
         return
     await _notify_user(
@@ -543,6 +574,23 @@ async def notify_committee_request_approved(
         related_entity_type="committee_request",
         related_entity_id=request.request_id,
     )
+
+
+async def notify_committee_created(committee: Committee) -> None:
+    """
+    تحديث 2026-09-16 (طلب لاما): بريد إلكتروني لكل أعضاء اللجنة فور
+    اعتماد طلب تشكيلها فعليًا وإنشائها — بخلاف notify_committee_request_approved
+    أعلاه (تلك تُخطر صاحب الطلب فقط، بالإشعار الداخلي فقط). بريد فقط
+    حاليًا بلا إشعار داخل النظام — لم تُطلَب هذي القناة الثانية هنا.
+    """
+    subject = f"تم إنشاء لجنة: {committee.name}"
+    body = _wrap_html(
+        "<p>تم اعتماد وإنشاء اللجنة التالية:</p>"
+        f"<h3>{committee.name}</h3>"
+        f"<p><strong>تاريخ انتهاء عمل اللجنة:</strong> "
+        f"{committee.end_date.strftime('%Y-%m-%d')}</p>"
+    )
+    await send_email(to=_committee_member_emails(committee), subject=subject, html_body=body)
 
 
 async def notify_committee_request_rejected(
@@ -567,7 +615,22 @@ async def notify_committee_request_rejected(
 
 
 async def notify_decision_created(decision: Decision, *, actor_user_id: uuid.UUID) -> None:
-    """قرار جديد → إشعار كل أعضاء اللجنة (decision.assignees، مشتقّة تلقائيًا من العضوية)."""
+    """
+    قرار جديد → إشعار كل أعضاء اللجنة (decision.assignees، مشتقّة تلقائيًا
+    من العضوية) داخل النظام. تحديث 2026-09-16 (طلب لاما): بريد إلكتروني
+    لنفس المستلمين أيضًا (باستثناء منشئ القرار نفسه، نفس منطق الإشعار
+    الداخلي أدناه).
+    """
+    recipient_emails = [
+        u.email for u in decision.assignees if u.email and u.user_id != actor_user_id
+    ]
+    if recipient_emails:
+        subject = f"قرار جديد: {decision.title}"
+        body = _wrap_html(
+            f"<p>تم إنشاء قرار جديد ضمن لجنة <strong>{decision.committee.name}</strong>:</p>"
+            f"<h3>{decision.title}</h3>"
+        )
+        await send_email(to=recipient_emails, subject=subject, html_body=body)
     await _notify_many(
         [u.user_id for u in decision.assignees],
         event_type="decision_created",
