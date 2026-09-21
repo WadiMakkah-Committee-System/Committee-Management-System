@@ -44,6 +44,7 @@ export function DepartmentDetailPage() {
   const [detailUserId, setDetailUserId] = useState<string | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
+  const [assignBusy, setAssignBusy] = useState(false)
 
   function openAssignModal() {
     setAssignError(null)
@@ -53,19 +54,45 @@ export function DepartmentDetailPage() {
   /** مرشّحو الإضافة = كل مستخدمي النظام ما عدا من هو أصلاً عضو بهذه الإدارة. */
   const assignCandidates = (allUsers ?? []).filter((u) => u.dep_id !== detail?.dep_id)
 
-  function handleAssignExisting(userId: string) {
+  /**
+   * إضافة عدة مستخدمين دفعة واحدة (طلب المستخدمة 2026-09-21 — Checkboxes
+   * بدل تكرار فتح النافذة لكل مستخدم). لا يوجد endpoint جماعي بالباك-إند،
+   * فتُنفَّذ PATCH /users/{id} لكل مستخدم على حدة بالتتابع (وليس بالتوازي،
+   * تفاديًا لتضارب حالة assignMutation نفسها بين الاستدعاءات المتزامنة).
+   * عند فشل بعض المستخدمين، يبقى من نجح مضافًا فعليًا، وتُعرض رسالة تلخّص
+   * من فشل والسبب، وتبقى النافذة مفتوحة ليُعاد اختيار الفاشلين فقط.
+   */
+  async function handleAssignExisting(userIds: string[]) {
     if (!detail) return
     setAssignError(null)
-    assignMutation.mutate(
-      { userId, payload: { dep_id: detail.dep_id } },
-      {
-        onSuccess: () => {
-          setAssignOpen(false)
-          showToast('تمت إضافة المستخدم إلى الإدارة بنجاح', 'success')
-        },
-        onError: (err) => setAssignError(extractErrorMessage(err)),
-      },
-    )
+    setAssignBusy(true)
+
+    const failures: string[] = []
+    for (const userId of userIds) {
+      const candidate = assignCandidates.find((u) => u.user_id === userId)
+      try {
+        await assignMutation.mutateAsync({ userId, payload: { dep_id: detail.dep_id } })
+      } catch (err) {
+        const name = candidate ? `${candidate.first_name} ${candidate.last_name}` : userId
+        failures.push(`${name}: ${extractErrorMessage(err)}`)
+      }
+    }
+
+    setAssignBusy(false)
+
+    if (failures.length === 0) {
+      setAssignOpen(false)
+      showToast(
+        userIds.length > 1 ? `تمت إضافة ${userIds.length} مستخدمين إلى الإدارة بنجاح` : 'تمت إضافة المستخدم إلى الإدارة بنجاح',
+        'success',
+      )
+      return
+    }
+
+    if (failures.length < userIds.length) {
+      showToast(`تمت إضافة ${userIds.length - failures.length} من ${userIds.length}، وتعذّرت إضافة الباقي`, 'error')
+    }
+    setAssignError(failures.join(' — '))
   }
 
   function handleEdit(values: UserUpdatePayload) {
@@ -232,7 +259,7 @@ export function DepartmentDetailPage() {
         onClose={() => setAssignOpen(false)}
         candidates={assignCandidates}
         onAssign={handleAssignExisting}
-        loading={assignMutation.isPending}
+        loading={assignBusy}
         serverError={assignError}
       />
 
