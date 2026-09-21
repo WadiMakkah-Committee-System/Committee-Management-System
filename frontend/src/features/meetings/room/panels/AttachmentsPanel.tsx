@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
 import { Download, FileText, MonitorUp, Paperclip, Trash2, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -12,16 +12,6 @@ import {
   useUploadMeetingAttachment,
 } from '@/hooks/useMeetings'
 import { extractErrorMessage, formatFileSize } from '@/lib/utils'
-
-/** ملف قيد الرفع فعليًا — يُعرض كصف مؤقت بقائمة المرفقات مع مؤشر تحميل،
- * لأن الرفع (خصوصًا لملفات كبيرة) قد يأخذ وقتًا محسوسًا ولا يوجد أي
- * تغذية راجعة مرئية أثناءه غير زر "إضافة" نفسه (بلاغ المستخدمة
- * 2026-09-21: ما يظهر شيء يدل إن العملية شغالة أثناء رفع الملف). */
-interface UploadingFile {
-  localId: string
-  name: string
-  size: number
-}
 
 export function AttachmentsPanel({
   meetingId,
@@ -40,25 +30,15 @@ export function AttachmentsPanel({
   const openMutation = useOpenMeetingAttachment()
   const deleteMutation = useDeleteMeetingAttachment()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([])
 
   function handleFilesSelected(files: FileList | null) {
     if (!files || files.length === 0) return
     Array.from(files).forEach((file) => {
-      const localId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-      setUploadingFiles((prev) => [...prev, { localId, name: file.name, size: file.size }])
-
       uploadMutation.mutate(
         { meetingId, file, kind: 'attachment', title: file.name },
         {
-          onError: (err) => {
-            setUploadingFiles((prev) => prev.filter((f) => f.localId !== localId))
-            showToast(extractErrorMessage(err), 'error')
-          },
-          onSuccess: () => {
-            setUploadingFiles((prev) => prev.filter((f) => f.localId !== localId))
-            showToast(`تمت إضافة ${file.name}`)
-          },
+          onError: (err) => showToast(extractErrorMessage(err), 'error'),
+          onSuccess: () => showToast(`تمت إضافة ${file.name}`),
         },
       )
     })
@@ -112,14 +92,8 @@ export function AttachmentsPanel({
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border-default p-3">
         <p className="text-[13px] font-semibold text-text-primary">المرفقات ({attachments.length})</p>
-        <Button
-          size="sm"
-          variant="secondary"
-          icon={<Upload size={14} />}
-          loading={uploadingFiles.length > 0}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          {uploadingFiles.length > 0 ? `جارٍ رفع ${uploadingFiles.length} ملف...` : 'إضافة'}
+        <Button size="sm" variant="secondary" icon={<Upload size={14} />} onClick={() => fileInputRef.current?.click()}>
+          إضافة
         </Button>
         <input
           ref={fileInputRef}
@@ -134,28 +108,14 @@ export function AttachmentsPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        {attachmentsQuery.isLoading && uploadingFiles.length === 0 ? (
+        {attachmentsQuery.isLoading ? (
           <div className="flex justify-center py-8">
             <Spinner />
           </div>
-        ) : attachments.length === 0 && uploadingFiles.length === 0 ? (
+        ) : attachments.length === 0 ? (
           <EmptyState icon={<Paperclip size={22} />} title="لا توجد مرفقات بعد" />
         ) : (
           <ul className="flex flex-col gap-2">
-            {uploadingFiles.map((f) => (
-              <li
-                key={f.localId}
-                className="flex items-center gap-2.5 rounded-md border border-dashed border-border-default bg-bg-elevated p-2.5"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-brand-primary/10 text-brand-primary">
-                  <Spinner size={15} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12px] font-semibold text-text-primary">{f.name}</p>
-                  <p className="text-[10px] text-text-muted">{formatFileSize(f.size)} · جارٍ الرفع...</p>
-                </div>
-              </li>
-            ))}
             {attachments.map((attachment) => (
               <li
                 key={attachment.document_id}
