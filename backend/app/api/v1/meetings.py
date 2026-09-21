@@ -25,7 +25,6 @@ import uuid
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -38,6 +37,7 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import agora_client, perf_probe, storage_client
+from app.core.background import run_detached
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
 from app.schemas.committee import CommitteeMemberUserOut
@@ -61,7 +61,10 @@ from app.schemas.meeting_extracted_item import (
     MeetingExtractedItemOut,
 )
 from app.schemas.meeting_minutes import (
+    MeetingMinutesDetailOut,
     MeetingMinutesOut,
+    MinutesDetailCommitteeOut,
+    MinutesDetailMeetingOut,
     MinutesSection,
     MinutesSummaryOut,
     MinutesTemplateOut,
@@ -169,7 +172,6 @@ def _agora_error_to_http(exc: agora_client.AgoraError) -> HTTPException:
 async def create_meeting(
     payload: MeetingCreate,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingOut:
     try:
@@ -187,11 +189,13 @@ async def create_meeting(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    # إشعار بريدي لأعضاء اللجنة كـBackgroundTask (بعد commit الناجح) — لا
-    # يُبطئ استجابة إنشاء الاجتماع، ولا يُفشلها لو تعذّر إرسال البريد
-    # (راجعي core/email_client.py وservices/notification_service.py).
-    background_tasks.add_task(
-        notification_service.notify_meeting_created, meeting, actor_user_id=current_user.user_id
+    # إشعار بريدي لأعضاء اللجنة عبر run_detached (بعد commit الناجح) — لا
+    # يُبطئ استجابة إنشاء الاجتماع، ولا يُفشلها لو تعذّر إرسال البريد، ولا
+    # يُبقي جلسة db الخاصة بهذا الطلب محجوزة أثناء انتظار SMTP (تحقيق أداء
+    # لاما 2026-09-15 — راجعي core/background.py وcore/email_client.py
+    # وservices/notification_service.py).
+    run_detached(
+        notification_service.notify_meeting_created(meeting, actor_user_id=current_user.user_id)
     )
     return MeetingOut.model_validate(meeting)
 
@@ -220,7 +224,6 @@ async def update_meeting(
     meeting_id: uuid.UUID,
     payload: MeetingUpdate,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingOut:
     try:
@@ -244,11 +247,10 @@ async def update_meeting(
     # قرار لاما 2026-09-06. notify_meeting_updated نفسها لا ترسل شيئًا لو
     # changes فارغة، فالفحص هنا للوضوح فقط (تفادي جدولة Task فارغة).
     if changes:
-        background_tasks.add_task(
-            notification_service.notify_meeting_updated,
-            meeting,
-            changes,
-            actor_user_id=current_user.user_id,
+        run_detached(
+            notification_service.notify_meeting_updated(
+                meeting, changes, actor_user_id=current_user.user_id
+            )
         )
     return MeetingOut.model_validate(meeting)
 
@@ -257,7 +259,6 @@ async def update_meeting(
 async def delete_meeting(
     meeting_id: uuid.UUID,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> None:
     try:
@@ -268,9 +269,11 @@ async def delete_meeting(
     # (committee/participants كلاهما lazy="selectin")، رغم إن db.commit()
     # صار قبله مباشرة داخل meeting_service.delete_meeting —
     # expire_on_commit=False بـdb/session.py يضمن بقاء القيم المحمَّلة أصلًا
-    # صالحة بلا استعلام إضافي (راجعي notification_service.py).
-    background_tasks.add_task(
-        notification_service.notify_meeting_cancelled, meeting, actor_user_id=current_user.user_id
+    # صالحة بلا استعلام إضافي (راجعي notification_service.py). run_detached
+    # بدل background_tasks.add_task (تحقيق أداء لاما 2026-09-15 — راجعي
+    # core/background.py): لا يُبقي جلسة db لهذا الطلب محجوزة أثناء SMTP.
+    run_detached(
+        notification_service.notify_meeting_cancelled(meeting, actor_user_id=current_user.user_id)
     )
 
 
@@ -511,20 +514,40 @@ def _recording_out(recording) -> MeetingRecordingOut:
     )
 
 
-def _draft_out(draft) -> MeetingDraftOut:
+def _draft_out(
+    draft,
+    *,
+    can_view_transcript: bool = True,
+    can_view_summary: bool = True,
+    can_view_full: bool = True,
+) -> MeetingDraftOut:
+    """
+    تحديث 2026-09-16 (تفصيل صلاحيات عرض المسودة — راجعي رأس
+    db/migrations/0035 وmeeting_service.get_draft للخلفية الكاملة):
+    كل المعاملات افتراضيًا True هنا (مسار generate_meeting_draft أدناه —
+    لا يصله إلا من يملك meetings.draft.summarize أصلًا، فمن المنطقي يشوف
+    كل ما ولّده لتوّه) — get_meeting_draft وحدها تُمرّر القيم الفعلية
+    المحسوبة من get_draft. can_view_full تحديدًا تتحكم بالحقول
+    "الإدارية" (القرارات/المهام/نقاط مهمة/التوصيات/نقاط معلّقة/ملاحظات
+    الالتزام) التي لم تطلب لاما توسيعها لعضو اللجنة — تبقى حصرًا لمن يملك
+    meetings.draft.view الكاملة، حتى لو مَلَك transcript.view/summary.view
+    فقط. الإخفاء هنا استبدال بـNone/[] فقط عند False، وليس حذفًا للحقل.
+    """
     return MeetingDraftOut(
         draft_id=draft.draft_id,
         meeting_id=draft.meeting_id,
         status=draft.status.value,
         error_message=draft.error_message,
-        full_transcript=draft.full_transcript,
-        summary=draft.summary,
-        decisions=draft.decisions,
-        action_items=draft.action_items,
-        key_points=draft.key_points,
-        recommendations=draft.recommendations,
-        open_items=draft.open_items,
-        compliance_notes=draft.compliance_notes,
+        full_transcript=draft.full_transcript if can_view_transcript else None,
+        summary=draft.summary if can_view_summary else None,
+        can_view_transcript=can_view_transcript,
+        can_view_summary=can_view_summary,
+        decisions=draft.decisions if can_view_full else None,
+        action_items=draft.action_items if can_view_full else None,
+        key_points=draft.key_points if can_view_full else None,
+        recommendations=draft.recommendations if can_view_full else None,
+        open_items=draft.open_items if can_view_full else None,
+        compliance_notes=draft.compliance_notes if can_view_full else None,
         generated_by=CommitteeMemberUserOut.model_validate(draft.generator),
         generated_at=draft.generated_at,
         created_at=draft.created_at,
@@ -627,10 +650,17 @@ async def get_meeting_draft(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> MeetingDraftOut:
     try:
-        draft = await meeting_service.get_draft(db, actor=current_user, meeting_id=meeting_id)
+        draft, can_view_transcript, can_view_summary, can_view_full = await meeting_service.get_draft(
+            db, actor=current_user, meeting_id=meeting_id
+        )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    return _draft_out(draft)
+    return _draft_out(
+        draft,
+        can_view_transcript=can_view_transcript,
+        can_view_summary=can_view_summary,
+        can_view_full=can_view_full,
+    )
 
 
 # ============================== البنود المستخرجة من الاجتماع ==============================
@@ -717,7 +747,6 @@ async def assign_extracted_item_as_task(
     item_id: uuid.UUID,
     payload: ExtractedItemAssignAsTask,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingExtractedItemOut:
     """FR-TASK-010/011/UC7/UC8: تعيين البند كمهمة — ينشئ Task حقيقيًا عبر
@@ -737,8 +766,8 @@ async def assign_extracted_item_as_task(
     # إشعار المُسنَد إليه — بنفس استدعاء POST /tasks تمامًا (راجعي
     # docstring meeting_service.assign_extracted_item_as_task: هذا
     # المسار كان يتخطى tasks.py فيفوّت الإشعار قبل هذا الإصلاح).
-    background_tasks.add_task(
-        notification_service.notify_task_created, task, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_task_created(task, actor_user_id=current_user.user_id)
     )
     return _extracted_item_out(item)
 
@@ -752,7 +781,6 @@ async def assign_extracted_item_as_decision(
     item_id: uuid.UUID,
     payload: ExtractedItemAssignAsDecision,
     current_user: CurrentUser,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingExtractedItemOut:
     """FR-DEC-004/UC7: تعيين البند كقرار — ينشئ Decision حقيقيًا عبر
@@ -770,8 +798,8 @@ async def assign_extracted_item_as_decision(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_decision_created, decision, actor_user_id=current_user.user_id
+    run_detached(
+        notification_service.notify_decision_created(decision, actor_user_id=current_user.user_id)
     )
     return _extracted_item_out(item)
 
@@ -789,6 +817,7 @@ def _minutes_out(minutes) -> MeetingMinutesOut:
         minutes_id=minutes.minutes_id,
         meeting_id=minutes.meeting_id,
         template_id=minutes.template_id,
+        template_name=meeting_minutes_service.template_name_for(minutes.template_id),
         stage=minutes.stage.value,
         owner=CommitteeMemberUserOut.model_validate(minutes.owner) if minutes.owner else None,
         sections=[MinutesSection.model_validate(s) for s in minutes.sections],
@@ -817,6 +846,43 @@ def _minutes_out(minutes) -> MeetingMinutesOut:
         completed_at=minutes.completed_at,
         created_at=minutes.created_at,
         updated_at=minutes.updated_at,
+    )
+
+
+def _minutes_detail_meeting_out(meeting) -> MinutesDetailMeetingOut:
+    # from_attributes=True (راجعي MinutesDetailMeetingOut) — نفس نمط
+    # MeetingOut.model_validate(meeting) المستخدَم ببقية راوتات هذا الملف،
+    # بدل بناء يدوي حقل-حقل عرضة للأخطاء.
+    return MinutesDetailMeetingOut.model_validate(meeting)
+
+
+def _minutes_detail_committee_out(committee) -> MinutesDetailCommitteeOut:
+    return MinutesDetailCommitteeOut.model_validate(committee)
+
+
+@router.get("/{meeting_id}/minutes/detail", response_model=MeetingMinutesDetailOut)
+async def get_meeting_minutes_detail(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingMinutesDetailOut:
+    """توحيد أداء (التوصية الثانية بتقرير أداء لاما 2026-09-14 — راجعي
+    docstring get_minutes_detail بـservices/meeting_minutes_service.py
+    للتصميم الكامل): نقطة واحدة تستبدل 5 طلبات منفصلة كانت
+    MeetingMinutesPage.tsx تطلقها (اجتماع/لجنة/محضر/قوالب/بنود مستخرجة)،
+    أهمها إلغاء Network Waterfall حقيقي كان موجودًا (طلب اللجنة كان ينتظر
+    نتيجة طلب الاجتماع أولًا لمعرفة committee_id قبل أن يبدأ أصلًا)."""
+    try:
+        detail = await meeting_minutes_service.get_minutes_detail(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return MeetingMinutesDetailOut(
+        meeting=_minutes_detail_meeting_out(detail["meeting"]),
+        committee=_minutes_detail_committee_out(detail["committee"]),
+        minutes=_minutes_out(detail["minutes"]),
+        templates=[MinutesTemplateOut(**t) for t in detail["templates"]],
+        extracted_items=[_extracted_item_out(item) for item in detail["extracted_items"]],
+        can_edit=detail["can_edit"],
     )
 
 
@@ -854,10 +920,12 @@ async def get_minutes_summaries(
 async def list_minutes_templates(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[MinutesTemplateOut]:
-    """FR-MIN-003: عرض قوالب المحاضر المعتمدة — نفس صلاحية عرض المحضر
-    (minutes.templates.view يُتحقَّق منه ضمنيًا عبر minutes.view هنا
-    لأن القائمة نفسها ثابتة بالكود بلا بيانات حساسة؛ الاختيار الفعلي
-    محمي بـminutes.templates.select أدناه)."""
+    """FR-MIN-003: عرض قوالب المحاضر المعتمدة — لرئيس اللجنة/الأدمن فقط
+    (minutes.templates.view، تصحيح 2026-09-15 — راجعي رأس
+    meeting_minutes_service.list_templates_for_meeting للتفاصيل). الفرونت
+    لا يستدعي هذا المسار إلا لمن يملك canManage؛ الأعضاء العاديون يشوفون
+    اسم القالب المختار فقط عبر MeetingMinutesOut.template_name بالمسار
+    العادي GET /{meeting_id}/minutes."""
     try:
         templates = await meeting_minutes_service.list_templates_for_meeting(
             db, meeting_id=meeting_id, actor=current_user
@@ -992,7 +1060,6 @@ async def return_minutes_for_edit(
 @router.post("/{meeting_id}/minutes/signature/send", response_model=MeetingMinutesOut)
 async def send_minutes_for_signature(
     meeting_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingMinutesOut:
@@ -1003,11 +1070,10 @@ async def send_minutes_for_signature(
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     meeting = await meeting_minutes_service.load_meeting(db, meeting_id)
-    background_tasks.add_task(
-        notification_service.notify_minutes_sent_for_signature,
-        minutes,
-        meeting,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_minutes_sent_for_signature(
+            minutes, meeting, actor_user_id=current_user.user_id
+        )
     )
     return _minutes_out(minutes)
 
@@ -1016,7 +1082,6 @@ async def send_minutes_for_signature(
 async def sign_meeting_minutes(
     meeting_id: uuid.UUID,
     payload: SignMinutesIn,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> MeetingMinutesOut:
@@ -1028,7 +1093,7 @@ async def sign_meeting_minutes(
         raise _handle_errors(exc) from exc
     if minutes.stage.value == "completed":
         meeting = await meeting_minutes_service.load_meeting(db, meeting_id)
-        background_tasks.add_task(notification_service.notify_minutes_completed, minutes, meeting)
+        run_detached(notification_service.notify_minutes_completed(minutes, meeting))
     return _minutes_out(minutes)
 
 

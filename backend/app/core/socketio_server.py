@@ -148,7 +148,17 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
                     }
                 )
 
-    sio.enter_room(sid, room)
+    # إصلاح 2026-09-15 (تحقيق أداء لاما — تحليل.pdf، البند رقم 8): sio.enter_room
+    # بـAsyncServer هو coroutine فعليًا (موثّق صراحة بمصدر python-socketio:
+    # "Note: this method is a coroutine") — استدعاؤه بدون await كان يُنشئ
+    # كائن coroutine ولا يُنفَّذه إطلاقًا، أي هذا الـsid لم يكن ينضم لغرفة
+    # الاجتماع فعليًا رغم نجاح connect() ورجوع True. الأثر: presence.joined/
+    # chat.message/hand.raised/agenda.discussing/minutes.updated/video.uid —
+    # كل بث لاحق عبر room=room (وكلها تمر بنفس هذا المسار) كان لا يصل أبدًا
+    # لهذا الاتصال تحديدًا (بينما الرسائل المباشرة to=sid، مثل presence.roster
+    # أعلاه، كانت تصل بشكل طبيعي لأنها لا تعتمد على عضوية الغرفة). الإصلاح:
+    # إضافة await فقط — لا تغيير بالمنطق.
+    await sio.enter_room(sid, room)
 
     if existing_user_ids:
         await sio.emit("presence.roster", {"user_ids": list(existing_user_ids)}, to=sid)
@@ -299,32 +309,49 @@ async def hand_lower(sid: str, _data: dict[str, Any] | None = None) -> None:
 
 
 @sio.on("agenda.discussing")
-async def agenda_discussing(sid: str, data: dict[str, Any] | None) -> None:
+async def agenda_discussing(sid: str, data: dict[str, Any] | None) -> dict[str, Any]:
     resolved = await _session_user_and_room(sid)
     if resolved is None:
-        return
+        return {"ok": False, "error": "انتهت صلاحية جلسة الاتصال — أعيدي تحميل الصفحة."}
     user, meeting_id = resolved
     agenda_item_id = (data or {}).get("agenda_item_id")
     title = (data or {}).get("title")
     if not agenda_item_id or not title:
-        return
+        return {"ok": False, "error": "بيانات بند الأجندة ناقصة."}
     # إصلاح 2026-09-14 (بلاغ لاما): كان أي مشارك بالغرفة يقدر يبث هذا
     # الحدث، لا رئيس اللجنة فقط — راجعي require_agenda_manage_access
-    # بـmeeting_chat_service.py للتفصيل الكامل. فشل الصلاحية هنا = تجاهل
-    # صامت (نفس نمط chat_send أعلاه) — الواجهة أصلًا لا تعرض زر الضغط
-    # إلا لرئيس اللجنة، فهذا فقط خط دفاع ثانٍ ضد استدعاء الحدث مباشرة.
+    # بـmeeting_chat_service.py للتفصيل الكامل. فشل الصلاحية هنا = خطأ
+    # صريح تُعرَض للضاغط (الواجهة أصلًا تحجب الزر عن غير رئيس اللجنة،
+    # فهذا خط دفاع ثانٍ لو استُدعي الحدث مباشرة — لكن لا يعود بعدها صمتًا).
+    # إصلاح 2026-09-14 (بلاغ لاما الثاني — الزر لا يعطي رئيس اللجنة أي
+    # مؤشر عند الضغط، كأنه لا يفعل شيئًا): هذا المعالج لم يكن يُرجع أي رد
+    # إطلاقًا (نفس عِلّة chat_send قبل إصلاحها) — الواجهة تعتمد فقط على
+    # استقبال بثّ "agenda.discussing" رجوعًا لتحديث حالتها، فأي فشل صامت
+    # هنا (صلاحية، بند غير موجود، خطأ خادم غير متوقع) يعني عدم ظهور أي
+    # شيء إطلاقًا لرئيس اللجنة. الآن يُرجع {ok, error?} دائمًا — راجعي
+    # useMeetingRealtime.ts::announceDiscussing وMeetingRoom.tsx::
+    # handleStartDiscussing لكيفية استخدام هذا الرد بالواجهة.
     try:
         async with AsyncSessionLocal() as db:
             await meeting_chat_service.require_agenda_manage_access(
                 db, actor=user, meeting_id=uuid.UUID(meeting_id)
             )
-    except (MeetingChatForbiddenError, MeetingChatNotFoundError):
-        return
+    except (MeetingChatForbiddenError, MeetingChatNotFoundError) as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception(
+            "agenda.discussing: فشل غير متوقع أثناء التحقق من صلاحية إدارة الأجندة — "
+            "meeting_id=%s user_id=%s",
+            meeting_id,
+            user.user_id,
+        )
+        return {"ok": False, "error": "تعذر بدء المناقشة بسبب خطأ بالخادم — حاولي مجددًا."}
     await sio.emit(
         "agenda.discussing",
         {"agenda_item_id": agenda_item_id, "title": title},
         room=_room(meeting_id),
     )
+    return {"ok": True}
 
 
 @sio.on("minutes.editing")

@@ -26,9 +26,10 @@
 
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import run_detached
 from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
 from app.schemas.committee import (
@@ -192,7 +193,6 @@ async def update_committee_request(
 )
 async def submit_committee_request(
     request_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> CommitteeFormationRequestOut:
@@ -207,10 +207,10 @@ async def submit_committee_request(
         CommitteeRequestInvalidTransitionError,
     ) as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_committee_request_submitted,
-        request,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_committee_request_submitted(
+            request, actor_user_id=current_user.user_id
+        )
     )
     return CommitteeFormationRequestOut.model_validate(request)
 
@@ -223,7 +223,6 @@ async def submit_committee_request(
 async def return_committee_request_to_admin(
     request_id: uuid.UUID,
     payload: CommitteeReturnRequest,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> CommitteeFormationRequestOut:
@@ -241,10 +240,10 @@ async def return_committee_request_to_admin(
         CommitteeRequestInvalidTransitionError,
     ) as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_committee_request_returned_to_admin,
-        request,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_committee_request_returned_to_admin(
+            request, actor_user_id=current_user.user_id
+        )
     )
     return CommitteeFormationRequestOut.model_validate(request)
 
@@ -257,7 +256,6 @@ async def return_committee_request_to_admin(
 async def return_committee_request_to_office(
     request_id: uuid.UUID,
     payload: CommitteeReturnRequest,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> CommitteeFormationRequestOut:
@@ -271,10 +269,10 @@ async def return_committee_request_to_office(
         )
     except (CommitteeRequestNotFoundError, CommitteeRequestInvalidTransitionError) as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_committee_request_returned_to_office,
-        request,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_committee_request_returned_to_office(
+            request, actor_user_id=current_user.user_id
+        )
     )
     return CommitteeFormationRequestOut.model_validate(request)
 
@@ -286,7 +284,6 @@ async def return_committee_request_to_office(
 )
 async def escalate_committee_request(
     request_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> CommitteeFormationRequestOut:
@@ -297,10 +294,10 @@ async def escalate_committee_request(
         )
     except (CommitteeRequestNotFoundError, CommitteeRequestInvalidTransitionError) as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_committee_request_escalated,
-        request,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_committee_request_escalated(
+            request, actor_user_id=current_user.user_id
+        )
     )
     return CommitteeFormationRequestOut.model_validate(request)
 
@@ -312,7 +309,6 @@ async def escalate_committee_request(
 )
 async def approve_committee_request(
     request_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> CommitteeFormationRequestOut:
@@ -323,11 +319,16 @@ async def approve_committee_request(
         )
     except (CommitteeRequestNotFoundError, CommitteeRequestInvalidTransitionError) as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_committee_request_approved,
-        request,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_committee_request_approved(
+            request,
+            actor_user_id=current_user.user_id,
+        )
     )
+    # تحديث 2026-09-16 (طلب لاما): بريد لكل أعضاء اللجنة نفسها (وليس فقط
+    # صاحب الطلب أعلاه) — request.committee محمَّلة فعليًا هنا (راجعي
+    # populate_existing=True بـcommittee_service._load_request).
+    run_detached(notification_service.notify_committee_created(request.committee))
     return CommitteeFormationRequestOut.model_validate(request)
 
 
@@ -487,7 +488,6 @@ async def update_committee(
 async def reject_committee_request(
     request_id: uuid.UUID,
     payload: CommitteeRejectRequest,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> CommitteeFormationRequestOut:
@@ -501,9 +501,9 @@ async def reject_committee_request(
         )
     except (CommitteeRequestNotFoundError, CommitteeRequestInvalidTransitionError) as exc:
         raise _handle_errors(exc) from exc
-    background_tasks.add_task(
-        notification_service.notify_committee_request_rejected,
-        request,
-        actor_user_id=current_user.user_id,
+    run_detached(
+        notification_service.notify_committee_request_rejected(
+            request, actor_user_id=current_user.user_id
+        )
     )
     return CommitteeFormationRequestOut.model_validate(request)

@@ -760,6 +760,11 @@ export interface MeetingMinutes {
   minutes_id: string
   meeting_id: string
   template_id: MinutesTemplateId | null
+  /** اسم القالب المختار جاهزًا من الباك-إند (FR-MIN-003) — متاح لكل من
+   * يملك صلاحية عرض المحضر (بمن فيهم الأعضاء)، بخلاف قائمة القوالب
+   * الكاملة (minutes/templates) المحمية برئيس اللجنة فقط. null إذا لم
+   * يُختر قالب بعد. */
+  template_name: string | null
   stage: MeetingMinutesStage
   owner: CommitteeMemberUser | null
   sections: MinutesSection[]
@@ -786,6 +791,54 @@ export interface MinutesSummary {
   signatures_signed: number
 }
 
+/**
+ * نسخة خفيفة من Meeting/Committee — حصرًا الحقول التي تستخدمها فعليًا
+ * صفحة المحضر (MeetingMinutesPage.tsx)، تقابل MinutesDetailMeetingOut/
+ * MinutesDetailCommitteeOut بالباك-إند. راجعي MeetingMinutesDetail أدناه.
+ */
+export interface MinutesDetailMeeting {
+  meeting_id: string
+  committee_id: string
+  title: string
+  description: string | null
+  mode: MeetingMode
+  location: string | null
+  scheduled_at: string
+  scheduled_end_at: string | null
+  status: MeetingStatus
+  participants: CommitteeMemberUser[]
+  agenda_items: MeetingAgendaItem[]
+  started_at: string | null
+  ended_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MinutesDetailCommittee {
+  committee_id: string
+  name: string
+  chair_user_id: string | null
+}
+
+/**
+ * استجابة GET /{meeting_id}/minutes/detail — إصلاح أداء (التوصية الثانية
+ * بتقرير أداء لاما 2026-09-14): توحّد بيانات الاجتماع واللجنة والمحضر
+ * والقوالب والبنود المستخرجة بنداء HTTP واحد بدل 5 طلبات منفصلة كانت
+ * MeetingMinutesPage.tsx تطلقها (راجعي useMeetingMinutesDetail
+ * بـhooks/useMeetingMinutes.ts).
+ */
+export interface MeetingMinutesDetail {
+  meeting: MinutesDetailMeeting
+  committee: MinutesDetailCommittee
+  minutes: MeetingMinutes
+  templates: MinutesTemplate[]
+  extracted_items: MeetingExtractedItem[]
+  /** إضافة 2026-09-15 (بلاغ لجين) — محسوبة فعليًا بالباك-إند عبر
+   * _has_access (تشمل صلاحية الدور داخل هذي اللجنة تحديدًا، لا رئاسة
+   * اللجنة فقط) — راجعي docstring can_edit بـschemas/meeting_minutes.py. */
+  can_edit: boolean
+}
+
 export interface MeetingDraft {
   draft_id: string
   meeting_id: string
@@ -793,6 +846,13 @@ export interface MeetingDraft {
   error_message: string | null
   full_transcript: MeetingDraftTranscriptSegment[] | null
   summary: string | null
+  /** هل يملك المستخدم الحالي صلاحية عرض full_transcript/summary أعلاه —
+   * تحديث 2026-09-16 (تفصيل صلاحيات عرض المسودة): القيمة null بالحقل
+   * المقابل قد تعني "لا توجد بيانات" أو "لا تملك الصلاحية" — ميّزي بينهما
+   * عبر هاتين القيمتين، لا بفحص null وحده. راجعي backend/app/api/v1/
+   * meetings.py::_draft_out. */
+  can_view_transcript: boolean
+  can_view_summary: boolean
   decisions: MeetingDraftDecisionItem[] | null
   action_items: MeetingDraftActionItem[] | null
   key_points: string[] | null

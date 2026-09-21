@@ -1,4 +1,4 @@
-import { ClipboardList, PlayCircle } from 'lucide-react'
+import { ClipboardList, Loader2, PlayCircle } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { cn } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
@@ -8,6 +8,7 @@ export function AgendaPanel({
   discussingAgendaItemId,
   onStartDiscussing,
   canManage,
+  pendingItemId = null,
 }: {
   agendaItems: MeetingAgendaItem[]
   discussingAgendaItemId: string | null
@@ -16,6 +17,10 @@ export function AgendaPanel({
    * المناقشة الحالي؛ الأعضاء يشوفون نفس الجدول للقراءة فقط بلا أي
    * تفاعل، عشان ضغطة عضو عرضية ما تسرق الحالة من رئيس اللجنة. */
   canManage: boolean
+  /** إصلاح 2026-09-14 (بلاغ لاما الثاني — زر "بدء المناقشة" بلا أي
+   * مؤشر عند الضغط): معرّف البند قيد الإرسال حاليًا (إن وُجد) — يعطّله
+   * ويعرض مؤشر تحميل واضح بدل ثبات ظاهري يوحي بعدم استجابة الزر. */
+  pendingItemId?: string | null
 }) {
   const sorted = [...agendaItems].sort((a, b) => a.sort_order - b.sort_order)
 
@@ -31,12 +36,13 @@ export function AgendaPanel({
     <div className="flex flex-col gap-2 p-3">
       {sorted.map((item, index) => {
         const isCurrent = item.agenda_item_id === discussingAgendaItemId
+        const isPending = pendingItemId === item.agenda_item_id
         return (
           <button
             key={item.agenda_item_id}
             type="button"
-            disabled={!canManage}
-            onClick={() => canManage && onStartDiscussing(item)}
+            disabled={!canManage || pendingItemId !== null}
+            onClick={() => canManage && !isPending && onStartDiscussing(item)}
             className={cn(
               'flex flex-col gap-2 rounded-md border p-3 text-right transition-colors',
               isCurrent
@@ -44,6 +50,7 @@ export function AgendaPanel({
                 : 'border-border-default bg-bg-surface',
               canManage && !isCurrent && 'hover:border-border-strong',
               !canManage && 'cursor-default',
+              isPending && 'opacity-70',
             )}
           >
             <div className="flex items-center gap-2">
@@ -61,7 +68,11 @@ export function AgendaPanel({
                   isCurrent ? 'text-brand-primary' : 'text-text-muted',
                 )}
               >
-                {isCurrent ? (
+                {isPending ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin" /> جارٍ البدء...
+                  </>
+                ) : isCurrent ? (
                   <>
                     <PlayCircle size={12} /> قيد المناقشة الآن
                   </>

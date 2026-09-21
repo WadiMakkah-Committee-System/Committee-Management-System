@@ -22,6 +22,21 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 #: (طلبات تشكيل اللجان — db/migrations/0009 + app/api/v1/committees.py).
 ENFORCED_CATEGORIES = {"departments", "users", "committees", "job_titles"}
 
+#: أكواد صلاحيات مفردة مُنفَّذة فعليًا رغم أن فئتها الكاملة لم تُدرَج
+#: أعلاه (بعض أكواد نفس الفئة يبقى كتالوج فقط) — أعيد هذا الاستثناء لأول
+#: مرة منذ أن أُزيل بـmigration 0017 (حين كانت الفئات إما مُفعَّلة بالكامل
+#: أو لا شيء منها إطلاقًا)، بسبب صلاحيات meetings.transcript.view/
+#: meetings.summary.view/ai_items.view (تحديث 2026-09-16 — طلب لاما تفصيل
+#: صلاحيات عرض مسودة الاجتماع): مُنفَّذة فعليًا بـmeeting_service.py::
+#: get_draft/list_extracted_items، بينما بقية فئة meetings (تحت التطوير
+#: تدريجيًا) وبقية فئة ai_items (extract/assign/delete/update/add) لا
+#: تزالان كتالوج فقط.
+ENFORCED_PERMISSION_CODES = {
+    "meetings.transcript.view",
+    "meetings.summary.view",
+    "ai_items.view",
+}
+
 
 class PermissionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -47,7 +62,7 @@ class PermissionOut(BaseModel):
         كتالوج تحضيرًا لمرحلة قادمة؟ تسمح للواجهة بعرضها كـ "قريبًا" بدون
         تكرار قائمة الأقسام/الأكواد المفعّلة يدويًا في كود الفرونت.
         """
-        return self.category in ENFORCED_CATEGORIES
+        return self.category in ENFORCED_CATEGORIES or self.code in ENFORCED_PERMISSION_CODES
 
 
 class RolePermissionOut(PermissionOut):

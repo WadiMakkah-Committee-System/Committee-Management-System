@@ -45,7 +45,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, noload, selectinload
 
 from app.core import agora_client, gemini_client, storage_client
 from app.core.committee_period import assert_committee_not_expired, assert_within_committee_period
@@ -126,10 +126,15 @@ async def _require_access(
         raise MeetingForbiddenError(message)
 
 
-async def _has_any_access(db: AsyncSession, actor: User, committee: Committee, codes: list[str]) -> bool:
-    """True إن امتلك actor أي كود من codes (نفس منطق _has_access، لكن
-    "أو" بين عدة أكواد بدل كود واحد) — راجعي _require_any_access أدناه
-    لغرض الاستخدام الفعلي (توسعة 2026-09-21 لعرض التسجيل/المسودة)."""
+async def _has_any_access(
+    db: AsyncSession, actor: User, committee: Committee, codes: list[str]
+) -> bool:
+    """يكفي امتلاك واحد من عدّة أكواد بديلة (OR) — تُستخدم لصلاحيات العرض
+    الجزئي (meetings.transcript.view/meetings.summary.view/ai_items.view)
+    التي تُغني عن meetings.draft.view الكاملة لكل حقل على حدة (تحديث
+    2026-09-16، راجعي رأس db/migrations/0035 للخلفية الكاملة)، وأيضًا
+    لتوسعة 2026-09-21 على get_latest_recording (راجعي _require_any_access
+    أدناه)."""
     for code in codes:
         if await _has_access(db, actor, committee, code):
             return True
@@ -218,6 +223,53 @@ def sync_meeting_status(meeting: Meeting) -> None:
 
 async def _load_meeting(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
     result = await db.execute(select(Meeting).where(Meeting.meeting_id == meeting_id))
+    meeting = result.scalar_one_or_none()
+    if meeting is None or meeting.is_deleted:
+        raise MeetingNotFoundError("الاجتماع غير موجود")
+    sync_meeting_status(meeting)
+    return meeting
+
+
+async def _load_meeting_for_draft_access(db: AsyncSession, meeting_id: uuid.UUID) -> Meeting:
+    """
+    تحقيق أداء لاما 2026-09-15 (تحليل.pdf — بند "meeting_service._load_meeting()
+    is too broad for multiple endpoint types"، مؤكَّد بتتبّع GET
+    /meetings/{meeting_id}/extracted-items الفعلي — "نفس 30-second role and
+    permission query storm بمسار المحضر"): _load_meeting العادية أعلاه بلا
+    أي خيار تحميل صريح، فتعتمد بالكامل على lazy="selectin" الافتراضي على
+    مستوى الموديل (Meeting.committee/creator/participants/agenda_items +
+    Committee.chair/members/member_roles + تسلسل User.role/job_title لكل
+    مستخدم بهذي القوائم) — يعني كل استدعاء واحد لها يجرّ معه شجرة كاملة
+    حتى لو الدالة المستدعية تحتاج فقط فحص صلاحية بسيط.
+
+    هذي نسخة مخصَّصة **فقط** لعائلة "meetings.draft.*" (get_draft/
+    list_extracted_items/extract_meeting_items/add_manual_extracted_item/
+    delete_extracted_item) — تحقّقت من كل دالة بهذي العائلة صراحة قبل هذا
+    التعديل: كلها تكتفي بـ committee = meeting.committee ثم _require_access
+    (الذي بدوره لا يقرأ إلا committee.committee_id وcommittee.chair.dep_id
+    — راجعي _system_scope_allows/_has_access أعلاه)، بلا أي لمسة لـ
+    committee.members/member_roles أو meeting.participants/creator/
+    agenda_items بعد فحص الصلاحية. noload هنا يقطع فقط ما تحقّقت أنه غير
+    مُستخدَم بهذي الدوال الخمس تحديدًا — **لا تُستخدم هذي الدالة لأي مسار
+    آخر** (بقية الاستدعاءات الـ20+ لـ_load_meeting تبقى كما هي تمامًا،
+    لأن بعضها فعليًا يحتاج meeting.participants/committee.members لاحقًا
+    بمنطقه الخاص ولم يُدقَّق كل واحد منها بعد — تعديلها دفعة واحدة بلا
+    اختبارات آلية للمشروع مخاطرة غير مبرَّرة الآن، راجعي رسالتي للمستخدمة).
+    """
+    result = await db.execute(
+        select(Meeting)
+        .where(Meeting.meeting_id == meeting_id)
+        .options(
+            selectinload(Meeting.committee).options(
+                selectinload(Committee.chair).options(noload(User.role), noload(User.job_title)),
+                noload(Committee.members),
+                noload(Committee.member_roles),
+            ),
+            noload(Meeting.participants),
+            noload(Meeting.creator),
+            noload(Meeting.agenda_items),
+        )
+    )
     meeting = result.scalar_one_or_none()
     if meeting is None or meeting.is_deleted:
         raise MeetingNotFoundError("الاجتماع غير موجود")
@@ -967,6 +1019,32 @@ async def download_recording(db: AsyncSession, *, actor: User, meeting_id: uuid.
     return recording, content
 
 
+async def _all_recordings(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> list[MeetingRecording]:
+    """
+    تحديث 2026-09-16 (طلب لاما — "بحال الرئيس شغّل التسجيل وطفّاه أكثر من
+    مرة بنفس الاجتماع، تجمع كل الكلام؟"): كل تسجيلات الاجتماع بترتيبها
+    الزمني الصاعد (وليس آخر واحد فقط كـget_latest_recording أعلاه) —
+    تُستخدَم حصرًا من generate_draft أدناه لتوليد مسودة تغطي كل المقاطع
+    معًا بدل أحدثها فقط. نفس صلاحية get_latest_recording بالضبط
+    (meetings.record_audio) — من يقدر يسجّل يقدر يراجع كل مقاطعه.
+    """
+    meeting = await _load_meeting(db, meeting_id)
+    committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
+    await _require_access(
+        db, actor, committee, "meetings.record_audio", "ليست لديك صلاحية الوصول لتسجيل هذا الاجتماع"
+    )
+
+    result = await db.execute(
+        select(MeetingRecording)
+        .where(MeetingRecording.meeting_id == meeting_id, MeetingRecording.deleted_at.is_(None))
+        .order_by(MeetingRecording.recorded_at.asc())
+    )
+    recordings = list(result.scalars().unique().all())
+    if not recordings:
+        raise RecordingNotFoundError("لا يوجد تسجيل صوتي لهذا الاجتماع بعد")
+    return recordings
+
+
 async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingDraft:
     """يتطلب meetings.draft.summarize (FR-AI-001) — بشرط وجود تسجيل صوتي
     فعلي مسبقًا (MeetingValidationError إن لم يوجد، مطابقةً لنص المتطلب
@@ -985,23 +1063,27 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     )
 
     try:
-        recording = await get_latest_recording(db, actor=actor, meeting_id=meeting_id)
+        recordings = await _all_recordings(db, actor=actor, meeting_id=meeting_id)
     except RecordingNotFoundError as exc:
         raise MeetingValidationError(
             "لا يمكن توليد مسودة بدون تسجيل صوتي — يجب رفع تسجيل الاجتماع أولًا"
         ) from exc
 
+    # تحديث 2026-09-16 (طلب لاما): recording_id يبقى عمود مرجعي واحد
+    # (أحدث مقطع) — التوليد الفعلي أدناه يستخدم كل مقاطع recordings معًا
+    # بغض النظر عن هذا المرجع (راجعي gemini_client.generate_meeting_draft).
+    latest_recording = recordings[-1]
     result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         draft = MeetingDraft(
             meeting_id=meeting_id,
-            recording_id=recording.recording_id,
+            recording_id=latest_recording.recording_id,
             generated_by=actor.user_id,
         )
         db.add(draft)
     else:
-        draft.recording_id = recording.recording_id
+        draft.recording_id = latest_recording.recording_id
         draft.generated_by = actor.user_id
     draft.status = MeetingDraftStatus.processing
     draft.error_message = None
@@ -1009,15 +1091,20 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     await db.refresh(draft)
 
     participant_names = [member.full_name for member in _all_committee_members(committee)]
-    audio_content = await storage_client.download_object(recording.storage_path)
+    audio_segments = [
+        gemini_client.AudioSegment(
+            content=await storage_client.download_object(r.storage_path),
+            mime_type=r.mime_type,
+            file_name=r.file_name,
+        )
+        for r in recordings
+    ]
 
     try:
         generated = await gemini_client.generate_meeting_draft(
             meeting_title=meeting.title,
             participant_names=participant_names,
-            audio_content=audio_content,
-            audio_mime_type=recording.mime_type,
-            audio_file_name=recording.file_name,
+            audio_segments=audio_segments,
         )
     except gemini_client.GeminiError as exc:
         draft.status = MeetingDraftStatus.failed
@@ -1042,28 +1129,43 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     return draft
 
 
-async def get_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingDraft:
-    """يتطلب meetings.draft.view أو meetings.summary.view.
+async def get_draft(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
+) -> tuple[MeetingDraft, bool, bool, bool]:
+    """
+    تحديث 2026-09-16 (طلب لاما — تفصيل صلاحيات عرض المسودة إلى ثلاث):
+    كانت meetings.draft.view وحدها تتحكم بعرض المسودة كلها دفعة واحدة —
+    الآن يكفي امتلاك meetings.draft.view (وصول كامل، رئيس اللجنة عادةً)
+    **أو** إحدى الصلاحيتين الجزئيتين (meetings.transcript.view لحقل
+    full_transcript، meetings.summary.view لحقل summary) للوصول أصلًا —
+    403 فقط إن لم يملك أيًّا من الثلاث. الحقول التي لا يملك صلاحيتها
+    تحديدًا تُخفى (redact) بمستوى الـAPI (راجعي app/api/v1/meetings.py::
+    _draft_out) بالاعتماد على القيم الثلاث المُعادة هنا — بقية حقول
+    المسودة (القرارات/المهام/نقاط مهمة...المستخرَجة آليًا) تبقى حصرًا لمن
+    يملك meetings.draft.view الكاملة تحديدًا (القيمة الرابعة can_full —
+    لم تطلب لاما توسيع هذه الحقول تحديدًا لعضو اللجنة، فمنح
+    meetings.transcript.view/meetings.summary.view وحدهما لا يكفي
+    لرؤيتها، تفاديًا لتسريب بيانات لم تُطلَب).
 
-    راجعي get_latest_recording أعلاه لشرح توسعة 2026-09-21 الكاملة —
-    MeetingDraft المُرجَع هنا يحوي full_transcript (التفريغ الصوتي) ضمن
-    نفس الكائن، فلا حاجة لصلاحية منفصلة له. list_extracted_items أدناه
-    تبقى بمعزل تمامًا عن هذه التوسعة (meetings.draft.view حصرًا)."""
-    meeting = await _load_meeting(db, meeting_id)
+    ملاحظة دمج 2026-09-21: هذا منطق لاما بالكامل (أدق من محاولتي الأولى
+    بفرع feat/committee-member-recording-draft-access اللي كانت تمنح
+    الوصول الكامل لأي حامل meetings.summary.view) — استُبدلت به عند حل
+    تعارض الدمج مع main، وطلب get_latest_recording أعلاه (توسعة منفصلة
+    لملف التسجيل الصوتي الخام نفسه، لم تلمسه لاما) ظل كما هو.
+    """
+    meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
-    await _require_any_access(
-        db,
-        actor,
-        committee,
-        ["meetings.draft.view", "meetings.summary.view"],
-        "ليست لديك صلاحية عرض مسودة هذا الاجتماع",
-    )
+    can_full = await _has_access(db, actor, committee, "meetings.draft.view")
+    can_transcript = can_full or await _has_access(db, actor, committee, "meetings.transcript.view")
+    can_summary = can_full or await _has_access(db, actor, committee, "meetings.summary.view")
+    if not (can_full or can_transcript or can_summary):
+        raise MeetingForbiddenError("ليست لديك صلاحية عرض مسودة هذا الاجتماع")
 
     result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         raise DraftNotFoundError("لا توجد مسودة مولَّدة لهذا الاجتماع بعد")
-    return draft
+    return draft, can_transcript, can_summary, can_full
 
 # ============================== البنود المستخرجة من الاجتماع ==============================
 # FR-TASK-005 إلى FR-TASK-012 + FR-DEC-001 إلى FR-DEC-004 (§4.2/§5.2 SRS،
@@ -1096,8 +1198,16 @@ async def _list_extracted_items_query(
 async def list_extracted_items(
     db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
 ) -> list[MeetingExtractedItem]:
-    """يتطلب meetings.draft.view."""
-    meeting = await _load_meeting(db, meeting_id)
+    """يتطلب meetings.draft.view حصرًا (رئيس اللجنة فعليًا).
+
+    ملاحظة دمج 2026-09-21: لاما وسّعت هذا الشرط (490c772) ليقبل
+    ai_items.view أيضًا فيصير عضو اللجنة العادي يشوف البنود المستخرجة —
+    عند حل تعارض الدمج مع main تأكدت مع صاحبة المشروع (لجين) صراحةً وقالت
+    "البنود المستخرجة بس لرئيس اللجنة"، فرجّعت الشرط لمتطلب meetings.draft.view
+    فقط. صلاحية ai_items.view تبقى ممنوحة لدور عضو اللجنة بقاعدة البيانات
+    (migration 0035) لكنها غير مُنفَذة هنا عمدًا — لو احتجنا تفعيلها لاحقًا
+    يكفي إعادة ai_items.view لقائمة الأكواد أدناه عبر _has_any_access."""
+    meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض بنود هذا الاجتماع"
@@ -1112,7 +1222,7 @@ async def extract_meeting_items(
     بالذكاء الاصطناعي (شرط أن تكون مكتملة). كل استدعاء يضيف دفعة جديدة
     بدون حذف/دمج مع البنود السابقة — لا يوجد شرط Idempotency موثّق بـSRS؛
     رئيس اللجنة يحذف يدويًا أي بند مكرر (FR-TASK-009)."""
-    meeting = await _load_meeting(db, meeting_id)
+    meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
@@ -1148,7 +1258,7 @@ async def add_manual_extracted_item(
     db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, text: str
 ) -> MeetingExtractedItem:
     """FR-TASK-007/UC4: إضافة بند يدوي لقائمة البنود المعروضة."""
-    meeting = await _load_meeting(db, meeting_id)
+    meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,
@@ -1184,7 +1294,7 @@ async def delete_extracted_item(db: AsyncSession, *, actor: User, item_id: uuid.
     """FR-TASK-009/UC6: يزيل البند نهائيًا بدون تحويله لمهمة أو قرار —
     متاح فقط طالما البند لم يُعيَّن بعد (pending)."""
     item = await _load_extracted_item(db, item_id)
-    meeting = await _load_meeting(db, item.meeting_id)
+    meeting = await _load_meeting_for_draft_access(db, item.meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
     await _require_access(
         db,

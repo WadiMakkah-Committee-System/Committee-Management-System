@@ -21,13 +21,10 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-import { useMeetingDetailForMinutes, useMeetingExtractedItems } from '@/hooks/useMeetings'
-import { useCommitteeDetail } from '@/hooks/useCommittees'
 import {
   useApproveMinutes,
   useApproveMinutesReview,
-  useMeetingMinutes,
-  useMinutesTemplates,
+  useMeetingMinutesDetail,
   useReturnMinutesForEdit,
   useReturnMinutesReview,
   useSelectMinutesTemplate,
@@ -66,6 +63,15 @@ import { errorStatusOf, MinutesStageBadge, StageTimeline } from './minutesShared
  * الصلاحيات هنا تقريب بصري فقط (إظهار/إخفاء الأزرار) — التحقق الفعلي دائمًا
  * بالباك-إند (minutes.* عبر _has_access)، تمامًا كنمط canManage بصفحة
  * تفاصيل الاجتماع.
+ *
+ * إصلاح أداء 2026-09-14 (التوصية الثانية بتقرير أداء لاما، بعد التوصية
+ * الأولى المُنفَّذة سابقًا بإيقاف perf_trace_middleware بالإنتاج): كانت
+ * هذي الصفحة تطلق 5 طلبات HTTP منفصلة عند كل فتح (اجتماع/لجنة/محضر/
+ * قوالب/بنود مستخرجة)، أحدها Network Waterfall حقيقي (طلب اللجنة ينتظر
+ * نتيجة طلب الاجتماع أولًا). استُبدلت كلها باستعلام واحد موحَّد
+ * (useMeetingMinutesDetail → GET /{meeting_id}/minutes/detail) — راجعي
+ * docstring get_minutes_detail بـservices/meeting_minutes_service.py
+ * للتصميم الكامل بالباك-إند.
  */
 
 const TEMPLATE_ICONS: Record<string, LucideIcon> = {
@@ -73,6 +79,16 @@ const TEMPLATE_ICONS: Record<string, LucideIcon> = {
   formal: FileText,
   detailed: ListChecks,
 }
+
+// إصلاح 2026-09-15 (بلاغ لجين — التحرير الجماعي: يفترض إن كتابة عضوة
+// بقسم توقف القسم *هذا فقط* عن باقي الأعضاء، لا كل الأقسام). collaborators
+// (من useMinutesRealtime) يُحدَّث فقط بحدث minutes.editing عند كل تعديل —
+// ما فيه حدث "توقفت عن التحرير" صريح بالباك-إند حاليًا (راجعي
+// socketio_server.py::minutes_editing)، فالقفل البصري هنا يعتمد على مهلة:
+// أي عضوة لم تُحدِّث القسم خلال آخر LOCK_TTL_MS تُعتبر متوقفة تلقائيًا
+// (أطول من فاصل Autosave 1200ms بالأسفل عشان الكتابة المتواصلة ما "ترمش"
+// بين مقفول/مفتوح كل حرف). نفس فكرة "يكتب الآن..." بتطبيقات الدردشة.
+const LOCK_TTL_MS = 4000
 
 const TAB_ITEMS: TabItem[] = [
   { key: 'templates', label: 'القوالب', icon: <FileText size={15} /> },
@@ -88,21 +104,55 @@ export function MeetingMinutesPage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
 
-  const meetingQuery = useMeetingDetailForMinutes(meetingId)
-  const meeting = meetingQuery.data
-  const committeeQuery = useCommitteeDetail(meeting?.committee_id)
-  const committee = committeeQuery.data
+  // إصلاح أداء (التوصية الثانية بتقرير أداء لاما 2026-09-14 — راجعي
+  // docstring useMeetingMinutesDetail بـhooks/useMeetingMinutes.ts):
+  // نداء واحد موحَّد بدل 5 استعلامات منفصلة كانت هنا (اجتماع/لجنة/محضر/
+  // قوالب/بنود مستخرجة) — أهمها إلغاء Network Waterfall حقيقي كان قائمًا
+  // فعليًا (طلب اللجنة كان ينتظر نتيجة طلب الاجتماع أولًا لمعرفة
+  // committee_id قبل أن يبدأ حتى).
+  const detailQuery = useMeetingMinutesDetail(meetingId)
+  const detail = detailQuery.data
+  const meeting = detail?.meeting
+  const committee = detail?.committee
+  const minutes = detail?.minutes
+  // تحديث 2026-09-15 (بلاغ لاما — الأعضاء يشوفون قائمة القوالب كاملة رغم
+  // عدم قدرتهم على الاختيار، يخالف FR-MIN-003): الباك-إند
+  // (get_minutes_detail) صار يُرجع templates فارغة أصلًا لغير رئيس
+  // اللجنة/الأدمن (فحص صلاحية minutes.templates.view، راجعي رأس الدالة) —
+  // فـtemplates هنا فارغة تلقائيًا للأعضاء بلا أي فلترة إضافية مطلوبة
+  // بالفرونت لهذا المصدر. canManage أدناه تُستخدَم فقط لإخفاء تبويب
+  // "القوالب" نفسه (تجربة استخدام أوضح، مو طبقة الحماية الوحيدة —
+  // الحماية الفعلية بالباك-إند).
+  const templates = detail?.templates ?? []
+  const linkedItems = (detail?.extracted_items ?? []).filter((i) => i.status !== 'pending')
 
-  const minutesQuery = useMeetingMinutes(meetingId)
-  const minutes = minutesQuery.data
-  const templatesQuery = useMinutesTemplates(meetingId)
-  const templates = templatesQuery.data ?? []
+  const canManage =
+    scopeFor(user, 'minutes.update', 'minutes.templates.select') === 'all' ||
+    (!!committee && committee.chair_user_id === user?.user_id)
 
-  const extractedItemsQuery = useMeetingExtractedItems(meetingId)
-  const linkedItems = (extractedItemsQuery.data ?? []).filter((i) => i.status !== 'pending')
+  const canApprove =
+    scopeFor(user, 'minutes.approve') === 'all' || (!!committee && committee.chair_user_id === user?.user_id)
 
   const { collaborators, remoteSections, announceEditing, broadcastUpdate } = useMinutesRealtime(meetingId)
   const { showToast } = useToast()
+
+  // نبضة كل ثانية فقط أثناء وجود متعاونين فعليًا — تجبر إعادة رسم القفل
+  // (lockedSectionEditor أدناه) عشان ينفك تلقائيًا بعد LOCK_TTL_MS من آخر
+  // حرف كتبته العضوة الأخرى، بدون هذي النبضة القفل ما ينفك أبدًا إلا لما
+  // React يعيد الرسم لسبب آخر (مثال: العضوة الأخرى تكتب بقسم مختلف).
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (collaborators.length === 0) return
+    const id = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [collaborators.length])
+
+  function lockedSectionEditor(sectionId: string) {
+    const entry = collaborators.find((c) => c.sectionId === sectionId && c.userId !== user?.user_id)
+    if (!entry) return null
+    if (Date.now() - entry.at > LOCK_TTL_MS) return null
+    return entry
+  }
 
   const [tab, setTab] = useState('editor')
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
@@ -122,10 +172,27 @@ export function MeetingMinutesPage() {
     if (!dirty) setSections(minutes.sections)
   }, [minutes, dirty])
 
+  // إصلاح 2026-09-15 (بلاغ لجين — "كتبت بحقل واحد فقفل كل الحقول ومحد
+  // قدر يعدل"): هذا الـeffect كان يستبدل sections بالكامل بأي بث
+  // minutes.updated وارد من عضو آخر (كل ما يحفظ Autosave تلقائيًا لديه —
+  // كل 1.2 ثانية من الكتابة المتواصلة)، بلا أي تحقق من dirty، خلافًا
+  // تمامًا لنفس effect تحميل minutes الأولي فوق (يتحقق من !dirty قبل
+  // الاستبدال). النتيجة: أي عضو يكتب بأي حقل (dirty=true محليًا) كان
+  // يفقد ما كتبه فورًا فور وصول حفظ عضو آخر — تبدو كأن الكتابة "تتجمد"
+  // بكل الحقول دفعة وحدة (مو حقل واحد فقط) لأن sections بالكامل تُستبدل
+  // لا قسم واحد فقط. حتى المُرسِل نفسه يستقبل بث حفظه (الباك-إند يبث
+  // للغرفة كاملة بما فيها المُرسِل — راجعي minutes_updated بـ
+  // socketio_server.py) فلو كتب حرفًا جديدًا فورًا بعد الحفظ، احتمال ضياعه
+  // بنفس السباق. الحل: نفس منطق !dirty المستخدَم فوق بالضبط — تجاهل بث
+  // التحديث البعيد طالما لدى المستخدمة الحالية تعديل محلي غير محفوظ بعد؛
+  // فور اكتمال حفظها (dirty يرجع false)، الـeffect يعيد التنفيذ تلقائيًا
+  // (dirty ضمن قائمة الاعتماديات) ويطبّق آخر remoteSections معروف فيلحق
+  // بالتحديثات الفائتة بدل ضياعها كليًا.
   useEffect(() => {
     if (!remoteSections) return
+    if (dirty) return
     setSections(remoteSections.sections)
-  }, [remoteSections])
+  }, [remoteSections, dirty])
 
   useEffect(() => {
     if (sections.length > 0 && !activeSectionId) setActiveSectionId(sections[0].id)
@@ -136,6 +203,21 @@ export function MeetingMinutesPage() {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current)
     }
   }, [])
+
+  // احتياط دفاعي: تبويب "القوالب" مخفي أصلًا عن غير canManage بـTAB_ITEMS
+  // أدناه، لكن لو تغيّر canManage أثناء وجود المستخدم على هذا التبويب
+  // (مثلًا استبدال رئيس اللجنة لحظيًا) نرجّعه لتبويب "محرر المحضر" بدل
+  // ترك تبويب لا يملك بيانات فعلية (detail.templates ترجع فارغة لغير
+  // canManage من الباك-إند أصلًا — راجعي get_minutes_detail).
+  useEffect(() => {
+    if (!canManage && tab === 'templates') setTab('editor')
+  }, [canManage, tab])
+
+  // نفس الاحتياط الدفاعي أعلاه، لتبويب "الاعتماد" المخفي الآن عن غير
+  // canApprove (تصحيح 2026-09-15 — راجعي تعليق tabItems أعلاه).
+  useEffect(() => {
+    if (!canApprove && tab === 'approval') setTab('editor')
+  }, [canApprove, tab])
 
   const updateSectionsMutation = useUpdateMinutesSections()
   const selectTemplateMutation = useSelectMinutesTemplate()
@@ -148,13 +230,6 @@ export function MeetingMinutesPage() {
 
   const meetingEnded = !!meeting && (meeting.status === 'finished' || meeting.status === 'recorded')
 
-  const canManage =
-    scopeFor(user, 'minutes.update', 'minutes.templates.select') === 'all' ||
-    (!!committee && committee.chair_user_id === user?.user_id)
-
-  const canApprove =
-    scopeFor(user, 'minutes.approve') === 'all' || (!!committee && committee.chair_user_id === user?.user_id)
-
   const myReviewer = minutes?.reviewers.find((r) => r.user.user_id === user?.user_id) ?? null
   // تحديث 2026-09-10: محاضر قديمة تكوّنت قبل هذا التحديث ممكن تكون
   // متوقفة فعليًا بمرحلة 'review' أو 'approval' (القيم القديمة قبل حذف
@@ -163,12 +238,41 @@ export function MeetingMinutesPage() {
   // لأي محضر قديم عالق بإحدى هالمرحلتين.
   const approvableStage =
     minutes?.stage === 'preparing' || minutes?.stage === 'review' || minutes?.stage === 'approval'
-  const editable = canManage && approvableStage
+  // إصلاح 2026-09-15 (بلاغ لجين — "المفروض رئيس اللجنة وعضو اللجنة يقدرو
+  // يكتبو بالمحضر"، وليس رئيسة اللجنة فقط): canManage فوق تقريب محلي ناقص
+  // (رئاسة اللجنة حرفيًا أو صلاحية نظامية عامة فقط) — لا يعرف شيئًا عن
+  // صلاحية عضوة عادية بحكم دورها *داخل هذي اللجنة تحديدًا*. detail.can_edit
+  // محسوبة بالباك-إند بنفس _has_access الحقيقية (نفس ما يتحقق منه PUT
+  // /minutes/sections فعليًا — راجعي get_minutes_detail بالباك-إند)، فهي
+  // مصدر الحقيقة الأدق. أبقيت canManage بالـOR (بدل استبدالها) كشبكة أمان
+  // لرئيسة اللجنة تحديدًا — إضافي فقط، ما يقلّل صلاحية أي أحد أبدًا.
+  const editable = (canManage || !!detail?.can_edit) && approvableStage
 
   const sortedAgendaItems = useMemo(
     () => (meeting ? [...meeting.agenda_items].sort((a, b) => a.sort_order - b.sort_order) : []),
     [meeting],
   )
+
+  // تبويب "القوالب" لرئيس اللجنة/الأدمن فقط (FR-MIN-003 — الأعضاء لا
+  // يُفترض أن تُعرض لهم قائمة القوالب إطلاقًا، فقط اسم القالب المختار).
+  //
+  // تصحيح 2026-09-15 (بلاغ لاما — "الاعتماد ما يفترض يطلع للعضو، بس
+  // الرئيس"): تبويب "الاعتماد" نفسه كان يظهر لكل الأعضاء بلا استثناء —
+  // الزر بداخله (اعتماد المحضر) كان محميًا بـcanApprove بالفعل (معطَّل
+  // فقط، disabled={!approvableStage || !canApprove} أدناه بمحتوى التبويب)،
+  // لكن التبويب والمحتوى المحيط بالزر (حالة المحضر/عدد موافقات المراجعين)
+  // يبقى مرئيًا لأي عضو رغم إنه لا يقدر يضغط الزر فعليًا — نفس مشكلة تبويب
+  // "القوالب" قبل إصلاحها بالضبط، فحُلّت بنفس الطريقة: إخفاء تبويب
+  // "الاعتماد" كاملًا لغير canApprove. لا علاقة لهذا بزر "اعتماد المراجعة"
+  // المنفصل كليًا (تبويب "المراجعة") — ذاك مقصود ومتاح لكل الأعضاء حسب
+  // قرار لاما 2026-09-10 الموثّق أعلاه (كل عضو يعتمد مراجعته الخاصة فقط،
+  // ليس المحضر كاملًا).
+  const tabItems = useMemo(() => {
+    let items = TAB_ITEMS
+    if (!canManage) items = items.filter((t) => t.key !== 'templates')
+    if (!canApprove) items = items.filter((t) => t.key !== 'approval')
+    return items
+  }, [canManage, canApprove])
 
   function persistSections(next: MinutesSection[]) {
     if (!meetingId) return
@@ -201,6 +305,11 @@ export function MeetingMinutesPage() {
     setDirty(true)
     const next = sections.map((s) => (s.id === sectionId ? { ...s, title } : s))
     setSections(next)
+    // إصلاح 2026-09-15 (بلاغ لجين): كانت مفقودة هنا (موجودة فقط بتعديل
+    // متن القسم updateSectionBody أعلاه) — بدونها تعديل عنوان القسم فقط
+    // (بلا لمس متنه) ما يُعلَن للبقية إطلاقًا، فلا يظهر قفل لهذا القسم رغم
+    // إن عضوة تكتب فيه فعليًا الآن.
+    announceEditing(sectionId)
     scheduleAutosave(next)
   }
 
@@ -337,7 +446,7 @@ export function MeetingMinutesPage() {
 
   if (!meetingId) return null
 
-  if (meetingQuery.isLoading) {
+  if (detailQuery.isLoading) {
     return (
       <div className="flex flex-col gap-4">
         <Skeleton className="h-8 w-64" />
@@ -346,25 +455,49 @@ export function MeetingMinutesPage() {
     )
   }
 
-  if (meetingQuery.isError || !meeting) {
-    return <ErrorState title="تعذّر تحميل الاجتماع" onRetry={() => meetingQuery.refetch()} />
+  // إصلاح أداء (راجعي docstring get_minutes_detail بالباك-إند): نداء
+  // موحَّد واحد بدل 5، فتُوحَّد هنا أيضًا حالات الخطأ الأربع التي كانت
+  // موزّعة بين "بوابة !meetingEnded" الأمامية (تعتمد meeting.status محليًا
+  // فقط، بلا أي تحقق صلاحية) وبين معالجة أخطاء minutesQuery المنفصلة
+  // (409/403) — الباك-إند نفسه الآن هو مصدر الحقيقة الوحيد لكل الحالات
+  // الأربع (404 اجتماع غير موجود/409 لم ينتهِ بعد/403 لا صلاحية)، بنفس
+  // ترتيب الأولوية الذي يفرضه get_minutes_detail (الصلاحية تُفحص قبل حتى
+  // معرفة هل انتهى الاجتماع أم لا — أدق من البوابة الأمامية القديمة التي
+  // كانت تعرض "غير متاح بعد" حتى لمستخدمة بلا صلاحية أصلًا).
+  if (detailQuery.isError) {
+    const status = errorStatusOf(detailQuery.error)
+    if (status === 404) {
+      return <ErrorState title="تعذّر تحميل الاجتماع" onRetry={() => detailQuery.refetch()} />
+    }
+    if (status === 409) {
+      return (
+        <Card className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-info-bg text-info">
+            <Clock size={24} />
+          </div>
+          <p className="text-sm font-semibold text-text-primary">محضر الاجتماع غير متاح بعد</p>
+          <p className="max-w-sm text-sm text-text-secondary">
+            يُتاح إعداد محضر الاجتماع بعد انتهائه (FR-MIN-001). عودي إلى هذه الصفحة بعد اكتمال الاجتماع.
+          </p>
+          <Button variant="secondary" onClick={() => navigate(`/meetings/${meetingId}`)}>
+            العودة إلى الاجتماع
+          </Button>
+        </Card>
+      )
+    }
+    if (status === 403) {
+      return (
+        <ErrorState
+          title="لا تملكين صلاحية عرض هذا المحضر"
+          description="تحتاج صلاحية minutes.view أو عضوية فعلية بلجنة هذا الاجتماع"
+        />
+      )
+    }
+    return <ErrorState title="تعذّر تحميل المحضر" onRetry={() => detailQuery.refetch()} />
   }
 
-  if (!meetingEnded) {
-    return (
-      <Card className="flex flex-col items-center gap-3 px-6 py-16 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-info-bg text-info">
-          <Clock size={24} />
-        </div>
-        <p className="text-sm font-semibold text-text-primary">محضر الاجتماع غير متاح بعد</p>
-        <p className="max-w-sm text-sm text-text-secondary">
-          يُتاح إعداد محضر الاجتماع بعد انتهائه (FR-MIN-001). عودي إلى هذه الصفحة بعد اكتمال الاجتماع.
-        </p>
-        <Button variant="secondary" onClick={() => navigate(`/meetings/${meetingId}`)}>
-          العودة إلى الاجتماع
-        </Button>
-      </Card>
-    )
+  if (!meeting || !minutes) {
+    return <ErrorState title="تعذّر تحميل المحضر" onRetry={() => detailQuery.refetch()} />
   }
 
   const headerAction = (() => {
@@ -426,34 +559,9 @@ export function MeetingMinutesPage() {
         </div>
       )}
 
-      {minutesQuery.isLoading ? (
-        <Skeleton className="h-32 w-full" />
-      ) : minutesQuery.isError ? (
-        (() => {
-          const status = errorStatusOf(minutesQuery.error)
-          if (status === 409) {
-            return (
-              <ErrorState
-                title="الاجتماع لم ينتهِ بعد"
-                description="إعداد المحضر يبدأ تلقائيًا بعد انتهاء وقت الاجتماع فعليًا — حاولي مرة أخرى بعد انتهائه"
-                onRetry={() => minutesQuery.refetch()}
-              />
-            )
-          }
-          if (status === 403) {
-            return (
-              <ErrorState
-                title="لا تملكين صلاحية عرض هذا المحضر"
-                description="تحتاج صلاحية minutes.view أو عضوية فعلية بلجنة هذا الاجتماع"
-              />
-            )
-          }
-          return <ErrorState title="تعذّر تحميل المحضر" onRetry={() => minutesQuery.refetch()} />
-        })()
-      ) : !minutes ? (
-        <ErrorState title="تعذّر تحميل المحضر" onRetry={() => minutesQuery.refetch()} />
-      ) : (
-        <>
+      {/* تحميل/خطأ المحضر تم التعامل معهما مسبقًا أعلاه ضمن بوابة
+          detailQuery الموحَّدة (meeting/minutes مضمونان معرَّفان هنا). */}
+      <>
           <Card>
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -463,7 +571,7 @@ export function MeetingMinutesPage() {
                 <div>
                   <MinutesStageBadge stage={minutes.stage} />
                   <span className="mt-1 block text-xs text-text-muted">
-                    القالب: {templates.find((t) => t.id === minutes.template_id)?.name ?? 'لم يُختر بعد'} · آخر
+                    القالب: {minutes.template_name ?? 'لم يُختر بعد'} · آخر
                     تحديث: {formatRelativeTime(minutes.updated_at)}
                   </span>
                 </div>
@@ -477,17 +585,15 @@ export function MeetingMinutesPage() {
             <StageTimeline stage={minutes.stage} />
           </Card>
 
-          <Tabs items={TAB_ITEMS} value={tab} onChange={setTab} />
+          <Tabs items={tabItems} value={tab} onChange={setTab} />
 
           {tab === 'templates' && (
             <div className="grid gap-4 lg:grid-cols-3">
-              {templatesQuery.isLoading ? (
-                <>
-                  <Skeleton className="h-64 w-full" />
-                  <Skeleton className="h-64 w-full" />
-                  <Skeleton className="h-64 w-full" />
-                </>
-              ) : (
+              {
+                // لا حاجة لحالة تحميل مستقلة هنا بعد التوحيد (إصلاح أداء
+                // 2026-09-14) — templates جزء من نفس استجابة detailQuery
+                // المُحمَّلة أصلًا قبل الوصول لهذا الـReturn (راجعي بوابة
+                // !meeting/!minutes أعلاه)، فهي دائمًا جاهزة هنا.
                 templates.map((t, i) => {
                   const isCurrent = minutes.template_id === t.id
                   const canPick = canManage && (minutes.stage === 'none' || minutes.stage === 'preparing')
@@ -550,7 +656,7 @@ export function MeetingMinutesPage() {
                     </Card>
                   )
                 })
-              )}
+              }
             </div>
           )}
 
@@ -561,11 +667,23 @@ export function MeetingMinutesPage() {
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-neutral-bg text-neutral">
                     <FileText size={22} />
                   </div>
-                  <p className="text-sm font-semibold text-text-primary">لم يتم اختيار قالب بعد</p>
-                  <p className="max-w-sm text-sm text-text-secondary">
-                    اختر أحد قوالب المحاضر المعتمدة لبدء إعداد المحضر.
-                  </p>
-                  {canManage && <Button onClick={() => setTab('templates')}>عرض القوالب</Button>}
+                  {canManage ? (
+                    <>
+                      <p className="text-sm font-semibold text-text-primary">لم يتم اختيار قالب بعد</p>
+                      <p className="max-w-sm text-sm text-text-secondary">
+                        اختر أحد قوالب المحاضر المعتمدة لبدء إعداد المحضر.
+                      </p>
+                      <Button onClick={() => setTab('templates')}>عرض القوالب</Button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-semibold text-text-primary">بانتظار اختيار رئيس اللجنة للقالب</p>
+                      <p className="max-w-sm text-sm text-text-secondary">
+                        لم يتم اختيار قالب المحضر بعد من قبل رئيس اللجنة. لا يمكنك المشاركة في إعداد المحضر
+                        حتى يتم اختيار القالب.
+                      </p>
+                    </>
+                  )}
                 </Card>
               ) : (
                 <div className="grid gap-4 xl:grid-cols-[220px_1fr_300px]">
@@ -607,7 +725,7 @@ export function MeetingMinutesPage() {
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-default px-4 py-2.5">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-text-muted">
-                          {templates.find((t) => t.id === minutes.template_id)?.name ?? minutes.template_id}
+                          {minutes.template_name ?? minutes.template_id}
                         </span>
                         {editable && (
                           <Button size="sm" variant="ghost" onClick={() => setTab('templates')}>
@@ -644,7 +762,14 @@ export function MeetingMinutesPage() {
                         </p>
                       </div>
                       {sections.map((s) => {
-                        const editorHere = collaborators.find((c) => c.sectionId === s.id)
+                        // إصلاح 2026-09-15 (بلاغ لجين — التحرير الجماعي: قفل حقل
+                        // واحد بدل كل الحقول): editorHere هنا تحديدًا "عضوة
+                        // *أخرى* غيري تكتب بهذا القسم الآن" (استبعاد نفسي عمدًا —
+                        // راجعي lockedSectionEditor فوق) — القسم اللي أنا نفسي
+                        // أكتب فيه يبقى مفتوحًا لي دائمًا، وبقية الأقسام كذلك ما
+                        // لم تكن عضوة أخرى بالضبط داخلها الآن.
+                        const editorHere = lockedSectionEditor(s.id)
+                        const lockedForMe = !!editorHere
                         return (
                           <div
                             key={s.id}
@@ -659,7 +784,11 @@ export function MeetingMinutesPage() {
                                   value={s.title}
                                   onChange={(e) => updateSectionTitle(s.id, e.target.value)}
                                   onFocus={() => setActiveSectionId(s.id)}
-                                  className="w-full rounded-sm border-0 bg-transparent text-sm font-bold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-accent/40"
+                                  readOnly={lockedForMe}
+                                  className={cn(
+                                    'w-full rounded-sm border-0 bg-transparent text-sm font-bold text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-accent/40',
+                                    lockedForMe && 'cursor-not-allowed opacity-60',
+                                  )}
                                 />
                               ) : (
                                 <h3 className="text-sm font-bold text-text-primary">{s.title}</h3>
@@ -667,7 +796,8 @@ export function MeetingMinutesPage() {
                               {editable && sections.length > 1 && (
                                 <button
                                   onClick={() => removeSection(s.id)}
-                                  className="shrink-0 rounded-sm p-1 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+                                  disabled={lockedForMe}
+                                  className="shrink-0 rounded-sm p-1 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted"
                                   aria-label="حذف القسم"
                                 >
                                   <Trash2 size={14} />
@@ -678,13 +808,16 @@ export function MeetingMinutesPage() {
                               value={s.body}
                               onFocus={() => setActiveSectionId(s.id)}
                               onChange={(e) => updateSectionBody(s.id, e.target.value)}
-                              readOnly={!editable}
+                              readOnly={!editable || lockedForMe}
                               rows={Math.max(3, Math.ceil(s.body.length / 90))}
-                              className="resize-none border-0 bg-transparent p-0 text-sm leading-8 shadow-none focus:ring-0"
+                              className={cn(
+                                'resize-none border-0 bg-transparent p-0 text-sm leading-8 shadow-none focus:ring-0',
+                                lockedForMe && 'cursor-not-allowed opacity-60',
+                              )}
                             />
                             {editorHere && (
                               <div className="mt-2 rounded-sm border border-info-border/30 bg-info-bg px-3 py-2 text-[11px] text-info">
-                                <span className="font-semibold">{editorHere.fullName}</span> تُحرّر هذا القسم الآن…
+                                <span className="font-semibold">{editorHere.fullName}</span> تُحرّر هذا القسم الآن — القسم مقفول مؤقتًا لبقية الأعضاء.
                               </div>
                             )}
                           </div>
@@ -1101,8 +1234,7 @@ export function MeetingMinutesPage() {
                 </Card>
               </div>
             ))}
-        </>
-      )}
+      </>
 
       <Modal
         open={signatureOpen}

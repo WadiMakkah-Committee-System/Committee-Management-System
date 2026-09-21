@@ -22,6 +22,7 @@ import {
 } from '@/hooks/useUsers'
 import { useDepartments } from '@/hooks/useDepartments'
 import { useRoles } from '@/hooks/useRoles'
+import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/Button'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { Select } from '@/components/ui/Select'
@@ -57,6 +58,13 @@ export function UsersPage() {
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
   const { showToast } = useToast()
+
+  // تصحيح 2026-09-16 (بلاغ لاما — "إضافة مستخدم" يظهر لكل الأدوار،
+  // المفترض يظهر للسوبر أدمن فقط): نفس النمط المستخدم بصفحة المستندات
+  // (DocumentsPage.tsx) — user?.role?.is_super_admin مباشرة، بدون مرور
+  // بـscopeFor لأنها فحص هوية دور محدد لا صلاحية/نطاق.
+  const user = useAuthStore((s) => s.user)
+  const isSuperAdmin = !!user?.role?.is_super_admin
 
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('')
@@ -199,9 +207,11 @@ export function UsersPage() {
           <h2 className="text-base font-bold text-text-primary">المستخدمون</h2>
           <p className="mt-1 text-sm text-text-muted">إدارة حسابات المستخدمين وأدوارهم في النظام</p>
         </div>
-        <Button icon={<Plus size={16} />} onClick={openCreateForm}>
-          إضافة مستخدم
-        </Button>
+        {isSuperAdmin && (
+          <Button icon={<Plus size={16} />} onClick={openCreateForm}>
+            إضافة مستخدم
+          </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -263,7 +273,8 @@ export function UsersPage() {
           action={
             !search &&
             !roleFilter &&
-            !statusFilter && (
+            !statusFilter &&
+            isSuperAdmin && (
               <Button size="sm" icon={<Plus size={14} />} onClick={openCreateForm}>
                 إضافة مستخدم
               </Button>

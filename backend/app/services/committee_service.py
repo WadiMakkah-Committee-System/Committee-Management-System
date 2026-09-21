@@ -620,6 +620,40 @@ class CommitteeNotFoundError(Exception):
     """اللجنة المعتمدة غير موجودة — تُترجَم إلى 404 في طبقة الـ API."""
 
 
+def _committee_detail_load_options() -> tuple:
+    """
+    تحقيق أداء لاما 2026-09-15 (تحليل.pdf — بند "Committee detail relies
+    on implicit loader behavior"، مؤكَّد بتتبّع GET /committees/{id} الفعلي:
+    14,894ms): User.role/User.job_title وRole.role_permission_links كلها
+    lazy="selectin" على مستوى الـmapper (لضمان عمل خصائص متزامنة مثل
+    User.permission_codes بمعظم أنحاء المشروع بلا استعلام إضافي صريح —
+    راجعي app/models/user.py وapp/models/role.py). الأثر: تحميل لجنة واحدة
+    يجرّ تلقائيًا صلاحيات + مسمى وظيفي كل عضو، وكل من في member_roles
+    (عضو + دور لجنته)، بصرف النظر هل تحتاجها الاستجابة أو لا.
+
+    تحقّقت من schemas/committee.py::CommitteeOut فعليًا قبل هذا التعديل:
+    members/member_roles.user تُسلسَل عبر CommitteeMemberUserOut (user_id/
+    first_name/middle_name/last_name/email فقط — بلا role ولا job_title)،
+    وmember_roles.committee_role عبر CommitteeRoleSummaryOut (role_id/name/
+    committee_role_slug فقط — بلا permission_codes). وتحقّقت أيضًا أن لا
+    شيء آخر بهذا الملف أو بـapi/v1/committees.py يقرأ member.role/
+    member.job_title/committee_role.role_permission_links — فالـnoload هنا
+    يقطع فقط تحميلًا لا يُستخدَم إطلاقًا بأي من الدوال الثلاث التي تستدعي
+    هذه الدالة (list_committees/get_committee/update_committee — الثلاثة
+    تُرجع نفس CommitteeOut بالضبط).
+    """
+    return (
+        selectinload(Committee.members).options(noload(User.role), noload(User.job_title)),
+        selectinload(Committee.member_roles).options(
+            selectinload(CommitteeMember.user).options(noload(User.role), noload(User.job_title)),
+            selectinload(CommitteeMember.committee_role).options(
+                noload(Role.role_permission_links)
+            ),
+        ),
+        selectinload(Committee.chair).options(noload(User.role), noload(User.job_title)),
+    )
+
+
 async def list_committees(db: AsyncSession, *, actor: User, scope: str) -> list[Committee]:
     """
     عرض اللجان المعتمدة (صلاحية committees.view، بعد إعادة تسمية
@@ -641,7 +675,7 @@ async def list_committees(db: AsyncSession, *, actor: User, scope: str) -> list[
       فيه إدارة يُقارَن بها أصلًا.
     - all: كل اللجان بدون تصفية.
     """
-    stmt = select(Committee).options(selectinload(Committee.members)).order_by(
+    stmt = select(Committee).options(*_committee_detail_load_options()).order_by(
         Committee.created_at.desc()
     )
     if scope == "own":
@@ -669,7 +703,7 @@ async def get_committee(
     """راجعي list_committees أعلاه لتفصيل النطاقات الثلاثة — نفس القاعدة هنا لعنصر واحد."""
     result = await db.execute(
         select(Committee)
-        .options(selectinload(Committee.members))
+        .options(*_committee_detail_load_options())
         .where(Committee.committee_id == committee_id)
     )
     committee = result.scalar_one_or_none()
@@ -791,7 +825,7 @@ async def update_committee(
     await db.commit()
     result = await db.execute(
         select(Committee)
-        .options(selectinload(Committee.members))
+        .options(*_committee_detail_load_options())
         .where(Committee.committee_id == committee_id)
     )
     return result.scalar_one()
