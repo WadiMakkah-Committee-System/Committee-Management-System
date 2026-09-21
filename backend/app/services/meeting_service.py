@@ -132,11 +132,20 @@ async def _has_any_access(
     """يكفي امتلاك واحد من عدّة أكواد بديلة (OR) — تُستخدم لصلاحيات العرض
     الجزئي (meetings.transcript.view/meetings.summary.view/ai_items.view)
     التي تُغني عن meetings.draft.view الكاملة لكل حقل على حدة (تحديث
-    2026-09-16، راجعي رأس db/migrations/0035 للخلفية الكاملة)."""
+    2026-09-16، راجعي رأس db/migrations/0035 للخلفية الكاملة)، وأيضًا
+    لتوسعة 2026-09-21 على get_latest_recording (راجعي _require_any_access
+    أدناه)."""
     for code in codes:
         if await _has_access(db, actor, committee, code):
             return True
     return False
+
+
+async def _require_any_access(
+    db: AsyncSession, actor: User, committee: Committee, codes: list[str], message: str
+) -> None:
+    if not await _has_any_access(db, actor, committee, codes):
+        raise MeetingForbiddenError(message)
 
 
 async def _committee_ids_with_committee_role_code(
@@ -901,9 +910,17 @@ async def get_attachment_download(
 # ============================== التسجيل الصوتي + المسودة (AI) ==============================
 # راجعي رأس db/migrations/0025_meeting_recordings_and_drafts.sql للتصميم
 # الكامل الموثّق (صلاحيات meetings.record_audio/draft.summarize/draft.view
-# مزروعة أصلًا بكتالوج الصلاحيات منذ 0006). ملاحظة صلاحيات: meetings.summary.view
-# محجوزة لعرض ملخّص مبسّط لعموم الأعضاء بمرحلة لاحقة — هذي المرحلة تكتفي
-# بـmeetings.draft.view للوصول الكامل (رئيس اللجنة أساسًا).
+# مزروعة أصلًا بكتالوج الصلاحيات منذ 0006).
+#
+# تحديث صلاحيات 2026-09-21 (بلاغ المستخدمة): meetings.summary.view —
+# كانت محجوزة "لعرض ملخّص مبسّط لعموم الأعضاء بمرحلة لاحقة" فقط بدون أي
+# إنفاذ فعلي — صارت الآن مفعَّلة فعليًا (راجعي get_latest_recording/
+# get_draft أدناه): من يملكها (عادة دور "عضو اللجنة") يقدر يعرض التسجيل
+# الصوتي والمسودة كاملة (بما فيها التفريغ الصوتي full_transcript) تمامًا
+# مثل من يملك meetings.draft.view (عادة دور "رئيس اللجنة"). الاستثناء
+# الوحيد المتعمَّد: قسم "البنود المستخرجة" (list_extracted_items) يبقى
+# يتطلب meetings.draft.view حصرًا — عضو اللجنة العادي لا يراه، رئيس
+# اللجنة فقط (ومن يملك صلاحية نظامية معادلة).
 
 
 class RecordingNotFoundError(Exception):
@@ -962,12 +979,25 @@ async def upload_recording(
 
 
 async def get_latest_recording(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingRecording:
-    """يتطلب meetings.record_audio — نفس صلاحية الرفع (من يقدر يسجّل يقدر
-    يراجع/يحمّل التسجيل الخام)."""
+    """يتطلب meetings.record_audio أو meetings.draft.view أو
+    meetings.summary.view.
+
+    توسعة 2026-09-21 (بلاغ المستخدمة): أعضاء اللجنة العاديون — وليس
+    رئيسها فقط — يجب أن يقدروا يستمعون لتسجيل اجتماعات لجنتهم ويحمّلونه،
+    تمامًا مثل الرئيس. meetings.summary.view كانت محجوزة "لمرحلة لاحقة"
+    منذ 0006_roles_permissions.sql بدون أي إنفاذ فعلي — هذه هي تلك
+    المرحلة: تُمنح لدور "عضو اللجنة" (بخلاف meetings.record_audio/
+    draft.view اللي تبقى لدور "رئيس اللجنة" كالسابق). راجعي get_draft
+    أدناه لنفس التوسعة على المسودة/التفريغ الصوتي — قسم البنود المستخرجة
+    (list_extracted_items) عمدًا لم يُدرَج هنا، يبقى رئيس اللجنة حصرًا."""
     meeting = await _load_meeting(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
-    await _require_access(
-        db, actor, committee, "meetings.record_audio", "ليست لديك صلاحية الوصول لتسجيل هذا الاجتماع"
+    await _require_any_access(
+        db,
+        actor,
+        committee,
+        ["meetings.record_audio", "meetings.draft.view", "meetings.summary.view"],
+        "ليست لديك صلاحية الوصول لتسجيل هذا الاجتماع",
     )
 
     result = await db.execute(
@@ -1116,6 +1146,12 @@ async def get_draft(
     لم تطلب لاما توسيع هذه الحقول تحديدًا لعضو اللجنة، فمنح
     meetings.transcript.view/meetings.summary.view وحدهما لا يكفي
     لرؤيتها، تفاديًا لتسريب بيانات لم تُطلَب).
+
+    ملاحظة دمج 2026-09-21: هذا منطق لاما بالكامل (أدق من محاولتي الأولى
+    بفرع feat/committee-member-recording-draft-access اللي كانت تمنح
+    الوصول الكامل لأي حامل meetings.summary.view) — استُبدلت به عند حل
+    تعارض الدمج مع main، وطلب get_latest_recording أعلاه (توسعة منفصلة
+    لملف التسجيل الصوتي الخام نفسه، لم تلمسه لاما) ظل كما هو.
     """
     meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
@@ -1162,13 +1198,20 @@ async def _list_extracted_items_query(
 async def list_extracted_items(
     db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
 ) -> list[MeetingExtractedItem]:
-    """يتطلب meetings.draft.view (وصول كامل) أو ai_items.view (وصول جزئي
-    مخصَّص لهذه القائمة تحديدًا — تحديث 2026-09-16 لطلب لاما، أول ربط
-    فعلي لهذا الكود المزروع بالكتالوج منذ 0006 دون استخدام حتى الآن)."""
+    """يتطلب meetings.draft.view حصرًا (رئيس اللجنة فعليًا).
+
+    ملاحظة دمج 2026-09-21: لاما وسّعت هذا الشرط (490c772) ليقبل
+    ai_items.view أيضًا فيصير عضو اللجنة العادي يشوف البنود المستخرجة —
+    عند حل تعارض الدمج مع main تأكدت مع صاحبة المشروع (لجين) صراحةً وقالت
+    "البنود المستخرجة بس لرئيس اللجنة"، فرجّعت الشرط لمتطلب meetings.draft.view
+    فقط. صلاحية ai_items.view تبقى ممنوحة لدور عضو اللجنة بقاعدة البيانات
+    (migration 0035) لكنها غير مُنفَذة هنا عمدًا — لو احتجنا تفعيلها لاحقًا
+    يكفي إعادة ai_items.view لقائمة الأكواد أدناه عبر _has_any_access."""
     meeting = await _load_meeting_for_draft_access(db, meeting_id)
     committee = meeting.committee  # selectin — بدون round trip إضافي (نفس إصلاح meeting_minutes_service.py)
-    if not await _has_any_access(db, actor, committee, ["meetings.draft.view", "ai_items.view"]):
-        raise MeetingForbiddenError("ليست لديك صلاحية عرض بنود هذا الاجتماع")
+    await _require_access(
+        db, actor, committee, "meetings.draft.view", "ليست لديك صلاحية عرض بنود هذا الاجتماع"
+    )
     return await _list_extracted_items_query(db, meeting_id)
 
 
