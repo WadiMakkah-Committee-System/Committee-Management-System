@@ -44,28 +44,66 @@ export function DepartmentDetailPage() {
   const [detailUserId, setDetailUserId] = useState<string | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
+  const [assignBusy, setAssignBusy] = useState(false)
+  /** تحديد المودال — مرفوع هنا (بدل useState داخلي بالمودال) عشان بعد فشل
+   * جزئي نقدر نضبطه تلقائيًا على من فشل فقط (راجعي handleAssignExisting
+   * وملاحظة مراجعة CodeRabbit على PR #55). */
+  const [assignSelectedIds, setAssignSelectedIds] = useState<string[]>([])
 
   function openAssignModal() {
     setAssignError(null)
+    setAssignSelectedIds([])
     setAssignOpen(true)
   }
 
   /** مرشّحو الإضافة = كل مستخدمي النظام ما عدا من هو أصلاً عضو بهذه الإدارة. */
   const assignCandidates = (allUsers ?? []).filter((u) => u.dep_id !== detail?.dep_id)
 
-  function handleAssignExisting(userId: string) {
+  /**
+   * إضافة عدة مستخدمين دفعة واحدة (طلب المستخدمة 2026-09-21 — Checkboxes
+   * بدل تكرار فتح النافذة لكل مستخدم). لا يوجد endpoint جماعي بالباك-إند،
+   * فتُنفَّذ PATCH /users/{id} لكل مستخدم على حدة بالتتابع (وليس بالتوازي،
+   * تفاديًا لتضارب حالة assignMutation نفسها بين الاستدعاءات المتزامنة).
+   * عند فشل بعض المستخدمين، يبقى من نجح مضافًا فعليًا، وتُعرض رسالة تلخّص
+   * من فشل والسبب، وتبقى النافذة مفتوحة مع تحديد الفاشلين فقط (وليس كل من
+   * أُرسل أصلًا) — لأن من نجح لا يجب إعادة إرسال طلبه عند الضغط على
+   * "إضافة" مرة ثانية (ملاحظة مراجعة CodeRabbit "Major" على PR #55).
+   */
+  async function handleAssignExisting(userIds: string[]) {
     if (!detail) return
     setAssignError(null)
-    assignMutation.mutate(
-      { userId, payload: { dep_id: detail.dep_id } },
-      {
-        onSuccess: () => {
-          setAssignOpen(false)
-          showToast('تمت إضافة المستخدم إلى الإدارة بنجاح', 'success')
-        },
-        onError: (err) => setAssignError(extractErrorMessage(err)),
-      },
-    )
+    setAssignBusy(true)
+
+    const failures: string[] = []
+    const failedIds: string[] = []
+    for (const userId of userIds) {
+      const candidate = assignCandidates.find((u) => u.user_id === userId)
+      try {
+        await assignMutation.mutateAsync({ userId, payload: { dep_id: detail.dep_id } })
+      } catch (err) {
+        const name = candidate ? `${candidate.first_name} ${candidate.last_name}` : userId
+        failures.push(`${name}: ${extractErrorMessage(err)}`)
+        failedIds.push(userId)
+      }
+    }
+
+    setAssignBusy(false)
+
+    if (failures.length === 0) {
+      setAssignOpen(false)
+      setAssignSelectedIds([])
+      showToast(
+        userIds.length > 1 ? `تمت إضافة ${userIds.length} مستخدمين إلى الإدارة بنجاح` : 'تمت إضافة المستخدم إلى الإدارة بنجاح',
+        'success',
+      )
+      return
+    }
+
+    if (failures.length < userIds.length) {
+      showToast(`تمت إضافة ${userIds.length - failures.length} من ${userIds.length}، وتعذّرت إضافة الباقي`, 'error')
+    }
+    setAssignSelectedIds(failedIds)
+    setAssignError(failures.join(' — '))
   }
 
   function handleEdit(values: UserUpdatePayload) {
@@ -229,11 +267,16 @@ export function DepartmentDetailPage() {
 
       <AssignExistingUserModal
         open={assignOpen}
-        onClose={() => setAssignOpen(false)}
+        onClose={() => {
+          setAssignOpen(false)
+          setAssignSelectedIds([])
+        }}
         candidates={assignCandidates}
         onAssign={handleAssignExisting}
-        loading={assignMutation.isPending}
+        loading={assignBusy}
         serverError={assignError}
+        selectedIds={assignSelectedIds}
+        onSelectedIdsChange={setAssignSelectedIds}
       />
 
       <MemberDetailModal
