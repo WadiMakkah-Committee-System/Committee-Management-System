@@ -14,6 +14,15 @@ interface AssignExistingUserModalProps {
   onAssign: (userIds: string[]) => void
   loading?: boolean
   serverError?: string | null
+  /**
+   * التحديد الحالي — مُتحكَّم به من الصفحة الأم (DepartmentDetailPage) وليس
+   * حالة داخلية، لأنه بعد فشل جزئي (بعض المستخدمين نجح والبعض فشل) تحتاج
+   * الصفحة الأم إعادة ضبط التحديد ليقتصر على من فشل فقط، بدل ما يضل
+   * المودال محتفظ بكل التحديد الأصلي ويعيد إرسال الطلب لمن نجح من قبل
+   * أيضًا عند إعادة المحاولة (ملاحظة مراجعة CodeRabbit على PR #55).
+   */
+  selectedIds: string[]
+  onSelectedIdsChange: (ids: string[]) => void
 }
 
 /**
@@ -38,9 +47,10 @@ export function AssignExistingUserModal({
   onAssign,
   loading,
   serverError,
+  selectedIds,
+  onSelectedIdsChange,
 }: AssignExistingUserModalProps) {
   const [search, setSearch] = useState('')
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
 
   const filtered = useMemo(() => {
@@ -57,21 +67,23 @@ export function AssignExistingUserModal({
   const allFilteredSelected = filtered.length > 0 && filtered.every((u) => selectedSet.has(u.user_id))
 
   function toggle(userId: string) {
-    setSelectedIds((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]))
+    onSelectedIdsChange(
+      selectedIds.includes(userId) ? selectedIds.filter((id) => id !== userId) : [...selectedIds, userId],
+    )
   }
 
   function toggleSelectAllFiltered() {
     if (allFilteredSelected) {
       const filteredIds = new Set(filtered.map((u) => u.user_id))
-      setSelectedIds((prev) => prev.filter((id) => !filteredIds.has(id)))
+      onSelectedIdsChange(selectedIds.filter((id) => !filteredIds.has(id)))
     } else {
-      setSelectedIds((prev) => Array.from(new Set([...prev, ...filtered.map((u) => u.user_id)])))
+      onSelectedIdsChange(Array.from(new Set([...selectedIds, ...filtered.map((u) => u.user_id)])))
     }
   }
 
   function handleClose() {
     setSearch('')
-    setSelectedIds([])
+    onSelectedIdsChange([])
     onClose()
   }
 

@@ -134,7 +134,7 @@ export function AttachmentsPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        {attachmentsQuery.isLoading ? (
+        {attachmentsQuery.isLoading && uploadingFiles.length === 0 ? (
           <div className="flex justify-center py-8">
             <Spinner />
           </div>
