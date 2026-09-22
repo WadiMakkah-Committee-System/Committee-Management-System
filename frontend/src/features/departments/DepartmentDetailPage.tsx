@@ -277,6 +277,7 @@ export function DepartmentDetailPage() {
         serverError={assignError}
         selectedIds={assignSelectedIds}
         onSelectedIdsChange={setAssignSelectedIds}
+        targetDepartmentName={detail.name}
       />
 
       <MemberDetailModal

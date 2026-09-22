@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Search, Users as UsersIcon } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Avatar } from '@/components/ui/Avatar'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { cn } from '@/lib/utils'
 import type { User } from '@/types'
 
@@ -23,6 +24,55 @@ interface AssignExistingUserModalProps {
    */
   selectedIds: string[]
   onSelectedIdsChange: (ids: string[]) => void
+  /**
+   * اسم الإدارة المستهدَفة — تُعرض بنص تأكيد النقل أدناه. طلب صريح من
+   * المستخدمة 2026-09-22: هذه النافذة تسمح أيضًا بـ"نقل" مستخدم موجود
+   * أصلاً بإدارة أخرى (وليس فقط إضافة مين بلا إدارة)، فلازم تأكيد واضح
+   * قبل تنفيذ النقل الفعلي (PATCH يغيّر dep_id) بدل تنفيذه صامتًا.
+   */
+  targetDepartmentName: string
+}
+
+/** مجموعة عرض واحدة بالقائمة — "بدون إدارة" (name=null) أو إدارة محددة. */
+interface CandidateGroup {
+  name: string | null
+  users: User[]
+}
+
+/**
+ * تُقسّم قائمة المرشّحين إلى مجموعات للعرض: "بدون إدارة" أولًا (الأسهل
+ * إضافة مباشرة، بلا نقل)، ثم كل إدارة أخرى كمجموعة منفصلة تحتها بترتيب
+ * أبجدي — طلب صريح من المستخدمة 2026-09-22 لتسهيل تمييز "إضافة" عن
+ * "نقل" بصريًا قبل حتى فتح أي محدد. الفرز نفسه لا يغيّر مين يظهر
+ * بالقائمة (نفس candidates/filtered بالخارج) — عرضي بحت.
+ */
+function groupCandidates(users: User[]): CandidateGroup[] {
+  const withoutDepartment: User[] = []
+  const byDepartment = new Map<string, { name: string; users: User[] }>()
+
+  for (const u of users) {
+    if (!u.department) {
+      withoutDepartment.push(u)
+      continue
+    }
+    const existing = byDepartment.get(u.department.dep_id)
+    if (existing) {
+      existing.users.push(u)
+    } else {
+      byDepartment.set(u.department.dep_id, { name: u.department.name, users: [u] })
+    }
+  }
+
+  const departmentGroups = Array.from(byDepartment.values())
+    .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+    .map((g) => ({ name: g.name, users: g.users }))
+
+  const groups: CandidateGroup[] = []
+  if (withoutDepartment.length > 0) {
+    groups.push({ name: null, users: withoutDepartment })
+  }
+  groups.push(...departmentGroups)
+  return groups
 }
 
 /**
@@ -39,6 +89,13 @@ interface AssignExistingUserModalProps {
  * حدة عند إضافة عدة أعضاء دفعة واحدة لنفس الإدارة. onAssign يستقبل الآن
  * مصفوفة معرّفات، وتتولى الصفحة المستدعية (DepartmentDetailPage) تنفيذ
  * PATCH لكل مستخدم على حدة بالتتابع.
+ *
+ * تحديث 2026-09-22 (طلب صريح من المستخدمة): بما أن هذه النافذة تسمح
+ * بنقل مستخدم من إدارة أخرى (لا تقتصر على مين بلا إدارة)، أُضيف تأكيد
+ * صريح (ConfirmDialog) يظهر مرة واحدة عند الضغط على "إضافة" — وليس عند
+ * كل تحديد مربع على حدة — يسرد أسماء مين سيُنقَل فعليًا من إدارته
+ * الحالية قبل تنفيذ العملية. لا يظهر التأكيد إطلاقًا لو كل المحدَّدين
+ * بلا إدارة أصلًا.
  */
 export function AssignExistingUserModal({
   open,
@@ -49,9 +106,17 @@ export function AssignExistingUserModal({
   serverError,
   selectedIds,
   onSelectedIdsChange,
+  targetDepartmentName,
 }: AssignExistingUserModalProps) {
   const [search, setSearch] = useState('')
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
+
+  // إعادة ضبط تأكيد النقل عند كل فتح جديد للنافذة — الأب يتحكم بـ open
+  // مباشرة (قد يُغلقها بعد نجاح الإضافة بدون المرور بـhandleClose هنا).
+  useEffect(() => {
+    if (open) setConfirmOpen(false)
+  }, [open])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -64,7 +129,14 @@ export function AssignExistingUserModal({
     )
   }, [candidates, search])
 
+  const groups = useMemo(() => groupCandidates(filtered), [filtered])
+
   const allFilteredSelected = filtered.length > 0 && filtered.every((u) => selectedSet.has(u.user_id))
+
+  const usersToMove = useMemo(
+    () => candidates.filter((u) => selectedSet.has(u.user_id) && u.department),
+    [candidates, selectedSet],
+  )
 
   function toggle(userId: string) {
     onSelectedIdsChange(
@@ -83,113 +155,152 @@ export function AssignExistingUserModal({
 
   function handleClose() {
     setSearch('')
+    setConfirmOpen(false)
     onSelectedIdsChange([])
     onClose()
   }
 
-  function handleAssign() {
+  function handleAssignClick() {
     if (selectedIds.length === 0) return
+    if (usersToMove.length > 0) {
+      setConfirmOpen(true)
+      return
+    }
     onAssign(selectedIds)
   }
 
+  function handleConfirmMove() {
+    setConfirmOpen(false)
+    onAssign(selectedIds)
+  }
+
+  const moveConfirmDescription =
+    usersToMove.length > 0
+      ? `سيتم نقل الأعضاء التالية أسماؤهم من إداراتهم الحالية إلى إدارة "${targetDepartmentName}": ` +
+        usersToMove
+          .map((u) => `${u.first_name} ${u.last_name} (من إدارة ${u.department!.name})`)
+          .join('، ') +
+        '. هل أنت متأكد من المتابعة؟'
+      : ''
+
   return (
-    <Modal
-      open={open}
-      onClose={handleClose}
-      title="إضافة مستخدمين إلى الإدارة"
-      description="ابحث عن مستخدمين مسجَّلين بالنظام مسبقًا واختر واحدًا أو أكثر لإضافتهم لهذه الإدارة دفعة واحدة — لإنشاء مستخدم جديد بالكامل استخدم صفحة المستخدمين."
-      footer={
-        <>
-          <Button variant="secondary" onClick={handleClose}>
-            إلغاء
-          </Button>
-          <Button onClick={handleAssign} disabled={selectedIds.length === 0 || loading} loading={loading}>
-            {selectedIds.length > 0 ? `إضافة (${selectedIds.length}) إلى الإدارة` : 'إضافة إلى الإدارة'}
-          </Button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-3">
-        {serverError && (
-          <p className="rounded-sm border border-danger/30 bg-danger/5 px-3 py-2 text-xs font-medium text-danger">
-            {serverError}
-          </p>
-        )}
-
-        <div className="relative">
-          <Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="ابحث بالاسم أو البريد الإلكتروني أو الإدارة الحالية..."
-            className="h-9 w-full rounded-sm border border-border-default bg-bg-surface pr-9 pl-3 text-sm text-text-primary placeholder:text-text-muted transition-colors focus:border-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-accent/40"
-          />
-        </div>
-
-        {filtered.length > 0 && (
-          <div className="flex items-center justify-between">
-            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-text-secondary">
-              <input
-                type="checkbox"
-                checked={allFilteredSelected}
-                onChange={toggleSelectAllFiltered}
-                className="h-3.5 w-3.5 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
-              />
-              تحديد الكل{search.trim() ? ' (نتائج البحث)' : ''}
-            </label>
-            <span
-              className={cn(
-                'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-colors',
-                selectedIds.length > 0 ? 'bg-brand-primary/10 text-brand-primary' : 'bg-neutral-bg text-text-muted',
-              )}
-            >
-              {selectedIds.length} محدد
-            </span>
-          </div>
-        )}
-
-        <div className="max-h-72 overflow-y-auto rounded-sm border border-border-default">
-          {filtered.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-8 text-text-muted">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-bg-elevated">
-                <UsersIcon size={18} />
-              </div>
-              <p className="text-xs">لا يوجد مستخدمون مطابقون</p>
-            </div>
-          ) : (
-            filtered.map((u) => {
-              const isSelected = selectedSet.has(u.user_id)
-              return (
-                <label
-                  key={u.user_id}
-                  className={cn(
-                    'flex cursor-pointer items-center gap-2.5 border-b border-border-default px-3 py-2.5 text-sm transition-colors last:border-0',
-                    'hover:bg-bg-elevated',
-                    isSelected && 'bg-brand-primary/5',
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => toggle(u.user_id)}
-                    className="h-4 w-4 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
-                  />
-                  <Avatar firstName={u.first_name} lastName={u.last_name} />
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-text-primary">
-                      {u.first_name} {u.last_name}
-                    </p>
-                    <p className="truncate text-xs text-text-muted">
-                      {u.email}
-                      {u.department?.name ? ` · ${u.department.name} حاليًا` : ' · بدون إدارة حاليًا'}
-                    </p>
-                  </div>
-                </label>
-              )
-            })
+    <>
+      <Modal
+        open={open}
+        onClose={handleClose}
+        title="إضافة مستخدمين إلى الإدارة"
+        description="ابحث عن مستخدمين مسجَّلين بالنظام مسبقًا واختر واحدًا أو أكثر لإضافتهم لهذه الإدارة دفعة واحدة — لإنشاء مستخدم جديد بالكامل استخدم صفحة المستخدمين."
+        footer={
+          <>
+            <Button variant="secondary" onClick={handleClose}>
+              إلغاء
+            </Button>
+            <Button onClick={handleAssignClick} disabled={selectedIds.length === 0 || loading} loading={loading}>
+              {selectedIds.length > 0 ? `إضافة (${selectedIds.length}) إلى الإدارة` : 'إضافة إلى الإدارة'}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          {serverError && (
+            <p className="rounded-sm border border-danger/30 bg-danger/5 px-3 py-2 text-xs font-medium text-danger">
+              {serverError}
+            </p>
           )}
+
+          <div className="relative">
+            <Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ابحث بالاسم أو البريد الإلكتروني أو الإدارة الحالية..."
+              className="h-9 w-full rounded-sm border border-border-default bg-bg-surface pr-9 pl-3 text-sm text-text-primary placeholder:text-text-muted transition-colors focus:border-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-accent/40"
+            />
+          </div>
+
+          {filtered.length > 0 && (
+            <div className="flex items-center justify-between">
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={toggleSelectAllFiltered}
+                  className="h-3.5 w-3.5 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
+                />
+                تحديد الكل{search.trim() ? ' (نتائج البحث)' : ''}
+              </label>
+              <span
+                className={cn(
+                  'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-colors',
+                  selectedIds.length > 0 ? 'bg-brand-primary/10 text-brand-primary' : 'bg-neutral-bg text-text-muted',
+                )}
+              >
+                {selectedIds.length} محدد
+              </span>
+            </div>
+          )}
+
+          <div className="max-h-72 overflow-y-auto rounded-sm border border-border-default">
+            {filtered.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-8 text-text-muted">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-bg-elevated">
+                  <UsersIcon size={18} />
+                </div>
+                <p className="text-xs">لا يوجد مستخدمون مطابقون</p>
+              </div>
+            ) : (
+              groups.map((group) => (
+                <div key={group.name ?? '__no_department__'}>
+                  <p className="sticky top-0 border-b border-border-default bg-bg-elevated px-3 py-1.5 text-[11px] font-semibold text-text-secondary">
+                    {group.name ?? 'بدون إدارة'} ({group.users.length})
+                  </p>
+                  {group.users.map((u) => {
+                    const isSelected = selectedSet.has(u.user_id)
+                    return (
+                      <label
+                        key={u.user_id}
+                        className={cn(
+                          'flex cursor-pointer items-center gap-2.5 border-b border-border-default px-3 py-2.5 text-sm transition-colors last:border-0',
+                          'hover:bg-bg-elevated',
+                          isSelected && 'bg-brand-primary/5',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggle(u.user_id)}
+                          className="h-4 w-4 shrink-0 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
+                        />
+                        <Avatar firstName={u.first_name} lastName={u.last_name} />
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-text-primary">
+                            {u.first_name} {u.last_name}
+                          </p>
+                          <p className="truncate text-xs text-text-muted">
+                            {u.email}
+                            {u.department?.name ? ` · ${u.department.name} حاليًا` : ' · بدون إدارة حاليًا'}
+                          </p>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              ))
+            )}
+          </div>
         </div>
-      </div>
-    </Modal>
+      </Modal>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={handleConfirmMove}
+        title="تأكيد نقل الأعضاء"
+        description={moveConfirmDescription}
+        confirmLabel="تأكيد النقل"
+        variant="primary"
+        loading={loading}
+      />
+    </>
   )
 }
