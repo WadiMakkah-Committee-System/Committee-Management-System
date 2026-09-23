@@ -71,6 +71,7 @@ export const PERMISSION_CATEGORY_LABELS: Record<string, string> = {
   decisions: 'القرارات',
   ai_items: 'البنود المستخرجة من الذكاء الاصطناعي',
   documents: 'الوثائق',
+  document_categories: 'تصنيفات الوثائق',
   minutes: 'المحاضر',
 }
 
@@ -85,6 +86,7 @@ export const PERMISSION_CATEGORY_ORDER = [
   'decisions',
   'ai_items',
   'documents',
+  'document_categories',
   'minutes',
 ]
 
