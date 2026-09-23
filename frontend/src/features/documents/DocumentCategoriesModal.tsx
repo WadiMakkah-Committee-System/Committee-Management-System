@@ -68,6 +68,20 @@ export function DocumentCategoriesModal({ open, onClose }: DocumentCategoriesMod
   const allowCreateDepartment = hasScopePermission('create', 'department')
   const canCreate = allowCreateGlobal || allowCreateDepartment
 
+  /**
+   * إدارات نموذج "إضافة/تعديل تصنيف" — سوبر أدمن يشوف كل إدارات الشركة
+   * (يقدر ينشئ تصنيف إدارة لأي إدارة يختارها)، أما غيره (كأصحاب صلاحية
+   * document_categories.create_department المحدودة) فيشوف إدارته هو بس
+   * بالقائمة، بدل عرض كل الإدارات له وهو أصلًا ما يقدر إلا يربط التصنيف
+   * بإدارته (الباك-إند يرفض غيرها على أي حال — راجعي document_service.py
+   * create_category — لكن عرضها كخيار بالواجهة كان مربكًا وبلا داعي).
+   */
+  const formDepartments = useMemo(() => {
+    if (isSuperAdmin) return departments ?? []
+    const own = (departments ?? []).find((d) => d.dep_id === user?.dep_id)
+    return own ? [own] : []
+  }, [departments, isSuperAdmin, user?.dep_id])
+
   const grouped = useMemo(() => {
     const global = (categories ?? []).filter((c) => c.scope === 'global')
     const department = (categories ?? []).filter((c) => c.scope === 'department')
@@ -247,7 +261,7 @@ export function DocumentCategoriesModal({ open, onClose }: DocumentCategoriesMod
         open={formOpen}
         onClose={() => setFormOpen(false)}
         category={editingCategory}
-        departments={departments ?? []}
+        departments={formDepartments}
         allowGlobal={allowCreateGlobal}
         allowDepartment={allowCreateDepartment}
         onSubmit={handleSubmit}
