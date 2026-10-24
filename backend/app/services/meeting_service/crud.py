@@ -15,6 +15,7 @@ from app.models.committee import Committee
 from app.models.meeting import Meeting, MeetingAgendaItem, MeetingMode, MeetingStatus
 from app.models.user import User
 from app.services import audit_service
+from app.services.committee_access import CommitteeAccess
 from app.services.meeting_service.access import (
     _committee_ids_with_committee_role_code,
     _require_access,
@@ -108,7 +109,9 @@ async def get_meeting(db: AsyncSession, meeting_id: uuid.UUID, *, actor: User) -
     return meeting
 
 
-async def list_meetings(db: AsyncSession, *, actor: User) -> list[tuple[Meeting, int]]:
+async def list_meetings(
+    db: AsyncSession, *, actor: User, access: CommitteeAccess | None = None
+) -> list[tuple[Meeting, int]]:
     """
     عرض الاجتماعات (FR-MEET §3.1.2) — بنفس منطق الوصول المزدوج المطبَّق
     بـcommittees.py (System Role scope أو Committee Role permission).
@@ -148,9 +151,12 @@ async def list_meetings(db: AsyncSession, *, actor: User) -> list[tuple[Meeting,
             )
             conditions.append(Meeting.committee_id.in_(dept_committee_ids))
 
-        committee_ids = await _committee_ids_with_committee_role_code(
-            db, actor, "meetings.view"
-        )
+        if access is not None:
+            committee_ids = await access.committee_ids_with_code("meetings.view")
+        else:
+            committee_ids = await _committee_ids_with_committee_role_code(
+                db, actor, "meetings.view"
+            )
         if committee_ids:
             conditions.append(Meeting.committee_id.in_(committee_ids))
 

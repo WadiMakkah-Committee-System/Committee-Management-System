@@ -46,6 +46,7 @@ from app.schemas.dashboard import (
     DashboardTaskItem,
 )
 from app.services import committee_service, decision_service, document_service, meeting_service, task_service
+from app.services.committee_access import CommitteeAccess
 
 _PREVIEW_LIMIT = 5
 
@@ -98,10 +99,21 @@ async def _committee_names(db: AsyncSession, committee_ids: set) -> dict:
 
 async def get_dashboard_summary(db: AsyncSession, *, actor: User) -> DashboardSummary:
     committee_scope = actor.scope_for("committees.view") or "own"
-    committees = await committee_service.list_committees(db, actor=actor, scope=committee_scope)
-    meetings = [meeting for meeting, _count in await meeting_service.list_meetings(db, actor=actor)]
-    decisions = await decision_service.list_decisions(db, actor=actor)
-    tasks = await task_service.list_tasks(db, actor=actor)
+    committees = await committee_service.list_committees(
+        db, actor=actor, scope=committee_scope, summary=True
+    )
+    # تحسين أداء 2026-10-24: نفس دوال القوائم الأصلية (نفس الصلاحيات والنطاق
+    # حرفيًا — مبدأ هذا الملف)، لكن بفاحص صلاحيات مشترك (أكواد أدوار اللجان
+    # تُجلب مرة واحدة بدل مرة لكل قائمة) وبدون تحميل ما لا تعرضه لوحة التحكم
+    # (منفذو القرارات، مسؤول/منشئ/مسار المهام، أعضاء اللجان).
+    access = CommitteeAccess(db, actor)
+    meetings = [
+        meeting for meeting, _count in await meeting_service.list_meetings(db, actor=actor, access=access)
+    ]
+    decisions = await decision_service.list_decisions(
+        db, actor=actor, access=access, with_assignees=False
+    )
+    tasks = await task_service.list_tasks(db, actor=actor, access=access, summary=True)
     documents = await document_service.list_documents(db, current_user=actor)
 
     upcoming_meetings = _upcoming_meetings(meetings)

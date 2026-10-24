@@ -124,15 +124,26 @@ async def get_decision(
 
 
 async def list_decisions(
-    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID | None = None
+    db: AsyncSession,
+    *,
+    actor: User,
+    meeting_id: uuid.UUID | None = None,
+    access: CommitteeAccess | None = None,
+    with_assignees: bool = True,
 ) -> list[Decision]:
     """نفس منطق الوصول المزدوج بوحدة الاجتماعات (System Role scope أو Committee
     Role permission). meeting_id (جديد): تفلتر لقرارات اجتماع واحد بالذات —
     تستخدمها لوحة "القرارات" داخل غرفة الاجتماع (بخلاف شاشة "إدارة القرارات"
-    العامة اللي تستدعيها بلا meeting_id)."""
-    access = CommitteeAccess(db, actor)
+    العامة اللي تستدعيها بلا meeting_id).
+
+    with_assignees=False: لمن لا يعرض المنفذين (لوحة التحكم) — استعلام أقل.
+
+    access (اختياري — تحسين أداء 2026-10-24): CommitteeAccess مشترك من
+    المستدعي (لوحة التحكم تستدعي عدة قوائم بنفس الطلب) حتى تُجلب أكواد أدوار
+    لجان المستخدم مرة واحدة للطلب كله بدل مرة لكل قائمة. نفس القاعدة حرفيًا."""
+    access = access or CommitteeAccess(db, actor)
     scope = actor.scope_for("decisions.view")
-    stmt = decisions_query().where(Decision.deleted_at.is_(None)).order_by(
+    stmt = decisions_query(with_assignees=with_assignees).where(Decision.deleted_at.is_(None)).order_by(
         Decision.created_at.desc()
     )
     if meeting_id is not None:

@@ -138,9 +138,10 @@ async def open_voting(
         metadata={"action": "open_voting", "options": labels},
     )
     await db.commit()
-    return await _redact_votes_if_unauthorized(
-        access, committee, await load_decision(db, decision.decision_id, reload=True)
-    )
+    # بدون إعادة تحميل بعد commit (تحسين أداء 2026-10-24): القرار محمَّل
+    # أصلًا بكل ما تعرضه الاستجابة، والخيارات الجديدة كائنات بالجلسة نفسها
+    # (معرّفاتها مُرجَعة من INSERT) — إعادة التحميل كانت 5 استعلامات لنفس البيانات.
+    return await _redact_votes_if_unauthorized(access, committee, decision)
 
 
 async def cast_vote(
