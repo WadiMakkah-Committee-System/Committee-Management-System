@@ -53,6 +53,21 @@ def current_caller() -> str:
     return _caller.get()
 
 
+def is_dev() -> bool:
+    """التطوير: القياس الكامل الأصلي (نص SQL + X-Perf headers) كما كان."""
+    from app.core.config import settings
+
+    return settings.ENVIRONMENT == "development"
+
+
+def enabled() -> bool:
+    """تحقيق أداء 2026-10-23: القياس يعمل بالتطوير (كالسابق) أو عند PERF_LOG=1
+    صراحةً بأي بيئة أخرى (بوضع آمن: مدد فقط، بلا نص SQL ولا headers)."""
+    from app.core.config import settings
+
+    return is_dev() or settings.PERF_LOG
+
+
 def start_trace() -> None:
     _trace.set([])
     _origin.set(time.perf_counter())

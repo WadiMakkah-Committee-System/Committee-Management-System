@@ -11,6 +11,7 @@
 
 import logging
 import time as _perf_time
+import uuid as _uuid
 from contextlib import asynccontextmanager
 
 import socketio
@@ -137,8 +138,12 @@ async def perf_trace_middleware(request: Request, call_next):
     (قياس + طباعة stdout بكل طلب) ويسرّب نص استعلامات SQL الفعلي عبر
     X-Perf-Trace header لأي عميل يفحص الـheaders. من الآن يعمل فقط
     بالتطوير — بأي بيئة ثانية يمر الطلب مباشرة بدون أي قياس."""
-    if settings.ENVIRONMENT != "development":
+    # تحقيق أداء 2026-10-23: يعمل أيضًا خارج التطوير لو PERF_LOG=1 صراحةً —
+    # بوضع آمن هناك: سطر stdout فقط (مدد + request_id)، بلا أي header.
+    if not perf_probe.enabled():
         return await call_next(request)
+    is_dev = perf_probe.is_dev()
+    request_id = _uuid.uuid4().hex[:8]
     perf_probe.start_trace()
     t0 = _perf_time.perf_counter()
     # تشخيص 2026-09-13: caller افتراضي على مستوى الطلب كامل — أي استعلام
@@ -146,10 +151,26 @@ async def perf_trace_middleware(request: Request, call_next):
     # أثناء تسلسل/تجهيز الاستجابة Pydantic بعد رجوع دالة الخدمة، أو من
     # مسار لم نضع فيه caller محدد بعد) يظهر بهذا الاسم بدل "?" المبهم —
     # دليل مباشر إن كان السبب فعلًا تسلسل الاستجابة أو مكانًا لم نغطّه.
-    with perf_probe.caller(f"http_request_default[{request.method} {request.url.path}]"):
+    # خارج التطوير: تسمية ثابتة بلا المسار الفعلي (قد يحوي معرّفات UUID).
+    default_caller = (
+        f"http_request_default[{request.method} {request.url.path}]" if is_dev else "http_request_default"
+    )
+    with perf_probe.caller(default_caller):
         response = await call_next(request)
     total_ms = round((_perf_time.perf_counter() - t0) * 1000, 1)
     trace_str = perf_probe.trace_summary()
+    if not is_dev:
+        # خارج التطوير (PERF_LOG=1): لا headers إطلاقًا. المسار = قالب الراوت
+        # (مثل /api/v1/meetings/{meeting_id}) لا المسار الفعلي بمعرّفاته؛ وإن
+        # لم يُطابَق أي راوت (404) يُسجَّل "<unmatched>" بدل المسار الخام.
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", None) or "<unmatched>"
+        print(
+            f"[PERF] rid={request_id} {request.method} {route_path} "
+            f"status={response.status_code} total={total_ms}ms | {trace_str}",
+            flush=True,
+        )
+        return response
     response.headers["X-Perf-Total-Ms"] = str(total_ms)
     if trace_str:
         # إصلاح 2026-09-13 (اكتُشف أثناء تحقيق N+1 الثاني): القص كان على
@@ -166,7 +187,7 @@ async def perf_trace_middleware(request: Request, call_next):
         # الـheader المعتادة عند أغلب البنى التحتية.
         response.headers["X-Perf-Trace"] = trace_str[:30000].encode("ascii", "ignore").decode("ascii")
     print(
-        f"[PERF] {request.method} {request.url.path} total={total_ms}ms | {trace_str}",
+        f"[PERF] rid={request_id} {request.method} {request.url.path} total={total_ms}ms | {trace_str}",
         flush=True,
     )
     return response

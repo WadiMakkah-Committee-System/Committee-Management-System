@@ -204,8 +204,15 @@ async def create_meeting(
 async def list_meetings(
     current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> list[MeetingOut]:
-    meetings = await meeting_service.list_meetings(db, actor=current_user)
-    return [MeetingOut.model_validate(m) for m in meetings]
+    # تحقيق أداء 2026-10-23: perf_probe.timed لا يفعل شيئًا فعليًا إلا لو
+    # القياس مفعّل (mark() تتجاهل بلا trace) — السلوك والنتيجة كما هي.
+    with perf_probe.timed("meetings.list_service"):
+        meetings = await meeting_service.list_meetings(db, actor=current_user)
+    with perf_probe.timed("meetings.build_response"):
+        result = [MeetingOut.model_validate(m) for m in meetings]
+    # ما بعد هذه العلامة حتى total = تحقق response_model + JSON + GZip (FastAPI).
+    perf_probe.mark(f"meetings.route_return[n={len(result)}]")
+    return result
 
 
 @router.get("/{meeting_id}", response_model=MeetingOut)

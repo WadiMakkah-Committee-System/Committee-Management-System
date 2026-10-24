@@ -179,7 +179,17 @@ def _perf_find_caller() -> str:
 # تحديث 2026-09-14 (إيقاف الأداة بالإنتاج): التحقيق الأصلي خلص، وهذي
 # الـhooks تُنفَّذ على كل استعلام SQL بكل طلب — تكلفة أداء حقيقية لو
 # ظلت مسجَّلة بالإنتاج. من الآن تُسجَّل فقط بالتطوير.
-if settings.ENVIRONMENT == "development":
+# تحقيق أداء 2026-10-23: تُسجَّل أيضًا لو PERF_LOG=1 خارج التطوير — هناك
+# بلا نص SQL إطلاقًا (نوع الجملة + المستدعي + المدة فقط)، راجعي _perf_after_cursor_execute.
+_PERF_HOOKS_SAFE_MODE = not perf_probe.is_dev()
+
+if perf_probe.enabled():
+
+    @event.listens_for(engine.sync_engine, "do_connect")
+    def _perf_on_connect_start(dialect, conn_rec, cargs, cparams):
+        # بداية إنشاء اتصال فعلي جديد (TCP/TLS/auth) — الفرق بين @at_ms هنا
+        # و@at_ms لـdb.NEW_PHYSICAL_CONNECTION_CREATED = زمن الإنشاء نفسه.
+        perf_probe.mark("db.physical_connect_start")
 
     @event.listens_for(engine.sync_engine, "before_cursor_execute")
     def _perf_before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
@@ -215,6 +225,9 @@ if settings.ENVIRONMENT == "development":
                 param_count = -1
             param_note = f"params={param_count}"
         caller = _perf_find_caller()
+        if _PERF_HOOKS_SAFE_MODE:
+            perf_probe.mark(f"sql[{query_type} by={caller}]", dur_ms=dur_ms)
+            return
         perf_probe.mark(f"sql: [{query_type} {param_note} by={caller}] {full_sql}", dur_ms=dur_ms)
 
     @event.listens_for(engine.sync_engine, "connect")

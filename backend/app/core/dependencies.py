@@ -77,6 +77,10 @@ async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
     if user_id is None:
         raise unauthorized
 
+    # تحقيق أداء 2026-10-23: علامة زمنية فقط (لا تلمس DB ولا تغيّر مسار
+    # التنفيذ). زمن الحصول على الاتصال = @at_ms لـdb.pool_checkout (يُطلَق بعد
+    # انتظار الـpool + pre-ping + إنشاء اتصال جديد إن لزم) ناقص @at_ms هنا.
+    perf_probe.mark("auth.db_get_user_start")
     with perf_probe.timed("auth.db_get_user"), perf_probe.caller(
         "auth._resolve_user_from_token->user_service.get_user[joinedload dept.manager + role.role_permission_links.permission]"
     ):
