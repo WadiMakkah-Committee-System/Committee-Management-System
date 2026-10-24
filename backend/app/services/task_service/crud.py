@@ -100,14 +100,23 @@ async def get_task(db: AsyncSession, task_id: uuid.UUID, *, actor: User) -> Task
     return task
 
 
-async def list_tasks(db: AsyncSession, *, actor: User) -> list[Task]:
+async def list_tasks(
+    db: AsyncSession, *, actor: User, access: CommitteeAccess | None = None, summary: bool = False
+) -> list[Task]:
     """
     رئيس اللجنة يشوف كل مهام لجانه (بمن فيها الي مسندة لغيره)، العضو
     العادي يشوف بس مهامه المسندة له (حتى لو عضو بأكثر من لجنة).
-    """
-    access = CommitteeAccess(db, actor)
+    
+
+    summary=True: المهمة + لجنتها فقط (بلا المسؤول/المنشئ/مسار الإسناد) — للوحة
+    التحكم التي تعرض العنوان والحالة والموعد واسم اللجنة فقط.
+
+    access (اختياري — تحسين أداء 2026-10-24): CommitteeAccess مشترك من
+    المستدعي (لوحة التحكم تستدعي عدة قوائم بنفس الطلب) حتى تُجلب أكواد أدوار
+    لجان المستخدم مرة واحدة للطلب كله بدل مرة لكل قائمة. نفس القاعدة حرفيًا."""
+    access = access or CommitteeAccess(db, actor)
     scope = actor.scope_for(_VIEW)
-    stmt = tasks_query().where(Task.deleted_at.is_(None)).order_by(Task.created_at.desc())
+    stmt = tasks_query(summary=summary).where(Task.deleted_at.is_(None)).order_by(Task.created_at.desc())
 
     # إصلاح 2026-09-13 (بلاغ لاما — بنفس نمط meeting_service.list_meetings/
     # decision_service.list_decisions المُصلَحين لنفس السبب): "department"

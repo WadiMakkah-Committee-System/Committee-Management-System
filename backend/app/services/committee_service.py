@@ -678,7 +678,9 @@ def _committee_detail_load_options() -> tuple:
     )
 
 
-async def list_committees(db: AsyncSession, *, actor: User, scope: str) -> list[Committee]:
+async def list_committees(
+    db: AsyncSession, *, actor: User, scope: str, summary: bool = False
+) -> list[Committee]:
     """
     عرض اللجان المعتمدة (صلاحية committees.view، بعد إعادة تسمية
     committees.view_authorized — migration 0014). سطح قراءة بسيط فقط
@@ -699,9 +701,13 @@ async def list_committees(db: AsyncSession, *, actor: User, scope: str) -> list[
       فيه إدارة يُقارَن بها أصلًا.
     - all: كل اللجان بدون تصفية.
     """
-    stmt = select(Committee).options(*_committee_detail_load_options()).order_by(
-        Committee.created_at.desc()
+    # summary=True (لوحة التحكم — تعرض الاسم والمعرّف فقط): أعمدة اللجنة وحدها
+    # بلا الأعضاء/أدوارهم/الرئيس (3 استعلامات أقل). التصفية بالنطاق أدناه شروط
+    # SQL لا تحتاج تحميل أي علاقة (تحسين أداء 2026-10-24).
+    load_options = (
+        (raiseload("*", sql_only=True),) if summary else _committee_detail_load_options()
     )
+    stmt = select(Committee).options(*load_options).order_by(Committee.created_at.desc())
     if scope == "own":
         stmt = stmt.where(
             or_(

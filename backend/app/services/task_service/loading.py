@@ -34,9 +34,12 @@ def _user(path) -> tuple:
     return (path, path.raiseload("*", **_RAISE))
 
 
-def task_options(*, with_members: bool = False) -> tuple:
+def task_options(*, with_members: bool = False, summary: bool = False) -> tuple:
     committee = joinedload(Task.committee)
     options: list = [*_user(committee.joinedload(Committee.chair))]
+    if summary:
+        # لوحة التحكم: المهمة + لجنتها (الاسم وفحص الرئيس) فقط.
+        return (*options, committee, committee.raiseload("*", **_RAISE), raiseload("*", **_RAISE))
     if with_members:
         options += _user(committee.selectinload(Committee.members))
     history = selectinload(Task.assignment_history)
@@ -55,7 +58,7 @@ def task_options(*, with_members: bool = False) -> tuple:
     return tuple(options)
 
 
-def tasks_query(*, with_members: bool = False, reload: bool = False):
+def tasks_query(*, with_members: bool = False, reload: bool = False, summary: bool = False):
     """reload=True فقط لإعادة التحميل بعد commit بنفس الدالة (populate_existing
     يقرأ القيم الحالية فعلًا — مثلًا المسؤول الجديد بعد إعادة الإسناد، وهذا
     ما كان يُفشل test_reassign_records_task_trail سابقًا: الكائن الموجود
@@ -64,7 +67,7 @@ def tasks_query(*, with_members: bool = False, reload: bool = False):
     raiseload تمنع علاقات حمّلتها خدمة أخرى قبلها."""
     return (
         select(Task)
-        .options(*task_options(with_members=with_members))
+        .options(*task_options(with_members=with_members, summary=summary))
         .execution_options(populate_existing=reload)
     )
 

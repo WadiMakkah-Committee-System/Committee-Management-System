@@ -48,17 +48,17 @@ def _committee_options(path) -> tuple:
     )
 
 
-def decision_options() -> tuple:
+def decision_options(*, with_assignees: bool = True) -> tuple:
     creator = joinedload(Decision.creator)
-    assignees = selectinload(Decision.assignees)
+    assignees = (selectinload(Decision.assignees),) if with_assignees else ()
     votes = selectinload(Decision.votes)
     voter = votes.joinedload(DecisionVote.voter)
     return (
         *_committee_options(joinedload(Decision.committee)),
         creator,
         creator.raiseload("*", **_RAISE),
-        assignees,
-        assignees.raiseload("*", **_RAISE),
+        *assignees,
+        *(a.raiseload("*", **_RAISE) for a in assignees),
         selectinload(Decision.vote_options),
         votes,
         voter,
@@ -68,7 +68,7 @@ def decision_options() -> tuple:
     )
 
 
-def decisions_query(*, reload: bool = False):
+def decisions_query(*, reload: bool = False, with_assignees: bool = True):
     """select(Decision) بخيارات التحميل الصريحة.
 
     reload=True فقط لإعادة التحميل بعد commit/flush بنفس الدالة
@@ -78,7 +78,7 @@ def decisions_query(*, reload: bool = False):
     علاقات حمّلتها خدمة أخرى قبلها بنفس الطلب."""
     return (
         select(Decision)
-        .options(*decision_options())
+        .options(*decision_options(with_assignees=with_assignees))
         .execution_options(populate_existing=reload)
     )
 
