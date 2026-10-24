@@ -26,8 +26,14 @@ export function useMe() {
   return useQuery({ queryKey: usersKeys.me, queryFn: usersApi.fetchMe })
 }
 
-export function useUsers() {
-  return useQuery({ queryKey: usersKeys.all, queryFn: () => usersApi.fetchUsers() })
+/** options.enabled: لقوائم الاختيار داخل نماذج مغلقة افتراضيًا — لا تُجلب قائمة
+ * كل المستخدمين إلا عند فتح النموذج فعليًا (نفس نمط useRoles/useJobTitles). */
+export function useUsers(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: usersKeys.all,
+    queryFn: () => usersApi.fetchUsers(),
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useUserDetail(userId: string | undefined) {

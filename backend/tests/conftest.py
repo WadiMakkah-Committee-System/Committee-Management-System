@@ -12,6 +12,7 @@
 - توفير مستخدم super_admin جاهز لاختبارات تتطلب صلاحيات.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -21,7 +22,7 @@ from sqlalchemy import text
 
 from sqlalchemy import select
 
-from app.core import storage_client
+from app.core import background, storage_client
 from app.core.redis_client import redis_client
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal, engine
@@ -74,6 +75,15 @@ async def _fresh_async_resources() -> AsyncGenerator[None, None]:
     الإغلاق نفسها استخدام حلقة حدث أُغلقت مسبقًا.
     """
     yield
+    # إصلاح بنية الاختبارات (2026-10-24): مهام الإشعارات المنفصلة
+    # (app.core.background.run_detached) كانت تبقى معلّقة عند إغلاق حلقة
+    # الحدث نهاية الاختبار، وهي ممسكة باتصال قاعدة بيانات بمعاملة مفتوحة
+    # (INSERT INTO notifications ...) — فيعلق TRUNCATE بالاختبار التالي
+    # منتظرًا قفلها إلى ما لا نهاية (تعليق ملفات الاختبار كاملة أحيانًا).
+    # ننتظر انتهاءها هنا قبل إغلاق الاتصالات.
+    pending = list(background._pending_tasks)
+    if pending:
+        await asyncio.wait(pending, timeout=30)
     await engine.dispose()
     await redis_client.aclose()
 

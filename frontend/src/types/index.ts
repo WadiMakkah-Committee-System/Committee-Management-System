@@ -576,6 +576,17 @@ export interface Meeting {
   updated_at: string
 }
 
+/**
+ * عنصر قائمة الاجتماعات (GET /meetings) — يقابل MeetingListItem بالباك-إند
+ * (إعادة هيكلة 2026-10-24). نفس حقول Meeting بدون التفاصيل الثقيلة
+ * (creator/participants/agenda_items) التي كانت تُحمَّل لكل اجتماع بالقائمة
+ * رغم أن القائمة لا تعرض منها إلا عدد المشاركين — صار participant_count.
+ * التفاصيل الكاملة تبقى من GET /meetings/{id} (Meeting).
+ */
+export type MeetingListItem = Omit<Meeting, 'creator' | 'participants' | 'agenda_items'> & {
+  participant_count: number
+}
+
 export interface MeetingCreatePayload {
   committee_id: string
   title: string

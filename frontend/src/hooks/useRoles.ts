@@ -15,8 +15,12 @@ export function useRoles(options?: { enabled?: boolean }) {
   })
 }
 
-export function usePermissionsCatalog() {
-  return useQuery({ queryKey: rolesKeys.permissions, queryFn: rolesApi.fetchPermissions })
+export function usePermissionsCatalog(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: rolesKeys.permissions,
+    queryFn: rolesApi.fetchPermissions,
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useCreateRole() {

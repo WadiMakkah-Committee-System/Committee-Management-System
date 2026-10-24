@@ -17,10 +17,11 @@ function invalidateCategoryRelatedQueries(queryClient: ReturnType<typeof useQuer
   queryClient.invalidateQueries({ queryKey: documentsKeys.all })
 }
 
-export function useDocumentCategories() {
+export function useDocumentCategories(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: documentCategoriesKeys.all,
     queryFn: documentCategoriesApi.fetchDocumentCategories,
+    enabled: options?.enabled ?? true,
   })
 }
 

@@ -96,7 +96,10 @@ async def authenticate(
         metadata={"event": "login_success"},
     )
     await db.commit()
-    await db.refresh(user)
+    # بدون db.refresh(user) هنا (تحسين أداء 2026-10-24): القيم المحدَّثة
+    # موجودة أصلًا بالكائن (expire_on_commit=False)، والـrefresh كان يحجز
+    # اتصالًا جديدًا من الـpool (pre-ping) ويعيد تحميل المستخدم ودوره وكل
+    # صلاحياته (4 استعلامات) رغم أن الاستجابة لا تحتاج منها شيئًا.
 
     session_id = await create_session(user.user_id)
     access_token = create_access_token(

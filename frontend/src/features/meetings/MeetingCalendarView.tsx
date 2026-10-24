@@ -12,7 +12,7 @@ import { format, getDay, parse, startOfWeek } from 'date-fns'
 import { arSA } from 'date-fns/locale'
 import { ChevronRight, ChevronLeft, CalendarDays, ListTodo } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Meeting, MeetingStatus } from '@/types'
+import type { MeetingListItem, MeetingStatus } from '@/types'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import './meeting-calendar.css'
 
@@ -114,7 +114,7 @@ interface CalendarEvent {
   title: string
   start: Date
   end: Date
-  meeting: Meeting
+  meeting: MeetingListItem
 }
 
 const MESSAGES = {
@@ -217,8 +217,8 @@ export function MeetingCalendarView({
   meetings,
   onSelectMeeting,
 }: {
-  meetings: Meeting[]
-  onSelectMeeting: (meeting: Meeting) => void
+  meetings: MeetingListItem[]
+  onSelectMeeting: (meeting: MeetingListItem) => void
 }) {
   const [view, setView] = useState<View>(Views.MONTH)
   const [date, setDate] = useState(new Date())

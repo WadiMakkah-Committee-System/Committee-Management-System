@@ -121,15 +121,17 @@ export function DocumentsPage() {
   // إدارات ولجان الرفع مُصفَّاة مسبقًا حسب مبدأ أقل صلاحية ممكنة (راجعي
   // DocumentFormModal وdocument_service.get_publish_targets) — وليست
   // القوائم الكاملة لكل إدارات/لجان الشركة كما كانت سابقًا.
-  const { data: publishTargets } = useDocumentPublishTargets()
-  const { data: users } = useUsers()
+  // لنموذج الرفع/التعديل فقط — تُجلب عند فتحه، لا مع كل تحميل للصفحة
+  // (تحسين أداء 2026-10-24: كانت قائمة كل المستخدمين تُطلب هنا دائمًا).
+  const [formOpen, setFormOpen] = useState(false)
+  const { data: publishTargets } = useDocumentPublishTargets({ enabled: formOpen })
+  const { data: users } = useUsers({ enabled: formOpen })
 
   const uploadMutation = useUploadDocument()
   const updateMutation = useUpdateDocument()
   const deleteMutation = useDeleteDocument()
   const downloadMutation = useDownloadDocument()
 
-  const [formOpen, setFormOpen] = useState(false)
   const [editingDoc, setEditingDoc] = useState<Document | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Document | null>(null)

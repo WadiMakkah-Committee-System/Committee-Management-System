@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Suspense, lazy, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -35,9 +35,19 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
-import { MeetingCalendarView } from './MeetingCalendarView'
 import { cardToneClass, cn, dayGroupKey, extractErrorMessage, formatDayHeading, formatTime, iconToneClass, scopeFor } from '@/lib/utils'
-import type { Meeting } from '@/types'
+import type { MeetingListItem } from '@/types'
+import { PageSpinner } from '@/components/ui/Spinner'
+
+/**
+ * عرض التقويم (react-big-calendar + أنماطه) يُحمَّل فقط عند اختيار عرض
+ * "التقويم" — العرض الافتراضي هو الخط الزمني، فلا داعي لتنزيل مكتبة التقويم
+ * مع كل فتح لصفحة الاجتماعات (تحسين أداء 2026-10-24، نفس نمط React.lazy
+ * المستخدم لكل الصفحات بـApp.tsx).
+ */
+const MeetingCalendarView = lazy(() =>
+  import('./MeetingCalendarView').then((m) => ({ default: m.MeetingCalendarView })),
+)
 
 /**
  * قائمة الاجتماعات — إعادة تصميم شاملة 2026-09-05 (طلب لاما 14 بندًا) فوق
@@ -124,7 +134,7 @@ export function MeetingsPage() {
   const [viewMode, setViewMode] = useState<'timeline' | 'calendar'>('timeline')
   const [formOpen, setFormOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [deletingMeeting, setDeletingMeeting] = useState<Meeting | null>(null)
+  const [deletingMeeting, setDeletingMeeting] = useState<MeetingListItem | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   /**
@@ -228,7 +238,7 @@ export function MeetingsPage() {
       (a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(),
     )
     const order: string[] = []
-    const map = new Map<string, Meeting[]>()
+    const map = new Map<string, MeetingListItem[]>()
     for (const m of sorted) {
       const key = dayGroupKey(m.scheduled_at)
       if (!map.has(key)) {
@@ -305,7 +315,7 @@ export function MeetingsPage() {
    * (راجعي رأس الملف وmeeting_service.delete_meeting)، لم يُمسّ إطلاقًا
    * بإعادة التصميم هذه بناءً على توضيح لاما الصريح 2026-09-05.
    */
-  function canDelete(meeting: Meeting): boolean {
+  function canDelete(meeting: MeetingListItem): boolean {
     return new Date(meeting.scheduled_at).getTime() > Date.now()
   }
 
@@ -472,10 +482,12 @@ export function MeetingsPage() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
             >
-              <MeetingCalendarView
-                meetings={visible}
-                onSelectMeeting={(m) => navigate(`/meetings/${m.meeting_id}`)}
-              />
+              <Suspense fallback={<PageSpinner />}>
+                <MeetingCalendarView
+                  meetings={visible}
+                  onSelectMeeting={(m) => navigate(`/meetings/${m.meeting_id}`)}
+                />
+              </Suspense>
             </motion.div>
           ) : (
             <motion.div
@@ -558,7 +570,7 @@ export function MeetingsPage() {
                               )}
                               <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-secondary">
                                 <span className="flex items-center gap-1">
-                                  <Users2 size={12} /> {meeting.participants.length} مشاركين
+                                  <Users2 size={12} /> {meeting.participant_count} مشاركين
                                 </span>
                                 <span className="flex items-center gap-1">
                                   {meeting.mode === 'remote' ? (

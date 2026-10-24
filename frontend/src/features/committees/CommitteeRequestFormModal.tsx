@@ -109,7 +109,7 @@ export function CommitteeRequestFormModal({
   const isEdit = !!request
   // مراجعة لاما 2026-08-31: مرشحو العضوية من كل الإدارات (eligible-members)،
   // وليس useUsers المقيَّد بنطاق users.view لمقدّم/معدّل الطلب نفسه.
-  const { data: users } = useCommitteeEligibleMembers()
+  const { data: users } = useCommitteeEligibleMembers({ enabled: open })
 
   const {
     register,

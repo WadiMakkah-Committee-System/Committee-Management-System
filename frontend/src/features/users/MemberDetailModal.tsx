@@ -26,7 +26,7 @@ export function MemberDetailModal({
   allowRemoveFromDepartment,
 }: MemberDetailModalProps) {
   const { data: user, isLoading } = useUserDetail(userId ?? undefined)
-  const { data: permissions } = usePermissionsCatalog()
+  const { data: permissions } = usePermissionsCatalog({ enabled: !!userId })
   const suspendMutation = useSuspendUser()
   const reactivateMutation = useReactivateUser()
   const updateMutation = useUpdateUser()

@@ -171,6 +171,38 @@ class MeetingOut(BaseModel):
     updated_at: datetime
 
 
+class MeetingListItem(BaseModel):
+    """
+    عنصر قائمة الاجتماعات (GET /meetings) — الحقول المباشرة التي تعرضها
+    شاشات القائمة/التقويم/لوحة التحكم/قائمة المحاضر فقط + عدد المشاركين.
+
+    إعادة هيكلة 2026-10-24: كانت القائمة تُرجع MeetingOut كاملًا لكل
+    اجتماع (المنشئ + كل المشاركين + كل البنود)، والواجهة لا تستخدم من ذلك
+    إلا participants.length بشاشة الاجتماعات. التفاصيل الكاملة تبقى على
+    GET /meetings/{meeting_id} (MeetingOut).
+
+    ⚠️ توافق الواجهة: participants لم يعد موجودًا هنا — الواجهة تستخدم
+    participant_count بدل participants.length (يُعدَّل بمرحلة الفرونت).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    meeting_id: uuid.UUID
+    committee_id: uuid.UUID
+    title: str
+    description: str | None
+    mode: MeetingMode
+    location: str | None
+    scheduled_at: datetime
+    scheduled_end_at: datetime | None
+    status: MeetingStatus
+    started_at: datetime | None
+    ended_at: datetime | None
+    participant_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
 class MeetingAttachmentOut(BaseModel):
     """
     ملف مرتبط باجتماع (عرض تقديمي أو مرفق عام) — تجميعة من Document +
