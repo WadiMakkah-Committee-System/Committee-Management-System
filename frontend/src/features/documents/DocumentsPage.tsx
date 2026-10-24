@@ -20,6 +20,7 @@ import {
   useDocumentPublishTargets,
   useDocuments,
   useDownloadDocument,
+  usePrefetchDocument,
   useUpdateDocument,
   useUploadDocument,
 } from '@/hooks/useDocuments'
@@ -83,6 +84,8 @@ function documentScopeBadge(doc: Document): { label: string; icon: typeof Globe2
  */
 export function DocumentsPage() {
   const navigate = useNavigate()
+  // تحميل مسبق للتفاصيل عند مرور الماوس/التركيز على العنصر (تحسين أداء 2026-10-24).
+  const prefetchDocument = usePrefetchDocument()
   const user = useAuthStore((s) => s.user)
   const { showToast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -224,12 +227,14 @@ export function DocumentsPage() {
   function handleDelete() {
     if (!deleteTarget) return
     setDeleteError(null)
-    deleteMutation.mutate(deleteTarget.document_id, {
-      onSuccess: () => {
-        setDeleteTarget(null)
-        showToast('تم حذف الوثيقة بنجاح', 'success')
-      },
-      onError: (err) => setDeleteError(extractErrorMessage(err)),
+    // تحديث متفائل (2026-10-24): العنصر يختفي من القائمة فورًا ونغلق نافذة
+    // التأكيد بدون انتظار السيرفر — لو فشل الحذف يرجع العنصر مكانه
+    // (rollback داخل الـhook) وتظهر رسالة الخطأ.
+    const documentId = deleteTarget.document_id
+    setDeleteTarget(null)
+    deleteMutation.mutate(documentId, {
+      onSuccess: () => showToast('تم حذف الوثيقة بنجاح', 'success'),
+      onError: (err) => showToast(extractErrorMessage(err), 'error'),
     })
   }
 
@@ -368,6 +373,8 @@ export function DocumentsPage() {
                 <Card
                   interactive
                   onClick={() => navigate(`/documents/${doc.document_id}`)}
+                  onMouseEnter={() => prefetchDocument(doc.document_id)}
+                  onFocus={() => prefetchDocument(doc.document_id)}
                   className={cn('flex h-full flex-col gap-3', cardToneClass(i))}
                 >
                   <div className="flex items-start justify-between gap-2">
