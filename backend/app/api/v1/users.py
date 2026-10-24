@@ -80,12 +80,10 @@ async def get_my_profile(
     data = UserOut.model_validate(current_user).model_dump()
     data["permissions"] = sorted(current_user.permission_codes)
     data["permission_scopes"] = current_user.permission_scopes
-    data["has_committee_membership_access"] = await committee_service.user_has_committee_role_view_access(
-        db, user_id=current_user.user_id
-    )
-    data["has_any_committee_membership"] = await committee_service.user_has_any_committee_membership(
-        db, user_id=current_user.user_id
-    )
+    (
+        data["has_committee_membership_access"],
+        data["has_any_committee_membership"],
+    ) = await committee_service.committee_membership_flags(db, user_id=current_user.user_id)
     return UserDetailOut.model_validate(data)
 
 

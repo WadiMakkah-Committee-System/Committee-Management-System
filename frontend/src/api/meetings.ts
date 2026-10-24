@@ -8,6 +8,7 @@ import type {
   MeetingAttachmentKind,
   MeetingCreatePayload,
   MeetingJoinResponse,
+  MeetingListItem,
   MeetingUpdatePayload,
 } from '@/types'
 
@@ -17,8 +18,8 @@ import type {
  * hooks/useMeetings.ts وMeetingsPage.tsx لتفصيل كيفية تحديد ذلك بالواجهة.
  */
 
-export async function fetchMeetings(): Promise<Meeting[]> {
-  const { data } = await apiClient.get<Meeting[]>('/meetings')
+export async function fetchMeetings(): Promise<MeetingListItem[]> {
+  const { data } = await apiClient.get<MeetingListItem[]>('/meetings')
   return data
 }
 

@@ -37,6 +37,7 @@ from app.models.meeting_minutes import (
 )
 from app.models.user import User
 from app.services import committee_service, meeting_service
+from app.services.committee_access import CommitteeAccess
 
 # ============================== القوالب الثابتة (Hardcoded) ==============================
 # لا واجهة إدارة قوالب بعد (لمى أجّلت هذا القرار صراحة لمرحلة لاحقة) —
@@ -561,7 +562,12 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
     meeting, committee = await _load_meeting_and_committee(
         db, meeting_id, with_agenda_items=True, with_participants=True
     )
-    await _require_access(db, actor, committee, "minutes.view", "ليست لديك صلاحية لعرض محضر هذا الاجتماع")
+    # فحوص الصلاحية الثلاثة بهذي الدالة (عرض/تعديل/القوالب) بأكواد دور لجنة
+    # تُجلب مرة واحدة (CommitteeAccess — نفس قاعدة _has_access حرفيًا) بدل
+    # استعلام مستقل لكل كود (إعادة هيكلة 2026-10-24).
+    access = CommitteeAccess(db, actor)
+    if not await access.has(committee, "minutes.view"):
+        raise MinutesForbiddenError("ليست لديك صلاحية لعرض محضر هذا الاجتماع")
 
     # إضافة 2026-09-15 (بلاغ لجين — عضوة لجنة عادية جرّبت تكتب بمحضر
     # فما قدرت رغم امتلاكها صلاحية minutes.update فعليًا حسب دورها باللجنة):
@@ -576,7 +582,7 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
     # الوحيد للصلاحيات — راجعي تعليق رأس الملف بـMeetingMinutesPage.tsx:
     # "الصلاحيات بالفرونت تقريب بصري فقط") ونُرجعها صراحة، فيعرض الفرونت
     # زر الكتابة تبعًا لصلاحية حقيقية بدل تخمين محلي ناقص.
-    can_edit = await _has_access(db, actor, committee, "minutes.update")
+    can_edit = await access.has(committee, "minutes.update")
 
     minutes = await _load_minutes_row(db, meeting_id)
     if minutes is None:
@@ -589,7 +595,7 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
     templates = (
         list_templates()
         if meeting.status in (MeetingStatus.finished, MeetingStatus.recorded)
-        and await _has_access(db, actor, committee, "minutes.templates.view")
+        and await access.has(committee, "minutes.templates.view")
         else []
     )
 

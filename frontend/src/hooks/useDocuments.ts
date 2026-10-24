@@ -29,10 +29,12 @@ export function useDocumentDetail(documentId: string | undefined) {
 }
 
 /** راجعي fetchDocumentPublishTargets — الإدارات واللجان المتاحة للمستخدم الحالي عند رفع/تعديل وثيقة فقط (مبدأ أقل صلاحية ممكنة). */
-export function useDocumentPublishTargets() {
+/** options.enabled: تُستخدم فقط داخل نموذج رفع/تعديل الوثيقة — لا تُجلب إلا عند فتحه. */
+export function useDocumentPublishTargets(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: documentsKeys.publishTargets,
     queryFn: () => documentsApi.fetchDocumentPublishTargets(),
+    enabled: options?.enabled ?? true,
   })
 }
 

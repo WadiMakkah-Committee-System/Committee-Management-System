@@ -1,0 +1,329 @@
+"""محاضر الاجتماعات (Minutes)."""
+
+import uuid
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    status,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core import perf_probe
+from app.core.background import run_detached
+from app.core.dependencies import CurrentUser
+from app.db.session import get_db
+from app.schemas.committee import CommitteeMemberUserOut
+from app.schemas.meeting_minutes import (
+    MeetingMinutesDetailOut,
+    MeetingMinutesOut,
+    MinutesDetailCommitteeOut,
+    MinutesDetailMeetingOut,
+    MinutesSection,
+    MinutesSummaryOut,
+    MinutesTemplateOut,
+    ReviewDecisionIn,
+    SelectTemplateIn,
+    SignMinutesIn,
+    UpdateSectionsIn,
+)
+from app.services import meeting_minutes_service, notification_service
+
+from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
+from app.api.v1.meetings.ai import _extracted_item_out
+
+router = APIRouter(prefix="/meetings", tags=["meetings"])
+
+
+# ============================== المحاضر (Minutes) ==============================
+# SRS §7 — راجعي رأس app/services/meeting_minutes_service.py للتصميم
+# الكامل (آلة الحالة، القوالب الثابتة، التفويض). التحرير التعاوني اللحظي
+# (FR-MIN-005) يُبث عبر حدث "minutes.updated" على نفس قناة WebSocket
+# لغرفة الاجتماع أدناه — وليس عبر Polling على هذي الراوتات.
+
+
+def _minutes_out(minutes) -> MeetingMinutesOut:
+    return MeetingMinutesOut(
+        minutes_id=minutes.minutes_id,
+        meeting_id=minutes.meeting_id,
+        template_id=minutes.template_id,
+        template_name=meeting_minutes_service.template_name_for(minutes.template_id),
+        stage=minutes.stage.value,
+        owner=CommitteeMemberUserOut.model_validate(minutes.owner) if minutes.owner else None,
+        sections=[MinutesSection.model_validate(s) for s in minutes.sections],
+        reviewers=[
+            {
+                "reviewer_id": r.reviewer_id,
+                "user": CommitteeMemberUserOut.model_validate(r.user),
+                "status": r.status.value,
+                "comment": r.comment,
+                "reviewed_at": r.reviewed_at,
+            }
+            for r in minutes.reviewers
+        ],
+        signatures=[
+            {
+                "signature_id": s.signature_id,
+                "user": CommitteeMemberUserOut.model_validate(s.user),
+                "signed": s.signed_at is not None,
+                "signed_at": s.signed_at,
+            }
+            for s in minutes.signatures
+        ],
+        sent_to_review_at=minutes.sent_to_review_at,
+        approved_at=minutes.approved_at,
+        sent_for_signature_at=minutes.sent_for_signature_at,
+        completed_at=minutes.completed_at,
+        created_at=minutes.created_at,
+        updated_at=minutes.updated_at,
+    )
+
+
+def _minutes_detail_meeting_out(meeting) -> MinutesDetailMeetingOut:
+    # from_attributes=True (راجعي MinutesDetailMeetingOut) — نفس نمط
+    # MeetingOut.model_validate(meeting) المستخدَم ببقية راوتات هذا الملف،
+    # بدل بناء يدوي حقل-حقل عرضة للأخطاء.
+    return MinutesDetailMeetingOut.model_validate(meeting)
+
+
+def _minutes_detail_committee_out(committee) -> MinutesDetailCommitteeOut:
+    return MinutesDetailCommitteeOut.model_validate(committee)
+
+
+@router.get("/{meeting_id}/minutes/detail", response_model=MeetingMinutesDetailOut)
+async def get_meeting_minutes_detail(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingMinutesDetailOut:
+    """توحيد أداء (التوصية الثانية بتقرير أداء لاما 2026-09-14 — راجعي
+    docstring get_minutes_detail بـservices/meeting_minutes_service.py
+    للتصميم الكامل): نقطة واحدة تستبدل 5 طلبات منفصلة كانت
+    MeetingMinutesPage.tsx تطلقها (اجتماع/لجنة/محضر/قوالب/بنود مستخرجة)،
+    أهمها إلغاء Network Waterfall حقيقي كان موجودًا (طلب اللجنة كان ينتظر
+    نتيجة طلب الاجتماع أولًا لمعرفة committee_id قبل أن يبدأ أصلًا)."""
+    try:
+        detail = await meeting_minutes_service.get_minutes_detail(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return MeetingMinutesDetailOut(
+        meeting=_minutes_detail_meeting_out(detail["meeting"]),
+        committee=_minutes_detail_committee_out(detail["committee"]),
+        minutes=_minutes_out(detail["minutes"]),
+        templates=[MinutesTemplateOut(**t) for t in detail["templates"]],
+        extracted_items=[_extracted_item_out(item) for item in detail["extracted_items"]],
+        can_edit=detail["can_edit"],
+    )
+
+
+@router.get("/minutes/summary", response_model=list[MinutesSummaryOut])
+async def get_minutes_summaries(
+    current_user: CurrentUser,
+    meeting_ids: str = Query(default="", description="قائمة meeting_id مفصولة بفاصلة"),
+    db: AsyncSession = Depends(get_db),
+) -> list[MinutesSummaryOut]:
+    """إصلاح 2026-09-14 (بلاغ لاما — 500 متكرر على مسارات متعددة غير
+    مرتبطة ببعض بنفس اللحظة، راجعي docstring MinutesSummaryOut للتفاصيل
+    الكاملة): نقطة دفعية واحدة تستبدل N طلب منفصل (get_meeting_minutes
+    لكل اجتماع عبر useQueries بـMinutesListPage.tsx) — كل نداء لهذي
+    النقطة اتصال قاعدة بيانات واحد بدل N اتصال متزامن، مهما كان عدد
+    الاجتماعات المطلوبة.
+
+    ?meeting_ids=id1,id2,... (نص واحد مفصول بفاصلة — تحققتُ فعليًا إن
+    axios 1.19 بهذا المشروع يسلسل `params: { x: string[] }` بصيغة
+    x[]=a&x[]=b الافتراضية غير المدعومة تلقائيًا من FastAPI Query(list),
+    فتجنّبت هذا الفخ كليًا بمعامل نصي واحد بدل قائمة)."""
+    ids = [s.strip() for s in meeting_ids.split(",") if s.strip()]
+    if not ids:
+        return []
+    try:
+        parsed_ids = [uuid.UUID(s) for s in ids]
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="meeting_ids غير صالحة") from exc
+    summaries = await meeting_minutes_service.list_minutes_summaries(
+        db, actor=current_user, meeting_ids=parsed_ids
+    )
+    return [MinutesSummaryOut(**s) for s in summaries]
+
+
+@router.get("/{meeting_id}/minutes/templates", response_model=list[MinutesTemplateOut])
+async def list_minutes_templates(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[MinutesTemplateOut]:
+    """FR-MIN-003: عرض قوالب المحاضر المعتمدة — لرئيس اللجنة/الأدمن فقط
+    (minutes.templates.view، تصحيح 2026-09-15 — راجعي رأس
+    meeting_minutes_service.list_templates_for_meeting للتفاصيل). الفرونت
+    لا يستدعي هذا المسار إلا لمن يملك canManage؛ الأعضاء العاديون يشوفون
+    اسم القالب المختار فقط عبر MeetingMinutesOut.template_name بالمسار
+    العادي GET /{meeting_id}/minutes."""
+    try:
+        templates = await meeting_minutes_service.list_templates_for_meeting(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return [MinutesTemplateOut(**t) for t in templates]
+
+
+@router.get("/{meeting_id}/minutes", response_model=MeetingMinutesOut)
+async def get_meeting_minutes(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingMinutesOut:
+    # تحقيق أداء لاما 2026-09-13 (المرحلة النهائية — طلبت تفصيلًا: Auth /
+    # SQL execution / Serialization / Total): auth.* uses مقاسة أصلًا
+    # بـcore/dependencies.py قبل الوصول لهذا الراوت أصلًا، وكل استعلام SQL
+    # مقاس أصلًا بـdb/session.py event hooks (dur_ms لكل "sql: ..." بالتتبع
+    # هو زمن الرحلة الشبكية+التنفيذ سويةً وليس تنفيذ Postgres وحده — نفس
+    # الاستنتاج الموثّق سابقًا: هذا الرقم تهيمن عليه رحلة الشبكة العابرة
+    # للمنطقة (Render↔Supabase) لا تنفيذ الاستعلام الفعلي بالسيرفر). ما
+    # كان ناقصًا فقط: قياس صريح لمرحلة التسلسل (serialization/Pydantic)
+    # بعد انتهاء كل استعلامات القاعدة — تضاف هنا فقط، بلا أي تغيير على
+    # منطق الخدمة أو شكل الاستجابة.
+    with perf_probe.timed("api.get_minutes.db_phase"):
+        try:
+            minutes = await meeting_minutes_service.get_or_create_minutes(
+                db, meeting_id=meeting_id, actor=current_user
+            )
+        except _SERVICE_ERRORS as exc:
+            raise _handle_errors(exc) from exc
+    with perf_probe.timed("api.get_minutes.serialization"):
+        return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/template", response_model=MeetingMinutesOut)
+async def select_minutes_template(
+    meeting_id: uuid.UUID,
+    payload: SelectTemplateIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.select_template(
+            db, meeting_id=meeting_id, actor=current_user, template_id=payload.template_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.put("/{meeting_id}/minutes/sections", response_model=MeetingMinutesOut)
+async def update_minutes_sections(
+    meeting_id: uuid.UUID,
+    payload: UpdateSectionsIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    """حفظ (Autosave) — الفرونت يرسل القائمة الكاملة بعد كل تعديل محلي؛
+    البث اللحظي لبقية الحاضرين مسؤولية اتصال WebSocket المنفصل (حدث
+    minutes.updated)، وليس استجابة هذا الراوت."""
+    try:
+        minutes = await meeting_minutes_service.update_sections(
+            db,
+            meeting_id=meeting_id,
+            actor=current_user,
+            sections=[s.model_dump() for s in payload.sections],
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/review/approve", response_model=MeetingMinutesOut)
+async def approve_minutes_review(
+    meeting_id: uuid.UUID,
+    payload: ReviewDecisionIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.submit_review(
+            db, meeting_id=meeting_id, actor=current_user, approve=True, comment=payload.comment
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/review/return", response_model=MeetingMinutesOut)
+async def return_minutes_review(
+    meeting_id: uuid.UUID,
+    payload: ReviewDecisionIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.submit_review(
+            db, meeting_id=meeting_id, actor=current_user, approve=False, comment=payload.comment
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/approve", response_model=MeetingMinutesOut)
+async def approve_meeting_minutes(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.approve_minutes(db, meeting_id=meeting_id, actor=current_user)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/return", response_model=MeetingMinutesOut)
+async def return_minutes_for_edit(
+    meeting_id: uuid.UUID,
+    payload: ReviewDecisionIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.return_for_edit(
+            db, meeting_id=meeting_id, actor=current_user, comment=payload.comment
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/signature/send", response_model=MeetingMinutesOut)
+async def send_minutes_for_signature(
+    meeting_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.send_for_signature(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    meeting = await meeting_minutes_service.load_meeting(db, meeting_id)
+    run_detached(
+        notification_service.notify_minutes_sent_for_signature(
+            minutes, meeting, actor_user_id=current_user.user_id
+        )
+    )
+    return _minutes_out(minutes)
+
+
+@router.post("/{meeting_id}/minutes/sign", response_model=MeetingMinutesOut)
+async def sign_meeting_minutes(
+    meeting_id: uuid.UUID,
+    payload: SignMinutesIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    try:
+        minutes = await meeting_minutes_service.sign_minutes(
+            db, meeting_id=meeting_id, actor=current_user, signature_image=payload.signature_image
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    if minutes.stage.value == "completed":
+        meeting = await meeting_minutes_service.load_meeting(db, meeting_id)
+        run_detached(notification_service.notify_minutes_completed(minutes, meeting))
+    return _minutes_out(minutes)

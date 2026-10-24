@@ -46,7 +46,7 @@ export function DocumentCategoriesModal({ open, onClose }: DocumentCategoriesMod
   const { showToast } = useToast()
 
   const { data: categories, isLoading, isError, refetch } = useDocumentCategories()
-  const { data: departments } = useDepartments()
+  const { data: departments } = useDepartments({ enabled: open })
   const createMutation = useCreateDocumentCategory()
   const updateMutation = useUpdateDocumentCategory()
   const deleteMutation = useDeleteDocumentCategory()

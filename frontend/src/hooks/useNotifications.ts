@@ -3,7 +3,9 @@ import * as notificationsApi from '@/api/notifications'
 
 export const notificationsKeys = {
   all: ['notifications'] as const,
-  list: (unreadOnly: boolean) => ['notifications', 'list', unreadOnly] as const,
+  // limit ضمن المفتاح: الجرس (معاينة قصيرة) وصفحة الإشعارات (صفحة كاملة) كانا
+  // يتشاركان نفس الكاش، فتظهر صفحة الإشعارات أحيانًا بعدد عناصر المعاينة فقط.
+  list: (unreadOnly: boolean, limit: number) => ['notifications', 'list', unreadOnly, limit] as const,
   unreadCount: ['notifications', 'unread-count'] as const,
 }
 
@@ -16,10 +18,11 @@ export function useUnreadCount() {
   })
 }
 
-export function useNotifications(unreadOnly: boolean, limit = 50) {
+export function useNotifications(unreadOnly: boolean, limit = 50, options?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: notificationsKeys.list(unreadOnly),
+    queryKey: notificationsKeys.list(unreadOnly, limit),
     queryFn: () => notificationsApi.fetchNotifications({ unreadOnly, limit }),
+    enabled: options?.enabled ?? true,
   })
 }
 

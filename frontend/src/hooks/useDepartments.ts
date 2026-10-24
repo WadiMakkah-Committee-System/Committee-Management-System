@@ -7,8 +7,12 @@ export const departmentsKeys = {
   detail: (depId: string) => ['departments', depId] as const,
 }
 
-export function useDepartments() {
-  return useQuery({ queryKey: departmentsKeys.all, queryFn: departmentsApi.fetchDepartments })
+export function useDepartments(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: departmentsKeys.all,
+    queryFn: departmentsApi.fetchDepartments,
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useDepartmentDetail(depId: string | undefined) {

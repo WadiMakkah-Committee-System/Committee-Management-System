@@ -29,8 +29,10 @@ meeting_service، decision_service، task_service، document_service) بنفس
 
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.committee import Committee
 from app.models.decision import Decision, DecisionClassification, DecisionStatus
 from app.models.meeting import Meeting, MeetingStatus
 from app.models.task import Task, TaskStatus
@@ -85,15 +87,29 @@ def _open_tasks(tasks: list[Task]) -> list[Task]:
     return open_tasks
 
 
+async def _committee_names(db: AsyncSession, committee_ids: set) -> dict:
+    if not committee_ids:
+        return {}
+    result = await db.execute(
+        select(Committee.committee_id, Committee.name).where(Committee.committee_id.in_(committee_ids))
+    )
+    return dict(result.all())
+
+
 async def get_dashboard_summary(db: AsyncSession, *, actor: User) -> DashboardSummary:
     committee_scope = actor.scope_for("committees.view") or "own"
     committees = await committee_service.list_committees(db, actor=actor, scope=committee_scope)
-    meetings = await meeting_service.list_meetings(db, actor=actor)
+    meetings = [meeting for meeting, _count in await meeting_service.list_meetings(db, actor=actor)]
     decisions = await decision_service.list_decisions(db, actor=actor)
     tasks = await task_service.list_tasks(db, actor=actor)
     documents = await document_service.list_documents(db, current_user=actor)
 
     upcoming_meetings = _upcoming_meetings(meetings)
+    # list_meetings لم يعد يحمّل اللجنة مع كل اجتماع (إعادة هيكلة 2026-10-24) —
+    # أسماء لجان عناصر المعاينة فقط باستعلام واحد صغير.
+    meeting_committee_names = await _committee_names(
+        db, {m.committee_id for m in upcoming_meetings[:_PREVIEW_LIMIT]}
+    )
     pending_votes = _decisions_pending_my_vote(decisions, actor)
     open_tasks = _open_tasks(tasks)
 
@@ -109,7 +125,7 @@ async def get_dashboard_summary(db: AsyncSession, *, actor: User) -> DashboardSu
                 title=m.title,
                 scheduled_at=m.scheduled_at,
                 mode=m.mode,
-                committee_name=m.committee.name,
+                committee_name=meeting_committee_names.get(m.committee_id, ""),
             )
             for m in upcoming_meetings[:_PREVIEW_LIMIT]
         ],

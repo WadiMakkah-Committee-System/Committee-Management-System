@@ -22,7 +22,7 @@ import uuid
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, noload, selectinload
+from sqlalchemy.orm import joinedload, noload, raiseload, selectinload
 
 from app.core.security import hash_password
 from app.models.department import Department
@@ -151,9 +151,21 @@ async def list_users(
     # دور × عدد المستخدمين المشتركين بنفس الدور — selectin هنا يبقى فعليًا
     # رحلة شبكة واحدة فقط تغطي كل الأدوار المسحوبة دفعة واحدة، فلا داعٍ
     # لتحمّل مخاطرة تضخّم النتيجة مقابل نفس الفائدة تقريبًا.
+    # إعادة هيكلة 2026-10-24: استعلام واحد بشكل UserOut بالضبط — الدور
+    # (RoleSummaryOut: أعمدته فقط) والمسمى والإدارة ومديرها بـJOIN، بدل
+    # selectin الافتراضي على User.role الذي كان يجرّ روابط صلاحيات كل دور
+    # وكل صلاحية (لا تُعرض بالقائمة إطلاقًا).
+    manager = joinedload(User.department).joinedload(Department.manager)
     stmt = (
         select(User)
-        .options(joinedload(User.department).joinedload(Department.manager))
+        .options(
+            joinedload(User.role).raiseload("*", sql_only=True),
+            joinedload(User.job_title).raiseload("*", sql_only=True),
+            joinedload(User.department).raiseload("*", sql_only=True),
+            manager,
+            manager.raiseload("*", sql_only=True),
+            raiseload("*", sql_only=True),
+        )
         .where(User.deleted_at.is_(None))
     )
     if dep_id is not None:
@@ -203,11 +215,17 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
 
 
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
-    """جلب مستخدم عبر username — يُستخدم عند تسجيل الدخول."""
+    """جلب مستخدم عبر username — يُستخدم عند تسجيل الدخول.
+
+    تحسين أداء 2026-10-24: تسجيل الدخول لا يحتاج من الدور إلا اسمه (يُضمَّن
+    بالتوكن) — كان select(User) يجرّ تلقائيًا (lazy="selectin") الدور ثم كل
+    روابط صلاحياته ثم كل الصلاحيات ثم المسمى = 4-5 استعلامات متتالية قبل
+    حتى التحقق من كلمة المرور. الآن استعلام واحد (الدور بـJOIN).
+    """
     result = await db.execute(
-        select(User).where(
-            func.lower(User.username) == username.lower(), User.deleted_at.is_(None)
-        )
+        select(User)
+        .options(joinedload(User.role).raiseload("*", sql_only=True), raiseload("*", sql_only=True))
+        .where(func.lower(User.username) == username.lower(), User.deleted_at.is_(None))
     )
     return result.scalar_one_or_none()
 

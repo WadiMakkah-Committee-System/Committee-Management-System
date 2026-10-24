@@ -26,6 +26,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy.orm import raiseload
+
 from app.core import storage_client, text_extraction
 from app.core.gemini_client import GeminiError, GeminiNotConfiguredError, embed_text
 from app.db.session import AsyncSessionLocal
@@ -33,10 +35,15 @@ from app.models.document import Document, DocumentEmbeddingStatus
 
 logger = logging.getLogger(__name__)
 
+# الوثيقة بأعمدتها فقط (تحسين أداء 2026-10-24): db.get الافتراضي كان يجرّ
+# الرافع والتصنيف والإدارات/اللجان/المستخدمين المحددين بأدوارهم وصلاحياتهم
+# (~25 استعلامًا لكل وثيقة مرفوعة) رغم أن المهمة تقرأ storage_path/mime_type فقط.
+_COLUMNS_ONLY = [raiseload("*", sql_only=True)]
+
 
 async def generate_embedding_for_document(document_id: uuid.UUID) -> None:
     async with AsyncSessionLocal() as db:
-        document = await db.get(Document, document_id)
+        document = await db.get(Document, document_id, options=_COLUMNS_ONLY)
         if document is None or document.is_deleted:
             return  # حُذفت الوثيقة قبل ما توصل مهمة الخلفية لدورها — لا شيء نسويه
 
@@ -68,7 +75,7 @@ async def generate_embedding_for_document(document_id: uuid.UUID) -> None:
 
         except (GeminiError, GeminiNotConfiguredError, storage_client.StorageError) as exc:
             await db.rollback()
-            document = await db.get(Document, document_id)
+            document = await db.get(Document, document_id, options=_COLUMNS_ONLY)
             if document is not None:
                 document.embedding_status = DocumentEmbeddingStatus.failed
                 document.embedding_error = str(exc)[:500]
@@ -76,7 +83,7 @@ async def generate_embedding_for_document(document_id: uuid.UUID) -> None:
             logger.warning("فشل توليد embedding للوثيقة %s: %s", document_id, exc)
         except Exception as exc:  # noqa: BLE001 — أي خطأ غير متوقع، لا يجوز يسقط الـBackgroundTask بصمت بلا تسجيل
             await db.rollback()
-            document = await db.get(Document, document_id)
+            document = await db.get(Document, document_id, options=_COLUMNS_ONLY)
             if document is not None:
                 document.embedding_status = DocumentEmbeddingStatus.failed
                 document.embedding_error = "خطأ غير متوقع أثناء توليد embedding"

@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, raiseload
 
 from app.models.audit_log import AuditLog
 
@@ -72,7 +72,14 @@ async def list_audit_logs(
     total = (await db.execute(count_stmt)).scalar_one()
 
     result = await db.execute(
-        base_stmt.options(selectinload(AuditLog.actor))
+        # الفاعل بأعمدته فقط (actor_name) — بدون دوره/مسماه/صلاحياته التي
+        # كانت تُجرّ تلقائيًا (lazy="selectin" على User.role/job_title →
+        # روابط الصلاحيات → الصلاحيات): 5 استعلامات بدل 1+1 (إعادة هيكلة
+        # 2026-10-24). JOIN آمن مع LIMIT هنا لأنها علاقة many-to-one.
+        base_stmt.options(
+            joinedload(AuditLog.actor).raiseload("*", sql_only=True),
+            raiseload("*", sql_only=True),
+        )
         .order_by(AuditLog.created_at.desc())
         .limit(limit)
         .offset(offset)

@@ -37,7 +37,9 @@ export function NotificationBell() {
   const { showToast } = useToast()
 
   const { data: unreadCount } = useUnreadCount()
-  const { data: page } = useNotifications(false, DROPDOWN_PREVIEW_LIMIT)
+  // القائمة تُجلب عند فتح القائمة المنسدلة فقط (العدّاد وحده يستطلع دوريًا) —
+  // كانت تُطلب مع تحميل كل صفحة بالنظام (تحسين أداء 2026-10-24).
+  const { data: page } = useNotifications(false, DROPDOWN_PREVIEW_LIMIT, { enabled: open })
   const markRead = useMarkNotificationRead()
   const markAllRead = useMarkAllNotificationsRead()
 

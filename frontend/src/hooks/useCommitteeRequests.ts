@@ -7,10 +7,12 @@ export const committeeRequestsKeys = {
   detail: (requestId: string) => ['committee-requests', requestId] as const,
 }
 
-export function useCommitteeEligibleMembers() {
+/** options.enabled: قائمة كل المستخدمين المؤهلين — تُجلب فقط عند فتح نموذج الطلب. */
+export function useCommitteeEligibleMembers(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['committee-requests', 'eligible-members'] as const,
     queryFn: () => committeeRequestsApi.fetchCommitteeEligibleMembers(),
+    enabled: options?.enabled ?? true,
   })
 }
 

@@ -49,8 +49,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import raiseload
 
 from app.core.email_client import send_email
 from app.core.redis_client import redis_client
@@ -722,6 +723,9 @@ async def list_notifications(
     result = await db.execute(
         select(Notification)
         .where(*conditions)
+        # NotificationOut أعمدة فقط — recipient (lazy="selectin") كان يجرّ
+        # المستلم ودوره وكل صلاحياته ومسماه مع كل صفحة (إعادة هيكلة 2026-10-24).
+        .options(raiseload("*", sql_only=True))
         .order_by(Notification.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -783,7 +787,13 @@ async def get_unread_count(db: AsyncSession, *, actor: User) -> int:
 
 
 async def _load_own_notification(db: AsyncSession, *, actor: User, notification_id: uuid.UUID) -> Notification:
-    notification = await db.get(Notification, notification_id)
+    notification = (
+        await db.execute(
+            select(Notification)
+            .where(Notification.notification_id == notification_id)
+            .options(raiseload("*", sql_only=True))
+        )
+    ).scalar_one_or_none()
     if notification is None:
         raise NotificationNotFoundError("الإشعار غير موجود")
     if notification.recipient_user_id != actor.user_id:
@@ -797,28 +807,28 @@ async def mark_as_read(db: AsyncSession, *, actor: User, notification_id: uuid.U
         notification.is_read = True
         notification.read_at = datetime.now(UTC)
         await db.commit()
-        await db.refresh(notification)
         await _invalidate_unread_count(actor.user_id)
     return notification
 
 
 async def mark_all_as_read(db: AsyncSession, *, actor: User) -> int:
     """يعلّم كل إشعارات المستخدم الحالي غير المقروءة كمقروءة، ويُرجع عددها."""
+    # UPDATE واحد بدل تحميل كل الإشعارات غير المقروءة (ومستلمها بشجرته)
+    # ثم تعديلها واحدًا واحدًا (إعادة هيكلة 2026-10-24) — نفس النتيجة والعدد.
     result = await db.execute(
-        select(Notification).where(
+        update(Notification)
+        .where(
             Notification.recipient_user_id == actor.user_id,
             Notification.is_read.is_(False),
         )
+        .values(is_read=True, read_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False)
     )
-    unread = list(result.scalars().all())
-    now = datetime.now(UTC)
-    for notification in unread:
-        notification.is_read = True
-        notification.read_at = now
-    if unread:
+    count = result.rowcount or 0
+    if count:
         await db.commit()
         await _invalidate_unread_count(actor.user_id)
-    return len(unread)
+    return count
 
 
 async def notify_minutes_sent_for_signature(
