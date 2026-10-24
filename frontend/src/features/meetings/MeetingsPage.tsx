@@ -20,6 +20,7 @@ import {
   useCreateMeeting,
   useDeleteMeeting,
   useMeetings,
+  usePrefetchMeeting,
   useUploadMeetingAttachment,
 } from '@/hooks/useMeetings'
 import { useAuthStore } from '@/store/authStore'
@@ -118,6 +119,8 @@ const CHIP_INACTIVE_CLASSES: Record<StatusFilter, string> = {
 
 export function MeetingsPage() {
   const navigate = useNavigate()
+  // تحميل مسبق للتفاصيل عند مرور الماوس/التركيز على العنصر (تحسين أداء 2026-10-24).
+  const prefetchMeeting = usePrefetchMeeting()
   const user = useAuthStore((s) => s.user)
   const { data: meetings, isLoading, isError, refetch } = useMeetings()
   const { data: committees } = useCommittees()
@@ -322,12 +325,14 @@ export function MeetingsPage() {
   function handleConfirmDelete() {
     if (!deletingMeeting) return
     setDeleteError(null)
-    deleteMutation.mutate(deletingMeeting.meeting_id, {
-      onSuccess: () => {
-        showToast('تم حذف الاجتماع', 'success')
-        setDeletingMeeting(null)
-      },
-      onError: (err) => setDeleteError(extractErrorMessage(err)),
+    // تحديث متفائل (2026-10-24): العنصر يختفي من القائمة فورًا ونغلق نافذة
+    // التأكيد بدون انتظار السيرفر — لو فشل الحذف يرجع العنصر مكانه
+    // (rollback داخل الـhook) وتظهر رسالة الخطأ.
+    const meetingId = deletingMeeting.meeting_id
+    setDeletingMeeting(null)
+    deleteMutation.mutate(meetingId, {
+      onSuccess: () => showToast('تم حذف الاجتماع', 'success'),
+      onError: (err) => showToast(extractErrorMessage(err), 'error'),
     })
   }
 
@@ -529,6 +534,8 @@ export function MeetingsPage() {
                           <Card
                             interactive
                             onClick={() => navigate(`/meetings/${meeting.meeting_id}`)}
+                            onMouseEnter={() => prefetchMeeting(meeting.meeting_id)}
+                            onFocus={() => prefetchMeeting(meeting.meeting_id)}
                             className={cn(cardToneClass(i), 'flex flex-col gap-3 sm:flex-row sm:items-center')}
                           >
                             <div className="flex shrink-0 flex-row items-center gap-2 sm:w-20 sm:flex-col sm:items-center sm:gap-0.5">

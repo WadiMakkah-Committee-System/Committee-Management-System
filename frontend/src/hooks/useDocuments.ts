@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as documentsApi from '@/api/documents'
-import type { DocumentUpdatePayload } from '@/types'
+import type { Document, DocumentUpdatePayload } from '@/types'
+import { applyOptimistic, removeFromLists, rollbackOptimistic } from '@/lib/optimistic'
 
 export const documentsKeys = {
   all: ['documents'] as const,
@@ -18,6 +19,16 @@ export function useDocuments(params: documentsApi.ListDocumentsParams = {}) {
     queryKey: documentsKeys.list(params),
     queryFn: () => documentsApi.fetchDocuments(params),
   })
+}
+
+/** تحميل مسبق لتفاصيل وثيقة عند مرور الماوس على رابطها (تحسين أداء 2026-10-24). */
+export function usePrefetchDocument() {
+  const queryClient = useQueryClient()
+  return (documentId: string) =>
+    queryClient.prefetchQuery({
+      queryKey: documentsKeys.detail(documentId),
+      queryFn: () => documentsApi.fetchDocument(documentId),
+    })
 }
 
 export function useDocumentDetail(documentId: string | undefined) {
@@ -62,7 +73,16 @@ export function useDeleteDocument() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (documentId: string) => documentsApi.deleteDocument(documentId),
-    onSuccess: () => invalidateDocumentsList(queryClient),
+    // تحديث متفائل: الوثيقة تختفي من كل قوائم الوثائق (بكل فلاترها) فورًا.
+    onMutate: (documentId) =>
+      applyOptimistic(queryClient, [
+        {
+          queryKey: ['documents', 'list'],
+          update: removeFromLists<Document>((d) => d.document_id === documentId),
+        },
+      ]),
+    onError: (_err, _documentId, snapshot) => rollbackOptimistic(queryClient, snapshot),
+    onSettled: () => invalidateDocumentsList(queryClient),
   })
 }
 

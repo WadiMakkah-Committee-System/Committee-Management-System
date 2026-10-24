@@ -3,7 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { CheckCircle2, Clock3, Eye, Gavel, Plus, Trash2, Vote } from 'lucide-react'
 import { useCommittees } from '@/hooks/useCommittees'
-import { useCreateDecision, useDecisions, useDeleteDecision, useOpenVoting } from '@/hooks/useDecisions'
+import {
+  useCreateDecision,
+  useDecisions,
+  useDeleteDecision,
+  useOpenVoting,
+  usePrefetchDecision,
+} from '@/hooks/useDecisions'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -26,6 +32,8 @@ import type { Decision } from '@/types'
  */
 export function DecisionsPage() {
   const navigate = useNavigate()
+  // تحميل مسبق للتفاصيل عند مرور الماوس/التركيز على العنصر (تحسين أداء 2026-10-24).
+  const prefetchDecision = usePrefetchDecision()
   const user = useAuthStore((s) => s.user)
   const { data: decisions, isLoading, isError, refetch } = useDecisions()
   const { data: committees } = useCommittees()
@@ -126,12 +134,14 @@ export function DecisionsPage() {
   function handleDeleteConfirm() {
     if (!deleteTarget) return
     setDeleteError(null)
-    deleteMutation.mutate(deleteTarget.decision_id, {
-      onSuccess: () => {
-        setDeleteTarget(null)
-        showToast('تم حذف القرار', 'success')
-      },
-      onError: (err) => setDeleteError(extractErrorMessage(err)),
+    // تحديث متفائل (2026-10-24): العنصر يختفي من القائمة فورًا ونغلق نافذة
+    // التأكيد بدون انتظار السيرفر — لو فشل الحذف يرجع العنصر مكانه
+    // (rollback داخل الـhook) وتظهر رسالة الخطأ.
+    const decisionId = deleteTarget.decision_id
+    setDeleteTarget(null)
+    deleteMutation.mutate(decisionId, {
+      onSuccess: () => showToast('تم حذف القرار', 'success'),
+      onError: (err) => showToast(extractErrorMessage(err), 'error'),
     })
   }
 
@@ -216,7 +226,11 @@ export function DecisionsPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: Math.min(i * 0.03, 0.3) }}
             >
-              <Card className={cardToneClass(i)}>
+              <Card
+                className={cardToneClass(i)}
+                onMouseEnter={() => prefetchDecision(decision.decision_id)}
+                onFocus={() => prefetchDecision(decision.decision_id)}
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-brand-primary/10 text-brand-primary">
                     <Gavel size={18} />

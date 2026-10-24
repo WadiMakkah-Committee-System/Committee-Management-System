@@ -13,7 +13,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useCommittees } from '@/hooks/useCommittees'
-import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
+import { useCreateTask, useDeleteTask, usePrefetchTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -79,6 +79,8 @@ const TASK_STATUS_PROGRESS: Record<TaskStatus, number> = {
  */
 export function TasksPage() {
   const navigate = useNavigate()
+  // تحميل مسبق للتفاصيل عند مرور الماوس/التركيز على العنصر (تحسين أداء 2026-10-24).
+  const prefetchTask = usePrefetchTask()
   const user = useAuthStore((s) => s.user)
   const { data: tasks, isLoading, isError, refetch } = useTasks()
   const { data: committees } = useCommittees()
@@ -216,12 +218,14 @@ export function TasksPage() {
   function handleDeleteConfirm() {
     if (!deleteTarget) return
     setDeleteError(null)
-    deleteMutation.mutate(deleteTarget.task_id, {
-      onSuccess: () => {
-        setDeleteTarget(null)
-        showToast('تم حذف المهمة', 'success')
-      },
-      onError: (err) => setDeleteError(extractErrorMessage(err)),
+    // تحديث متفائل (2026-10-24): العنصر يختفي من القائمة فورًا ونغلق نافذة
+    // التأكيد بدون انتظار السيرفر — لو فشل الحذف يرجع العنصر مكانه
+    // (rollback داخل الـhook) وتظهر رسالة الخطأ.
+    const taskId = deleteTarget.task_id
+    setDeleteTarget(null)
+    deleteMutation.mutate(taskId, {
+      onSuccess: () => showToast('تم حذف المهمة', 'success'),
+      onError: (err) => showToast(extractErrorMessage(err), 'error'),
     })
   }
 
@@ -376,6 +380,8 @@ export function TasksPage() {
                   role="button"
                   tabIndex={0}
                   onClick={() => navigate(`/tasks/${task.task_id}`)}
+                  onMouseEnter={() => prefetchTask(task.task_id)}
+                  onFocus={() => prefetchTask(task.task_id)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()

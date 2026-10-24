@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as decisionsApi from '@/api/decisions'
-import type { DecisionCreatePayload, DecisionOpenVotingPayload, DecisionUpdatePayload } from '@/types'
+import type {
+  Decision,
+  DecisionCreatePayload,
+  DecisionOpenVotingPayload,
+  DecisionUpdatePayload,
+} from '@/types'
+import { useAuthStore } from '@/store/authStore'
+import { applyOptimistic, patchEverywhere, removeFromLists, rollbackOptimistic } from '@/lib/optimistic'
 
 export const decisionsKeys = {
   all: ['decisions'] as const,
@@ -19,6 +26,16 @@ export function useMeetingDecisions(meetingId: string | undefined) {
     queryFn: () => decisionsApi.fetchDecisions(meetingId),
     enabled: !!meetingId,
   })
+}
+
+/** تحميل مسبق لتفاصيل قرار عند مرور الماوس على رابطه (تحسين أداء 2026-10-24). */
+export function usePrefetchDecision() {
+  const queryClient = useQueryClient()
+  return (decisionId: string) =>
+    queryClient.prefetchQuery({
+      queryKey: decisionsKeys.detail(decisionId),
+      queryFn: () => decisionsApi.fetchDecision(decisionId),
+    })
 }
 
 export function useDecisionDetail(decisionId: string | undefined) {
@@ -66,7 +83,13 @@ export function useDeleteDecision() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (decisionId: string) => decisionsApi.deleteDecision(decisionId),
-    onSuccess: () => invalidateDecisionQueries(queryClient),
+    // تحديث متفائل: القرار يختفي من كل القوائم (العامة وقوائم الاجتماعات) فورًا.
+    onMutate: (decisionId) =>
+      applyOptimistic(queryClient, [
+        { queryKey: ['decisions'], update: removeFromLists<Decision>((d) => d.decision_id === decisionId) },
+      ]),
+    onError: (_err, _decisionId, snapshot) => rollbackOptimistic(queryClient, snapshot),
+    onSettled: () => invalidateDecisionQueries(queryClient),
   })
 }
 
@@ -89,7 +112,47 @@ export function useCastVote() {
   return useMutation({
     mutationFn: ({ decisionId, optionId }: { decisionId: string; optionId: string }) =>
       decisionsApi.castVote(decisionId, optionId),
-    onSuccess: (_data, variables) => invalidateDecisionQueries(queryClient, variables.decisionId),
+    // تحديث متفائل: صوت المستخدم الحالي يظهر على الخيار المختار فورًا (يستبدل
+    // صوته السابق إن وُجد) — بالتفاصيل وبكل القوائم (منها لوحة القرارات
+    // داخل غرفة الاجتماع).
+    onMutate: ({ decisionId, optionId }) => {
+      const me = useAuthStore.getState().user
+      if (!me) return undefined
+      return applyOptimistic(queryClient, [
+        {
+          queryKey: ['decisions'],
+          update: patchEverywhere<Decision>(
+            (d) => d.decision_id === decisionId,
+            (d) => {
+              const option = d.vote_options.find((o) => o.option_id === optionId)
+              if (!option) return d
+              const voter = {
+                user_id: me.user_id,
+                first_name: me.first_name,
+                middle_name: me.middle_name,
+                last_name: me.last_name,
+                email: me.email,
+              }
+              return {
+                ...d,
+                votes: [
+                  ...d.votes.filter((v) => v.voter.user_id !== me.user_id),
+                  { voter, option, voted_at: new Date().toISOString() },
+                ],
+              }
+            },
+          ),
+        },
+      ])
+    },
+    onError: (_err, _vars, snapshot) => rollbackOptimistic(queryClient, snapshot),
+    // رد السيرفر هو القرار المحدَّث كاملًا (قد يكون أُغلق التصويت أو رُفض
+    // القرار تلقائيًا بهذا الصوت) — نضعه بالكاش مباشرة ثم نعيد مزامنة القوائم.
+    onSuccess: (decision) => queryClient.setQueryData(decisionsKeys.detail(decision.decision_id), decision),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: decisionsKeys.all, exact: true })
+      queryClient.invalidateQueries({ queryKey: ['decisions', 'meeting'] })
+    },
   })
 }
 
