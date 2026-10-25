@@ -147,7 +147,7 @@ export function DocumentsPage() {
   const canDelete = permissions.includes('documents.delete')
   const canDownload = permissions.includes('documents.download')
   const canManageCategories =
-    !!user?.role.is_super_admin ||
+    !!user?.role?.is_super_admin ||
     ['create_global', 'create_department', 'update_global', 'update_department', 'delete_global', 'delete_department'].some(
       (suffix) => permissions.includes(`document_categories.${suffix}`),
     )
@@ -168,7 +168,7 @@ export function DocumentsPage() {
   const visibleScopeFilterOptions = useMemo(
     () =>
       SCOPE_FILTER_OPTIONS.filter(({ value }) => {
-        if (value === 'department') return !!user?.role.is_super_admin || !!user?.dep_id
+        if (value === 'department') return !!user?.role?.is_super_admin || !!user?.dep_id
         if (value === 'committee') return !!user?.has_any_committee_membership
         return true
       }),
