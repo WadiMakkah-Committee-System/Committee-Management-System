@@ -7,6 +7,7 @@ import type {
   DecisionUpdatePayload,
 } from '@/types'
 import { useAuthStore } from '@/store/authStore'
+import { seedFromLists } from '@/lib/listCache'
 import { applyOptimistic, patchEverywhere, removeFromLists, rollbackOptimistic } from '@/lib/optimistic'
 
 export const decisionsKeys = {
@@ -35,14 +36,19 @@ export function usePrefetchDecision() {
     queryClient.prefetchQuery({
       queryKey: decisionsKeys.detail(decisionId),
       queryFn: () => decisionsApi.fetchDecision(decisionId),
+      // لو العنصر بقائمة حديثة لا يُرسَل طلب (نفس seedFromLists بصفحة التفاصيل).
+      ...seedFromLists<Decision>(queryClient, ['decisions'], (d) => d.decision_id === decisionId),
     })
 }
 
 export function useDecisionDetail(decisionId: string | undefined) {
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: decisionsKeys.detail(decisionId ?? ''),
     queryFn: () => decisionsApi.fetchDecision(decisionId as string),
     enabled: !!decisionId,
+  // يُعرض فورًا من القائمة إن كان فيها (نفس الشكل) — راجعي lib/listCache.ts.
+    ...seedFromLists<Decision>(queryClient, ['decisions'], (d) => d.decision_id === decisionId),
   })
 }
 

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as committeeRequestsApi from '@/api/committeeRequests'
 import type { CommitteeFormationRequestCreatePayload, CommitteeFormationRequestUpdatePayload } from '@/types'
+import { REFERENCE_STALE_TIME } from '@/hooks/useCommittees'
 
 export const committeeRequestsKeys = {
   all: ['committee-requests'] as const,
@@ -12,6 +13,7 @@ export function useCommitteeEligibleMembers(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['committee-requests', 'eligible-members'] as const,
     queryFn: () => committeeRequestsApi.fetchCommitteeEligibleMembers(),
+    staleTime: REFERENCE_STALE_TIME, // بيانات مرجعية — راجعي useCommittees.ts
     enabled: options?.enabled ?? true,
   })
 }

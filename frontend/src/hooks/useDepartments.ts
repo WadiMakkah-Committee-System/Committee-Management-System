@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as departmentsApi from '@/api/departments'
 import type { DepartmentCreatePayload, DepartmentUpdatePayload } from '@/types'
+import { REFERENCE_STALE_TIME } from '@/hooks/useCommittees'
 
 export const departmentsKeys = {
   all: ['departments'] as const,
@@ -11,6 +12,7 @@ export function useDepartments(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: departmentsKeys.all,
     queryFn: departmentsApi.fetchDepartments,
+    staleTime: REFERENCE_STALE_TIME, // بيانات مرجعية — راجعي useCommittees.ts
     enabled: options?.enabled ?? true,
   })
 }

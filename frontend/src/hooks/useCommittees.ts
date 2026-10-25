@@ -1,21 +1,38 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as committeesApi from '@/api/committees'
 import type { CommitteeDatesUpdatePayload } from '@/api/committees'
+import type { Committee } from '@/types'
+import { seedFromLists } from '@/lib/listCache'
 
 export const committeesKeys = {
   all: ['committees'] as const,
   detail: (committeeId: string) => ['committees', committeeId] as const,
 }
 
+/** بيانات مرجعية نادرًا ما تتغيّر — تبقى حديثة 5 دقائق بالتنقل بين الصفحات
+ * (أي تعديل من داخل النظام يُبطلها فورًا كالسابق). تحسين أداء 2026-10-25. */
+export const REFERENCE_STALE_TIME = 5 * 60_000
+
 export function useCommittees() {
-  return useQuery({ queryKey: committeesKeys.all, queryFn: committeesApi.fetchCommittees })
+  return useQuery({
+    queryKey: committeesKeys.all,
+    queryFn: committeesApi.fetchCommittees,
+    staleTime: REFERENCE_STALE_TIME,
+  })
 }
 
 export function useCommitteeDetail(committeeId: string | undefined) {
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: committeesKeys.detail(committeeId ?? ''),
     queryFn: () => committeesApi.fetchCommittee(committeeId as string),
     enabled: !!committeeId,
+    staleTime: REFERENCE_STALE_TIME,
+    // قائمة اللجان ترجع نفس شكل التفاصيل (CommitteeOut) — صفحات الاجتماع/القرار/
+    // المهمة تحتاج لجنة العنصر، وغالبًا القائمة محمَّلة أصلًا (راجعي lib/listCache.ts).
+    ...seedFromLists<Committee>(queryClient, committeesKeys.all, (c) => c.committee_id === committeeId, {
+      exact: true,
+    }),
   })
 }
 

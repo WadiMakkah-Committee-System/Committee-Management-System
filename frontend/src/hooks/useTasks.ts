@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as tasksApi from '@/api/tasks'
 import type { Task, TaskCreatePayload, TaskStatus, TaskUpdatePayload } from '@/types'
+import { seedFromLists } from '@/lib/listCache'
 import { applyOptimistic, patchEverywhere, removeFromLists, rollbackOptimistic } from '@/lib/optimistic'
 
 export const tasksKeys = {
@@ -20,14 +21,22 @@ export function useTasks() {
 export function usePrefetchTask() {
   const queryClient = useQueryClient()
   return (taskId: string) =>
-    queryClient.prefetchQuery({ queryKey: tasksKeys.detail(taskId), queryFn: () => tasksApi.fetchTask(taskId) })
+    queryClient.prefetchQuery({
+      queryKey: tasksKeys.detail(taskId),
+      queryFn: () => tasksApi.fetchTask(taskId),
+      // لو العنصر بقائمة حديثة لا يُرسَل طلب (نفس seedFromLists بصفحة التفاصيل).
+      ...seedFromLists<Task>(queryClient, tasksKeys.all, (t) => t.task_id === taskId, { exact: true }),
+    })
 }
 
 export function useTaskDetail(taskId: string | undefined) {
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: tasksKeys.detail(taskId ?? ''),
     queryFn: () => tasksApi.fetchTask(taskId as string),
     enabled: !!taskId,
+  // يُعرض فورًا من القائمة إن كان فيها (نفس الشكل) — راجعي lib/listCache.ts.
+    ...seedFromLists<Task>(queryClient, tasksKeys.all, (t) => t.task_id === taskId, { exact: true }),
   })
 }
 
