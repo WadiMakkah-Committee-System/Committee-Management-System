@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as rolesApi from '@/api/roles'
 import type { RoleCreatePayload, RoleUpdatePayload } from '@/types'
+import { REFERENCE_STALE_TIME } from '@/hooks/useCommittees'
 
 export const rolesKeys = {
   all: ['roles'] as const,
@@ -19,6 +20,7 @@ export function usePermissionsCatalog(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: rolesKeys.permissions,
     queryFn: rolesApi.fetchPermissions,
+    staleTime: REFERENCE_STALE_TIME, // بيانات مرجعية — راجعي useCommittees.ts
     enabled: options?.enabled ?? true,
   })
 }

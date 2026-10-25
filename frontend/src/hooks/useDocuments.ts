@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as documentsApi from '@/api/documents'
 import type { Document, DocumentUpdatePayload } from '@/types'
+import { seedFromLists } from '@/lib/listCache'
 import { applyOptimistic, removeFromLists, rollbackOptimistic } from '@/lib/optimistic'
+import { REFERENCE_STALE_TIME } from '@/hooks/useCommittees'
 
 export const documentsKeys = {
   all: ['documents'] as const,
@@ -28,14 +30,19 @@ export function usePrefetchDocument() {
     queryClient.prefetchQuery({
       queryKey: documentsKeys.detail(documentId),
       queryFn: () => documentsApi.fetchDocument(documentId),
+      // لو العنصر بقائمة حديثة لا يُرسَل طلب (نفس seedFromLists بصفحة التفاصيل).
+      ...seedFromLists<Document>(queryClient, ['documents', 'list'], (d) => d.document_id === documentId),
     })
 }
 
 export function useDocumentDetail(documentId: string | undefined) {
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: documentsKeys.detail(documentId ?? ''),
     queryFn: () => documentsApi.fetchDocument(documentId as string),
     enabled: !!documentId,
+  // يُعرض فورًا من القائمة إن كان فيها (نفس الشكل) — راجعي lib/listCache.ts.
+    ...seedFromLists<Document>(queryClient, ['documents', 'list'], (d) => d.document_id === documentId),
   })
 }
 
@@ -45,6 +52,7 @@ export function useDocumentPublishTargets(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: documentsKeys.publishTargets,
     queryFn: () => documentsApi.fetchDocumentPublishTargets(),
+    staleTime: REFERENCE_STALE_TIME, // بيانات مرجعية — راجعي useCommittees.ts
     enabled: options?.enabled ?? true,
   })
 }

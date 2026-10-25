@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as jobTitlesApi from '@/api/jobTitles'
 import { usersKeys } from '@/hooks/useUsers'
 import type { JobTitleCreatePayload, JobTitleUpdatePayload } from '@/types'
+import { REFERENCE_STALE_TIME } from '@/hooks/useCommittees'
 
 export const jobTitlesKeys = {
   all: ['job-titles'] as const,
@@ -11,6 +12,7 @@ export function useJobTitles(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: jobTitlesKeys.all,
     queryFn: jobTitlesApi.fetchJobTitles,
+    staleTime: REFERENCE_STALE_TIME, // بيانات مرجعية — راجعي useCommittees.ts
     enabled: options?.enabled ?? true,
   })
 }
