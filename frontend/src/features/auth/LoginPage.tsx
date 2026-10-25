@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { LogIn, ShieldCheck } from 'lucide-react'
 import * as authApi from '@/api/auth'
 import * as usersApi from '@/api/users'
+import { usersKeys } from '@/hooks/useUsers'
 import { useAuthStore } from '@/store/authStore'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
@@ -25,6 +26,7 @@ export function LoginPage() {
   const navigate = useNavigate()
   const setTokens = useAuthStore((s) => s.setTokens)
   const setUser = useAuthStore((s) => s.setUser)
+  const queryClient = useQueryClient()
   const [serverError, setServerError] = useState<string | null>(null)
 
   const {
@@ -37,7 +39,11 @@ export function LoginPage() {
     mutationFn: async (values: FormValues) => {
       const tokens = await authApi.login(values)
       setTokens(tokens.access_token, tokens.refresh_token)
-      const me = await usersApi.fetchMe()
+      // تحسين أداء 2026-10-25: الباك-إند يرجّع بيانات المستخدم مع رد الدخول
+      // نفسه (نفس شكل /users/me) — فلا ننتظر طلبًا ثانيًا متتابعًا. لو رجع
+      // بدونها (نسخة باك-إند أقدم) نرجع للسلوك السابق.
+      const me = tokens.user ?? (await usersApi.fetchMe())
+      queryClient.setQueryData(usersKeys.me, me)
       setUser(me)
       return me
     },

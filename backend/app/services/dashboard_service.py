@@ -119,8 +119,16 @@ async def get_dashboard_summary(db: AsyncSession, *, actor: User) -> DashboardSu
     upcoming_meetings = _upcoming_meetings(meetings)
     # list_meetings لم يعد يحمّل اللجنة مع كل اجتماع (إعادة هيكلة 2026-10-24) —
     # أسماء لجان عناصر المعاينة فقط باستعلام واحد صغير.
-    meeting_committee_names = await _committee_names(
-        db, {m.committee_id for m in upcoming_meetings[:_PREVIEW_LIMIT]}
+    # تحسين 2026-10-25: الأسماء من قائمة اللجان المحمَّلة أعلاه أولًا (نفس
+    # عمود committees.name)، والاستعلام فقط للجان غير الموجودة فيها (لو نطاق
+    # رؤية اللجان يختلف عن نطاق رؤية الاجتماعات) — غالبًا بلا استعلام إطلاقًا.
+    preview_committee_ids = {m.committee_id for m in upcoming_meetings[:_PREVIEW_LIMIT]}
+    loaded_names = {c.committee_id: c.name for c in committees}
+    meeting_committee_names = {
+        cid: loaded_names[cid] for cid in preview_committee_ids if cid in loaded_names
+    }
+    meeting_committee_names.update(
+        await _committee_names(db, preview_committee_ids - meeting_committee_names.keys())
     )
     pending_votes = _decisions_pending_my_vote(decisions, actor)
     open_tasks = _open_tasks(tasks)

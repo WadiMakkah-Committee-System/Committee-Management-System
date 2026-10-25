@@ -7,6 +7,7 @@ Pydantic Schemas الخاصة بالمصادقة (Authentication) — تسجيل
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.security import validate_password_policy
+from app.schemas.user import UserDetailOut
 from pydantic import field_validator
 
 
@@ -20,6 +21,10 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     must_change_password: bool = False
+    # تحسين أداء 2026-10-25: رد تسجيل الدخول فقط يتضمن بيانات المستخدم بنفس
+    # شكل GET /users/me — يوفّر على الواجهة طلبًا متتابعًا كاملًا بعد الدخول.
+    # حقل إضافي اختياري: /auth/refresh يرجعه None، وأي عميل قديم يتجاهله.
+    user: UserDetailOut | None = None
 
 
 class RefreshRequest(BaseModel):

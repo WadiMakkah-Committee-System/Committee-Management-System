@@ -46,7 +46,9 @@ def document_options(*, with_content: bool = False) -> tuple:
     يرتّب به داخل SQL فقط.
     """
     options: list = [
-        *_leaf(selectinload(Document.category)),
+        # many-to-one: JOIN بنفس الاستعلام بدل استعلام selectin مستقل
+        # (تحسين أداء 2026-10-25 — نفس البيانات).
+        *_leaf(joinedload(Document.category)),
         *_leaf(joinedload(Document.uploader)),
         *_leaf(selectinload(Document.visible_departments)),
         *_leaf(selectinload(Document.visible_committees)),

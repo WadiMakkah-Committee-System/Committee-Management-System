@@ -46,7 +46,7 @@ async def get_task_activity(
         )
 
     audit_logs, _ = await audit_service.list_audit_logs(
-        db, target_type="task", target_id=task_id, limit=200
+        db, target_type="task", target_id=task_id, limit=200, with_total=False
     )
     for log in audit_logs:
         meta = log.metadata_ or {}

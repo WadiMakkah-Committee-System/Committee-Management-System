@@ -52,7 +52,8 @@ async def list_audit_logs(
     target_id: uuid.UUID | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> tuple[list[AuditLog], int]:
+    with_total: bool = True,
+) -> tuple[list[AuditLog], int | None]:
     """
     سجل النشاط (Activity Log) — لعرض "من فعل ماذا ومتى" لمستخدم غير تقني
     بدون الحاجة للوصول لقاعدة البيانات مباشرة. يرجع (السجلات، العدد الكلي)
@@ -69,7 +70,9 @@ async def list_audit_logs(
         base_stmt = base_stmt.where(AuditLog.target_id == target_id)
         count_stmt = count_stmt.where(AuditLog.target_id == target_id)
 
-    total = (await db.execute(count_stmt)).scalar_one()
+    # with_total=False لمن لا يحتاج العدد الكلي (مسار المهمة يعرض كل السجلات
+    # بلا Pagination) — يوفّر استعلام COUNT كامل (تحسين أداء 2026-10-25).
+    total = (await db.execute(count_stmt)).scalar_one() if with_total else None
 
     result = await db.execute(
         # الفاعل بأعمدته فقط (actor_name) — بدون دوره/مسماه/صلاحياته التي

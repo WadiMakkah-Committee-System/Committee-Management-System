@@ -25,36 +25,39 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, raiseload, selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
-from app.models.committee import Committee
+from app.models.committee import Committee, committee_members
+from app.models.user import User
 from app.models.decision import Decision, DecisionVote
 from app.services.decision_service.errors import DecisionNotFoundError
 
 _RAISE = {"sql_only": True}
 
 
-def _committee_options(path) -> tuple:
+def _committee_options(path, *, with_members: bool = True) -> tuple:
     """اللجنة + رئيسها (فحص الصلاحية) + أعضاؤها (من يحق له التصويت/المنفذون
-    التلقائيون). لا member_roles ولا أدوار/صلاحيات الأعضاء."""
+    التلقائيون). لا member_roles ولا أدوار/صلاحيات الأعضاء.
+
+    with_members=False (القوائم — تحسين أداء 2026-10-25): الأعضاء لا يُحتاجون
+    إلا لإغلاق تصويت مفتوح، فتُحمَّل لاحقًا للجان القرارات المفتوحة للتصويت
+    فقط عبر ensure_committee_members (ولا استعلام إطلاقًا لو ما فيه تصويت مفتوح)."""
     chair = path.joinedload(Committee.chair)
-    members = path.selectinload(Committee.members)
-    return (
-        path,
-        chair,
-        chair.raiseload("*", **_RAISE),
-        members,
-        members.raiseload("*", **_RAISE),
-        path.raiseload("*", **_RAISE),
-    )
+    options: list = [path, chair, chair.raiseload("*", **_RAISE)]
+    if with_members:
+        members = path.selectinload(Committee.members)
+        options += [members, members.raiseload("*", **_RAISE)]
+    options.append(path.raiseload("*", **_RAISE))
+    return tuple(options)
 
 
-def decision_options(*, with_assignees: bool = True) -> tuple:
+def decision_options(*, with_assignees: bool = True, with_members: bool = True) -> tuple:
     creator = joinedload(Decision.creator)
     assignees = (selectinload(Decision.assignees),) if with_assignees else ()
     votes = selectinload(Decision.votes)
     voter = votes.joinedload(DecisionVote.voter)
     return (
-        *_committee_options(joinedload(Decision.committee)),
+        *_committee_options(joinedload(Decision.committee), with_members=with_members),
         creator,
         creator.raiseload("*", **_RAISE),
         *assignees,
@@ -68,7 +71,7 @@ def decision_options(*, with_assignees: bool = True) -> tuple:
     )
 
 
-def decisions_query(*, reload: bool = False, with_assignees: bool = True):
+def decisions_query(*, reload: bool = False, with_assignees: bool = True, with_members: bool = True):
     """select(Decision) بخيارات التحميل الصريحة.
 
     reload=True فقط لإعادة التحميل بعد commit/flush بنفس الدالة
@@ -78,7 +81,7 @@ def decisions_query(*, reload: bool = False, with_assignees: bool = True):
     علاقات حمّلتها خدمة أخرى قبلها بنفس الطلب."""
     return (
         select(Decision)
-        .options(*decision_options(with_assignees=with_assignees))
+        .options(*decision_options(with_assignees=with_assignees, with_members=with_members))
         .execution_options(populate_existing=reload)
     )
 
@@ -115,3 +118,25 @@ async def load_committee(db: AsyncSession, committee_id: uuid.UUID) -> Committee
     if committee is None or committee.is_deleted:
         raise DecisionNotFoundError("اللجنة المرتبطة غير موجودة")
     return committee
+
+
+async def ensure_committee_members(db: AsyncSession, committees) -> None:
+    """يحمّل Committee.members (بأعمدة المستخدم فقط) للجان اللي ما تحمّلت
+    أعضاؤها بعد — استعلام واحد لكل اللجان. يكتبها كقيمة محمَّلة
+    (set_committed_value) بدل populate_existing حتى لا يمس أي علاقة أخرى
+    حمّلتها خدمة ثانية لنفس اللجنة بنفس الجلسة. نفس صفوف selectinload(
+    Committee.members) بالضبط (نفس جدول committee_members)."""
+    pending = {c.committee_id: c for c in committees if "members" not in c.__dict__}
+    if not pending:
+        return
+    result = await db.execute(
+        select(committee_members.c.committee_id, User)
+        .join(User, User.user_id == committee_members.c.user_id)
+        .where(committee_members.c.committee_id.in_(pending))
+        .options(raiseload("*", **_RAISE))
+    )
+    by_committee: dict[uuid.UUID, list[User]] = {cid: [] for cid in pending}
+    for committee_id, user in result.all():
+        by_committee[committee_id].append(user)
+    for committee_id, committee in pending.items():
+        set_committed_value(committee, "members", by_committee[committee_id])

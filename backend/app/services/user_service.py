@@ -174,6 +174,20 @@ async def list_users(
     return list(result.unique().scalars().all())
 
 
+def _profile_options() -> tuple:
+    """شكل المستخدم الكامل (UserDetailOut / المصادقة): إدارته (ومديرها بأعمدته
+    فقط) + دوره بكل صلاحياته + مسماه — كلها JOIN باستعلام واحد."""
+    manager = joinedload(User.department).joinedload(Department.manager)
+    return (
+        manager.noload(User.role),
+        manager.noload(User.job_title),
+        joinedload(User.role).joinedload(Role.role_permission_links).joinedload(
+            RolePermission.permission
+        ),
+        joinedload(User.job_title),
+    )
+
+
 async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
     """
     جلب مستخدم واحد (النشط فقط) عبر معرّفه، مع تحميل بيانات إدارته
@@ -198,14 +212,7 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
     # الرئيسي فيلغي هذا الـround trip كليًا بدل تحسينه فقط.
     result = await db.execute(
         select(User)
-        .options(
-            joinedload(User.department).joinedload(Department.manager).noload(User.role),
-            joinedload(User.department).joinedload(Department.manager).noload(User.job_title),
-            joinedload(User.role).joinedload(Role.role_permission_links).joinedload(
-                RolePermission.permission
-            ),
-            joinedload(User.job_title),
-        )
+        .options(*_profile_options())
         .where(User.user_id == user_id, User.deleted_at.is_(None))
     )
     # .unique() إلزامي هنا لأن role_permission_links مجموعة (one-to-many)
@@ -217,17 +224,20 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     """جلب مستخدم عبر username — يُستخدم عند تسجيل الدخول.
 
-    تحسين أداء 2026-10-24: تسجيل الدخول لا يحتاج من الدور إلا اسمه (يُضمَّن
-    بالتوكن) — كان select(User) يجرّ تلقائيًا (lazy="selectin") الدور ثم كل
-    روابط صلاحياته ثم كل الصلاحيات ثم المسمى = 4-5 استعلامات متتالية قبل
-    حتى التحقق من كلمة المرور. الآن استعلام واحد (الدور بـJOIN).
+    تحسين أداء 2026-10-24: كان select(User) يجرّ تلقائيًا (lazy="selectin")
+    الدور ثم روابط صلاحياته ثم الصلاحيات ثم المسمى = 4-5 استعلامات متتالية
+    قبل حتى التحقق من كلمة المرور.
+
+    تحديث 2026-10-25: يُحمَّل المستخدم بشكله الكامل (نفس get_user) بنفس
+    الاستعلام الواحد (JOIN)، لأن رد تسجيل الدخول صار يتضمن بيانات المستخدم
+    (UserDetailOut) — فالواجهة لا تحتاج طلب /users/me منفصلًا بعده.
     """
     result = await db.execute(
         select(User)
-        .options(joinedload(User.role).raiseload("*", sql_only=True), raiseload("*", sql_only=True))
+        .options(*_profile_options())
         .where(func.lower(User.username) == username.lower(), User.deleted_at.is_(None))
     )
-    return result.scalar_one_or_none()
+    return result.unique().scalar_one_or_none()
 
 
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:

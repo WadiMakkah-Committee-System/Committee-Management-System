@@ -668,13 +668,15 @@ async def list_minutes_summaries(
     )
     minutes_by_meeting = {mm.meeting_id: mm for mm in minutes_result.unique().scalars().all()}
 
+    # تحسين أداء 2026-10-25: CommitteeAccess (نفس قاعدة _has_access حرفيًا)
+    # يجلب أكواد أدوار المستخدم بكل لجانه باستعلام واحد — كان استعلامًا
+    # مستقلًا لكل لجنة فريدة بالقائمة (5 لجان = 5 استعلامات متتالية).
+    access = CommitteeAccess(db, actor)
     access_by_committee: dict[uuid.UUID, bool] = {}
     for m in meetings:
         if m.committee_id in access_by_committee:
             continue
-        access_by_committee[m.committee_id] = await _has_access(
-            db, actor, m.committee, "minutes.view"
-        )
+        access_by_committee[m.committee_id] = await access.has(m.committee, "minutes.view")
 
     items: list[dict] = []
     for m in meetings:

@@ -108,3 +108,47 @@ async def test_meeting_detail_query_count_is_constant(
     # التفاصيل الكاملة ما زالت كما هي (نفس MeetingOut).
     assert body["participants"] and len(body["agenda_items"]) == 3 and body["creator"]["user_id"]
     assert statements <= 6, f"meeting detail uses {statements} SQL statements"
+
+
+async def test_minutes_summary_query_count_does_not_grow_with_committees(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user
+) -> None:
+    """2026-10-25: صلاحية minutes.view كانت تُفحص باستعلام مستقل لكل لجنة
+    بالقائمة. الآن استعلام واحد لكل عضويات المستخدم مهما كان عدد اللجان."""
+    from app.models.committee import committee_members
+    from app.models.role import Role
+    from tests.test_decisions import _create_approved_committee as _committee
+    from tests.test_meetings import _grant_committee_role_permissions
+
+    first = await _committee(client, auth_headers, roles_by_name, suffix="ms1")
+    second = await _committee(client, auth_headers, roles_by_name, suffix="ms2")
+    await _grant_committee_role_permissions(["minutes.view"], slug="chair")
+    await _grant_committee_role_permissions(["minutes.view"], slug="member")
+    async with AsyncSessionLocal() as db:
+        member_role_id = (
+            await db.execute(select(Role.role_id).where(Role.committee_role_slug == "member"))
+        ).scalar_one()
+        await db.execute(
+            committee_members.insert().values(
+                committee_id=second["committee_id"],
+                user_id=first["chair_id"],
+                committee_role_id=member_role_id,
+            )
+        )
+        await db.commit()
+
+    first_ids = await _add_meetings(first["committee_id"], first["chair_id"], 2)
+    second_ids = await _add_meetings(second["committee_id"], second["chair_id"], 2)
+    headers = first["chair_headers"]
+
+    one, one_body = await _count(
+        client, "/api/v1/meetings/minutes/summary?meeting_ids=" + ",".join(map(str, first_ids)), headers
+    )
+    both, both_body = await _count(
+        client,
+        "/api/v1/meetings/minutes/summary?meeting_ids=" + ",".join(map(str, first_ids + second_ids)),
+        headers,
+    )
+    assert len(one_body) == 2 and len(both_body) == 4
+    assert not any(item["forbidden"] for item in both_body)
+    assert both == one, f"minutes summary query count grew with committees: {one} -> {both}"
