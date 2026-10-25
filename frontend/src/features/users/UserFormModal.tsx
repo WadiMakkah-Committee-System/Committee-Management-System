@@ -1,15 +1,17 @@
-import { useEffect } from 'react'
-import { Controller, useForm } from 'react-hook-form'
+import { useEffect, useRef } from 'react'
+import { Controller, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Save } from 'lucide-react'
+import { Copy, RefreshCw, Save } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { CreatableSelect } from '@/components/ui/CreatableSelect'
+import { useToast } from '@/components/ui/Toast'
 import { useRoles } from '@/hooks/useRoles'
 import { useCreateJobTitle, useJobTitles } from '@/hooks/useJobTitles'
+import { generateTemporaryPassword, suggestUsernameFromEmail } from '@/lib/credentialSuggestions'
 import { roleLabel } from '@/lib/utils'
 import type { Department, User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
@@ -99,18 +101,27 @@ export function UserFormModal({
     { value: 'suspended', label: 'موقوف' },
   ]
 
+  const { showToast } = useToast()
+
   const {
     register,
     handleSubmit,
     reset,
     control,
-    formState: { errors },
+    setValue,
+    getValues,
+    formState: { errors, isSubmitted },
   } = useForm<CreateFormValues | EditFormValues>({
     resolver: zodResolver(isEdit ? editSchema : createSchema),
   })
 
+  // هل عدّل السوبر ادمن اسم المستخدم يدويًا؟ طالما لا، يتبع الحقل
+  // البريد الإلكتروني تلقائيًا. إذا مسح الحقل بالكامل يعود الاقتراح التلقائي.
+  const usernameEditedManually = useRef(false)
+
   useEffect(() => {
     if (open) {
+      usernameEditedManually.current = false
       reset({
         first_name: user?.first_name ?? '',
         middle_name: user?.middle_name ?? '',
@@ -119,10 +130,41 @@ export function UserFormModal({
         role_id: user?.role?.role_id ?? '',
         dep_id: user?.dep_id ?? defaultDepId ?? '',
         job_title_id: user?.job_title_id ?? '',
-        ...(isEdit ? {} : { username: '', password: '', status: 'active' }),
+        // كلمة المرور المؤقتة تُقترح تلقائيًا عند فتح نموذج الإضافة (قابلة للتعديل)
+        ...(isEdit ? {} : { username: '', password: generateTemporaryPassword(), status: 'active' }),
       } as CreateFormValues)
     }
   }, [open, user, isEdit, defaultDepId, reset])
+
+  const email = useWatch({ control, name: 'email' })
+
+  // اقتراح اسم المستخدم من البريد أثناء الكتابة (نموذج الإضافة فقط)
+  useEffect(() => {
+    if (!open || isEdit || usernameEditedManually.current) return
+    setValue('username' as 'first_name', suggestUsernameFromEmail(email ?? '') ?? '', {
+      shouldValidate: isSubmitted,
+    })
+  }, [open, isEdit, email, isSubmitted, setValue])
+
+  const usernameField = register('username' as 'first_name')
+
+  /** توليد كلمة مرور مؤقتة جديدة واستبدال الحالية بها. */
+  function regeneratePassword() {
+    setValue('password' as 'first_name', generateTemporaryPassword(), {
+      shouldDirty: true,
+      shouldValidate: isSubmitted,
+    })
+  }
+
+  /** نسخ كلمة المرور المؤقتة الحالية للحافظة لتسليمها للموظف. */
+  function copyPassword() {
+    const password = (getValues() as CreateFormValues).password ?? ''
+    if (!password) return
+    navigator.clipboard
+      .writeText(password)
+      .then(() => showToast('تم نسخ كلمة المرور المؤقتة', 'success'))
+      .catch(() => showToast('تعذّر نسخ كلمة المرور', 'error'))
+  }
 
   function onValid(values: CreateFormValues | EditFormValues) {
     if (isEdit) {
@@ -185,23 +227,47 @@ export function UserFormModal({
           <Input
             label="اسم المستخدم"
             required
-            hint="يُستخدم لتسجيل الدخول — لا يمكن تعديله لاحقًا"
+            autoComplete="off"
+            hint="يُقترح تلقائيًا من البريد الإلكتروني ويمكنك تعديله — لا يمكن تعديله بعد إنشاء الحساب"
             error={createErrors.username?.message}
-            {...register('username' as 'first_name')}
+            {...usernameField}
+            onChange={(event) => {
+              usernameEditedManually.current = event.target.value !== ''
+              return usernameField.onChange(event)
+            }}
           />
         )}
 
-        <Input label="البريد الإلكتروني" type="email" required error={errors.email?.message} {...register('email')} />
+        <Input
+          label="البريد الإلكتروني"
+          type="email"
+          required
+          autoComplete={isEdit ? undefined : 'off'}
+          error={errors.email?.message}
+          {...register('email')}
+        />
 
         {!isEdit && (
-          <Input
-            label="كلمة المرور المؤقتة"
-            type="password"
-            required
-            hint="سيُطلب من المستخدم تغييرها عند أول تسجيل دخول"
-            error={createErrors.password?.message}
-            {...register('password' as 'first_name')}
-          />
+          <div className="flex flex-col gap-2">
+            <Input
+              label="كلمة المرور المؤقتة"
+              type="password"
+              required
+              // new-password يمنع المتصفح من تعبئة كلمة مرور الادمن المحفوظة هنا
+              autoComplete="new-password"
+              hint="مولّدة تلقائيًا — انسخها وسلّمها للموظف، وسيُطلب منه تغييرها عند أول تسجيل دخول"
+              error={createErrors.password?.message}
+              {...register('password' as 'first_name')}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={regeneratePassword}>
+                توليد كلمة مرور جديدة
+              </Button>
+              <Button type="button" variant="ghost" size="sm" icon={<Copy size={14} />} onClick={copyPassword}>
+                نسخ
+              </Button>
+            </div>
+          </div>
         )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
