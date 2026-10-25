@@ -138,24 +138,23 @@ async def list_tasks(
 
         committee_ids = await access.committee_ids_with_code(_VIEW)
         if committee_ids:
-            chair_result = await db.execute(
-                select(Committee.committee_id).where(
-                    Committee.committee_id.in_(committee_ids),
-                    Committee.chair_user_id == actor.user_id,
+            # تحسين أداء 2026-10-25: "هل هو رئيس هذي اللجنة؟" صار شرطًا داخل
+            # نفس استعلام المهام (subquery) بدل استعلام مستقل قبله — نفس
+            # النتيجة حرفيًا: لجان يرأسها → كل مهامها، ولجان هو عضو فيها فقط
+            # → مهامه المسندة له فقط.
+            chaired_committee_ids = select(Committee.committee_id).where(
+                Committee.committee_id.in_(committee_ids),
+                Committee.chair_user_id == actor.user_id,
+            )
+            conditions.append(
+                and_(
+                    Task.committee_id.in_(committee_ids),
+                    or_(
+                        Task.committee_id.in_(chaired_committee_ids),
+                        Task.assignee_user_id == actor.user_id,
+                    ),
                 )
             )
-            chair_ids = set(chair_result.scalars().all())
-            member_only_ids = committee_ids - chair_ids
-
-            if chair_ids:
-                conditions.append(Task.committee_id.in_(chair_ids))
-            if member_only_ids:
-                conditions.append(
-                    and_(
-                        Task.committee_id.in_(member_only_ids),
-                        Task.assignee_user_id == actor.user_id,
-                    )
-                )
 
         if not conditions:
             return []

@@ -24,13 +24,49 @@ async def test_login_uses_few_statements_and_still_works(
         )
     assert response.status_code == 200, response.text
     assert response.json()["access_token"]
-    assert counter.count <= 4, f"login uses {counter.count} SQL statements"
+    # 2026-10-25: +1 (أعلام عضوية اللجان) لأن الرد صار يتضمن بيانات
+    # المستخدم بشكل /users/me — مقابل إلغاء طلب /users/me كامل بعده.
+    assert counter.count <= 5, f"login uses {counter.count} SQL statements"
 
     me = await client.get(
         "/api/v1/users/me",
         headers={"Authorization": f"Bearer {response.json()['access_token']}"},
     )
     assert me.status_code == 200 and me.json()["user_id"] == str(super_admin_user.user_id)
+    # نفس بيانات /users/me بالضبط (updated_at يحدّثه trigger بقاعدة البيانات
+    # عند تسجيل الدخول نفسه، ولا تعرضه الواجهة).
+    login_user = dict(response.json()["user"])
+    me_body = dict(me.json())
+    login_user.pop("updated_at"), me_body.pop("updated_at")
+    assert login_user == me_body
+
+
+async def test_login_user_matches_me_for_committee_member(
+    client: AsyncClient, auth_headers, roles_by_name
+) -> None:
+    ctx = await _create_approved_committee(
+        client, auth_headers, roles_by_name, suffix="loginme", member_count=1
+    )
+    me = (await client.get("/api/v1/users/me", headers=ctx["member_headers_list"][0])).json()
+    response = await client.post(
+        "/api/v1/auth/login", json={"username": me["username"], "password": "StrongPass1"}
+    )
+    assert response.status_code == 200, response.text
+    login_user = dict(response.json()["user"])
+    assert login_user["has_any_committee_membership"] is True
+    for body in (login_user, me):
+        body.pop("updated_at"), body.pop("last_login_at")
+    assert login_user == me
+
+
+async def test_refresh_does_not_include_user(client: AsyncClient, super_admin_user) -> None:
+    tokens = (
+        await client.post(
+            "/api/v1/auth/login", json={"username": super_admin_user.username, "password": "StrongPass1"}
+        )
+    ).json()
+    refreshed = await client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert refreshed.status_code == 200 and refreshed.json()["user"] is None
 
 
 async def test_me_committee_flags_match_previous_checks(

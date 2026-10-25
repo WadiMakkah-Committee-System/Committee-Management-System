@@ -33,7 +33,12 @@ from app.services.decision_service.errors import (
     DecisionNotFoundError,
     DecisionValidationError,
 )
-from app.services.decision_service.loading import decisions_query, load_committee, load_decision
+from app.services.decision_service.loading import (
+    decisions_query,
+    ensure_committee_members,
+    load_committee,
+    load_decision,
+)
 from app.services.decision_service.voting import _maybe_close_voting
 
 
@@ -143,9 +148,9 @@ async def list_decisions(
     لجان المستخدم مرة واحدة للطلب كله بدل مرة لكل قائمة. نفس القاعدة حرفيًا."""
     access = access or CommitteeAccess(db, actor)
     scope = actor.scope_for("decisions.view")
-    stmt = decisions_query(with_assignees=with_assignees).where(Decision.deleted_at.is_(None)).order_by(
-        Decision.created_at.desc()
-    )
+    stmt = decisions_query(with_assignees=with_assignees, with_members=False).where(
+        Decision.deleted_at.is_(None)
+    ).order_by(Decision.created_at.desc())
     if meeting_id is not None:
         stmt = stmt.where(Decision.meeting_id == meeting_id)
 
@@ -175,6 +180,16 @@ async def list_decisions(
 
     result = await db.execute(stmt)
     decisions = list(result.scalars().unique().all())
+    # أعضاء اللجنة (من يحق له التصويت) لا يُحتاجون إلا لإغلاق تصويت مفتوح
+    # (_maybe_close_voting) — فقط للجان هذي القرارات.
+    await ensure_committee_members(
+        db,
+        [
+            d.committee
+            for d in decisions
+            if d.status == DecisionStatus.voting and d.voting_closed_at is None
+        ],
+    )
 
     changed = False
     redacted: list[Decision] = []

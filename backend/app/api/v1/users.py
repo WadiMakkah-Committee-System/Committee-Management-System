@@ -77,13 +77,20 @@ async def get_my_profile(
     (selectinload) من داخل core.dependencies.get_current_user →
     user_service.get_user، فلا حاجة لاستعلام إضافي هنا.
     """
-    data = UserOut.model_validate(current_user).model_dump()
-    data["permissions"] = sorted(current_user.permission_codes)
-    data["permission_scopes"] = current_user.permission_scopes
+    return await build_my_profile(db, current_user)
+
+
+async def build_my_profile(db: AsyncSession, user: User) -> UserDetailOut:
+    """شكل /users/me — مشترك مع رد تسجيل الدخول (auth.login) حتى يبقى
+    الاثنان متطابقين دائمًا. user لازم يكون محمَّلًا بشكله الكامل
+    (user_service.get_user / get_user_by_username)."""
+    data = UserOut.model_validate(user).model_dump()
+    data["permissions"] = sorted(user.permission_codes)
+    data["permission_scopes"] = user.permission_scopes
     (
         data["has_committee_membership_access"],
         data["has_any_committee_membership"],
-    ) = await committee_service.committee_membership_flags(db, user_id=current_user.user_id)
+    ) = await committee_service.committee_membership_flags(db, user_id=user.user_id)
     return UserDetailOut.model_validate(data)
 
 

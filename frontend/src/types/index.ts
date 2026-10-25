@@ -211,6 +211,8 @@ export interface TokenResponse {
   refresh_token: string
   token_type: string
   must_change_password: boolean
+  /** رد تسجيل الدخول فقط: نفس شكل GET /users/me (يوفّر طلبًا متتابعًا بعد الدخول). */
+  user?: UserDetail | null
 }
 
 export interface AuditLogEntry {

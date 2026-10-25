@@ -177,3 +177,63 @@ async def test_changing_vote_returns_new_option_and_few_statements(
     mine = [v for v in second.json()["votes"] if v["voter"]["user_id"] == ctx["chair_id"]]
     assert len(mine) == 1 and mine[0]["option"]["option_id"] == no_id
     assert counter.count <= 14, f"changing a vote uses {counter.count} SQL statements"
+
+
+async def test_listing_closes_voting_only_when_every_member_voted(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user
+) -> None:
+    """2026-10-25: أعضاء اللجنة (من يحق له التصويت) صاروا يُحمَّلون بالقائمة
+    فقط للجان القرارات المفتوحة للتصويت. الإغلاق الكسلي عبر القائمة لازم يبقى
+    كما هو: لا يُغلق قبل أن يصوّت الجميع، ويُغلق بمجرد ما يصوّتون."""
+    import uuid as _uuid
+
+    ctx = await _create_approved_committee(
+        client, auth_headers, roles_by_name, suffix="listclose", member_count=1
+    )
+    decision_id, option_id = await _new_voting_decision(client, ctx, "قرار للإغلاق عبر القائمة")
+
+    async def _insert_vote(user_id: str) -> None:
+        # مباشرة بالقاعدة (لا عبر /vote الذي يغلق فورًا) حتى تكون القائمة
+        # هي أول من يرى اكتمال التصويت.
+        async with AsyncSessionLocal() as db:
+            db.add(
+                DecisionVote(
+                    decision_id=_uuid.UUID(decision_id),
+                    user_id=_uuid.UUID(user_id),
+                    option_id=_uuid.UUID(option_id),
+                )
+            )
+            await db.commit()
+
+    async def _listed() -> dict:
+        response = await client.get("/api/v1/decisions", headers=ctx["chair_headers"])
+        assert response.status_code == 200, response.text
+        return next(d for d in response.json() if d["decision_id"] == decision_id)
+
+    await _insert_vote(ctx["chair_id"])
+    assert (await _listed())["voting_closed_at"] is None  # العضو لم يصوّت بعد
+
+    await _insert_vote(ctx["member_ids"][0])
+    closed = await _listed()
+    assert closed["voting_closed_at"] is not None and closed["status"] == "voting"
+
+
+async def test_listing_without_open_voting_skips_members_query(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user
+) -> None:
+    ctx = await _create_approved_committee(
+        client, auth_headers, roles_by_name, suffix="nomembers", member_count=2
+    )
+    await _add_voted_decisions(client, ctx, 2)
+    open_count, _ = await _count(client, "/api/v1/decisions", ctx["member_headers_list"][0])
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Decision)
+            .where(Decision.committee_id == ctx["committee_id"])
+            .values(voting_closed_at=datetime.now(UTC))
+        )
+        await db.commit()
+    closed_count, body = await _count(client, "/api/v1/decisions", ctx["member_headers_list"][0])
+    assert len(body) == 2 and body[0]["assignees"]
+    assert closed_count == open_count - 1, f"{open_count} -> {closed_count}"

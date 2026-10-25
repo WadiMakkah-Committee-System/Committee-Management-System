@@ -75,6 +75,7 @@ import time as _perf_time
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import event
+from sqlalchemy import exc as exc_mod
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -118,7 +119,14 @@ engine = create_async_engine(
     # (SHOW max_connections على قاعدة Postgres نفسها)، وبما إن Transaction
     # mode لا يحجز عميل Session مخصَّص لكل اتصال محلي مثل ما كان يحصل
     # بوضع Session.
-    pool_pre_ping=True,
+    # تحديث 2026-10-25 (تحليل بطء تسجيل الدخول): pool_pre_ping=True كان يرسل
+    # SELECT 1 قبل *كل* استخدام لاتصال من الـpool = رحلة كاملة
+    # Oregon↔Ireland (~0.4-0.6s) قبل أي استعلام حقيقي بكل طلب، حتى لو
+    # الاتصال نفسه استُخدم قبل ثانية واحدة. الآن الفحص نفسه باقٍ لكن فقط
+    # للاتصال اللي ظل خاملًا أكثر من _PING_IF_IDLE_SECONDS (راجعي
+    # _ping_idle_connection أدناه) — نفس الحماية من الاتصال الميت، بدون
+    # دفع ثمنها على اتصال مستخدَم للتو (مثلًا طلبات الصفحة الواحدة المتتالية).
+    pool_pre_ping=False,
     # تحديث 2026-09-15 (تحقيق أداء لاما، المرحلة السادسة — بيانات فعلية من
     # لوحة Supabase: Database → Connection Pooling): "Connection pool size"
     # هناك = 15 اتصال فعلي فقط بـPostgres نفسه (حسب حجم الـCompute الحالي،
@@ -152,6 +160,44 @@ engine = create_async_engine(
         "server_settings": {"idle_in_transaction_session_timeout": "30000"},
     },
 )
+
+# ============================================================
+# فحص الاتصال الخامل فقط (بديل pool_pre_ping) — 2026-10-25
+# ============================================================
+# نفس آلية pre_ping الرسمية بالضبط (dialect.do_ping ثم DisconnectionError
+# ← الـpool يتخلص من الاتصال ويعطي اتصالًا جديدًا سليمًا بنفس الطلب، بدون
+# أي خطأ للمستخدم) — مع فرق واحد: لا يُفحص اتصال رجع للـpool قبل أقل من
+# _PING_IF_IDLE_SECONDS. خلال هذه المدة القصيرة احتمال موت الاتصال شبه
+# معدوم (لا Supavisor ولا Postgres يقطعان اتصالًا خاملًا بثوانٍ، وpool_recycle
+# أعلاه يستبدل أي اتصال عمره أكثر من 5 دقائق أصلًا).
+_PING_IF_IDLE_SECONDS = 30.0
+_LAST_USED = "_last_used_monotonic"
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _mark_new_connection(dbapi_conn, connection_record):
+    connection_record.info[_LAST_USED] = _perf_time.monotonic()
+
+
+@event.listens_for(engine.sync_engine.pool, "checkin")
+def _mark_checkin(dbapi_conn, connection_record):
+    if connection_record is not None:
+        connection_record.info[_LAST_USED] = _perf_time.monotonic()
+
+
+@event.listens_for(engine.sync_engine.pool, "checkout")
+def _ping_idle_connection(dbapi_conn, connection_record, connection_proxy):
+    last_used = connection_record.info.get(_LAST_USED)
+    if last_used is not None and _perf_time.monotonic() - last_used < _PING_IF_IDLE_SECONDS:
+        return
+    try:
+        alive = engine.dialect.do_ping(dbapi_conn)
+    except Exception as exc:
+        raise exc_mod.DisconnectionError() from exc
+    if alive is False:
+        raise exc_mod.DisconnectionError()
+    connection_record.info[_LAST_USED] = _perf_time.monotonic()
+
 
 # ============================================================
 # تحقيق أداء لاما 2026-09-12 — Event Hooks على مستوى الـ Engine نفسه

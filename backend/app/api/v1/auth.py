@@ -21,6 +21,7 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     TokenResponse,
 )
+from app.api.v1.users import build_my_profile
 from app.schemas.user import ChangePasswordRequest
 from app.services import auth_service, user_service
 from app.services.auth_service import AuthError
@@ -41,6 +42,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> To
         access_token=access_token,
         refresh_token=refresh_token,
         must_change_password=user.must_change_password,
+        user=await build_my_profile(db, user),
     )
 
 
