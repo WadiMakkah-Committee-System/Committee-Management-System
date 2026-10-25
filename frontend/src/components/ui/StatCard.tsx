@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Card } from './Card'
 import { cn } from '@/lib/utils'
 
-export type StatTone = 'brand' | 'teal' | 'purple' | 'orange' | 'success' | 'warning' | 'danger'
+export type StatTone = 'brand' | 'teal' | 'purple' | 'orange' | 'success' | 'warning' | 'danger' | 'neutral'
 
 /**
  * بطاقة إحصائية بأسلوب ملوّن (أيقونة دائرية بلون مختلف لكل بطاقة) — حسب
@@ -39,6 +39,9 @@ export function StatCard({
     success: 'bg-success-bg text-success',
     warning: 'bg-warning-bg text-warning',
     danger: 'bg-danger-bg text-danger',
+    // بلا لون (نفس شكل بطاقة "بانتظار الاعتماد" بصفحة القرارات قبل إضافة
+    // هذا النوع — كانت تمرّر 'neutral' غير معرَّف فتظهر بلا لون).
+    neutral: '',
   }
 
   const cardToneClasses: Record<StatTone, string> = {
@@ -49,6 +52,7 @@ export function StatCard({
     success: '!bg-success-bg !border-success-border/60',
     warning: '!bg-warning-bg !border-warning-border/60',
     danger: '!bg-danger-bg !border-danger-border/60',
+    neutral: '',
   }
 
   return (

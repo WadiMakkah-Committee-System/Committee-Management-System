@@ -228,8 +228,6 @@ export function MeetingMinutesPage() {
   const sendForSignatureMutation = useSendMinutesForSignature()
   const signMutation = useSignMinutes()
 
-  const meetingEnded = !!meeting && (meeting.status === 'finished' || meeting.status === 'recorded')
-
   const myReviewer = minutes?.reviewers.find((r) => r.user.user_id === user?.user_id) ?? null
   // تحديث 2026-09-10: محاضر قديمة تكوّنت قبل هذا التحديث ممكن تكون
   // متوقفة فعليًا بمرحلة 'review' أو 'approval' (القيم القديمة قبل حذف

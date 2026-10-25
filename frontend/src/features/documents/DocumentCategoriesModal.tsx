@@ -57,7 +57,7 @@ export function DocumentCategoriesModal({ open, onClose }: DocumentCategoriesMod
   const [deleteTarget, setDeleteTarget] = useState<DocumentCategory | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  const isSuperAdmin = !!user?.role.is_super_admin
+  const isSuperAdmin = !!user?.role?.is_super_admin
   const permissions = user?.permissions ?? []
 
   function hasScopePermission(action: 'create' | 'update' | 'delete', scope: 'global' | 'department') {
