@@ -230,8 +230,11 @@ async def create_request(
         metadata={"committee_name": committee_name, "member_count": len(members)},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 def _visible_statuses_for(actor: User) -> list[CommitteeRequestStatus]:
@@ -415,8 +418,11 @@ async def update_request(
         metadata={"before": before},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def submit_request(
@@ -453,8 +459,11 @@ async def submit_request(
         metadata={"from_status": from_status.value, "to_status": request.status.value},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def return_to_admin_request(
@@ -498,8 +507,11 @@ async def return_to_admin_request(
         metadata={"direction": "office_to_admin", "return_reason": return_reason},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def return_to_office_request(
@@ -530,8 +542,11 @@ async def return_to_office_request(
         metadata={"direction": "ceo_to_office", "return_reason": return_reason},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def escalate_request(
@@ -564,8 +579,11 @@ async def escalate_request(
         metadata={"to_status": request.status.value},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def approve_request(
@@ -627,8 +645,11 @@ async def approve_request(
         metadata={"to_status": request.status.value},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 class CommitteeNotFoundError(Exception):
@@ -1115,5 +1136,8 @@ async def reject_request(
         metadata={"to_status": request.status.value, "rejection_reason": rejection_reason},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result

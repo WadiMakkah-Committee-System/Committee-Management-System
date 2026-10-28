@@ -133,8 +133,11 @@ async def create_user(
         metadata={"username": username, "role": role.name if role else None},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await get_user(db, user.user_id)
     await db.commit()
-    return await get_user(db, user.user_id)
+    return result
 
 
 async def list_users(
@@ -322,8 +325,11 @@ async def update_user(
         metadata={"before": before, "after": {"role": user.role.name if user.role else None}},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await get_user(db, user.user_id)
     await db.commit()
-    return await get_user(db, user.user_id)
+    return result
 
 
 async def soft_delete_user(
@@ -356,8 +362,10 @@ async def soft_delete_user(
         metadata={"username": user.username},
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(user)
+    await db.commit()
     return user
 
 
@@ -393,5 +401,8 @@ async def set_user_status(
         metadata={"username": user.username},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await get_user(db, user.user_id)
     await db.commit()
-    return await get_user(db, user.user_id)
+    return result

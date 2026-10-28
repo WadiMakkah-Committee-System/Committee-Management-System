@@ -23,7 +23,7 @@ import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.models.role import VALID_SCOPES, Permission, Role, RolePermission
 from app.models.user import User
@@ -119,6 +119,21 @@ async def list_roles(db: AsyncSession) -> list[dict]:
     ]
 
 
+async def list_role_options(db: AsyncSession) -> list[Role]:
+    """
+    الهدف: قائمة الأدوار بأعمدتها الأساسية فقط (بدون الصلاحيات ولا العدّادات).
+
+    المسؤولية: تخدم القوائم المنسدلة/الفلاتر (صفحة المستخدمين ونموذج إضافة
+    مستخدم) اللي تحتاج فقط اسم الدور ونوعه — بدل list_roles الكاملة (كل دور
+    مع كل صلاحياته وعدد مستخدميه، ≈80 كيلوبايت) المخصّصة لصفحة الأدوار.
+
+    المخرجات: كائنات Role بدون تحميل أي علاقة (noload) — استعلام واحد.
+    الصلاحيات: نفس حماية راوت الأدوار (require_super_admin على مستوى الراوتر).
+    """
+    result = await db.execute(select(Role).options(noload("*")).order_by(Role.created_at))
+    return list(result.scalars().all())
+
+
 async def get_role(db: AsyncSession, role_id: uuid.UUID) -> Role | None:
     result = await db.execute(
         select(Role)
@@ -181,8 +196,11 @@ async def create_role(
         metadata={"name": name, "permission_count": len(permission_codes)},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await get_role(db, role.role_id)
     await db.commit()
-    return await get_role(db, role.role_id)  # type: ignore[return-value]
+    return result  # type: ignore[return-value]
 
 
 async def update_role(
@@ -230,8 +248,11 @@ async def update_role(
         metadata={"name": role.name},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await get_role(db, role.role_id)
     await db.commit()
-    return await get_role(db, role.role_id)
+    return result
 
 
 async def delete_role(db: AsyncSession, *, actor_user_id: uuid.UUID, role_id: uuid.UUID) -> Role | None:

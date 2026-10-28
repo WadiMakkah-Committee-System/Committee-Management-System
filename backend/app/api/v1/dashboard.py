@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
-from app.db.session import get_db
+from app.db.session import get_db, writes_on_read
 from app.schemas.dashboard import DashboardSummary
 from app.services import dashboard_service
 
@@ -21,6 +21,8 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("/summary", response_model=DashboardSummary)
+# يكتب أثناء القراءة (راجعي writes_on_read بـapp/db/session.py)
+@writes_on_read
 async def get_dashboard_summary(
     current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> DashboardSummary:

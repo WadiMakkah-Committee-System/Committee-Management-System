@@ -63,6 +63,10 @@ export interface Role {
   user_count: number
 }
 
+/** شكل خفيف للدور (GET /roles/options) — للقوائم المنسدلة والفلاتر فقط، بدون
+ * الصلاحيات والعدّادات (تحسين أداء 2026-10-28). */
+export type RoleOption = Omit<Role, 'permissions' | 'permission_count' | 'user_count'>
+
 export interface RoleCreatePayload {
   name: string
   description: string | null

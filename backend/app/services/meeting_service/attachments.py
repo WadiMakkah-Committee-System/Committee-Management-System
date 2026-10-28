@@ -83,8 +83,10 @@ async def add_attachment(
         linked_by=actor.user_id,
     )
     db.add(link)
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(link)
+    await db.commit()
     return document, link.linked_at
 
 

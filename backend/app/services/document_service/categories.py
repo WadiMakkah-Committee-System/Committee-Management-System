@@ -96,10 +96,13 @@ async def create_category(
         target_id=category.category_id,
         metadata={"name": name, "scope": scope},
     )
-    await db.commit()
     # إعادة تحميل الأعمدة فقط (بدل db.refresh الذي يعيد تحميل علاقات
     # التصنيف الافتراضية: الإدارة/المنشئ وشجرتيهما).
-    return await load_category(db, category.category_id, reload=True)
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_category(db, category.category_id, reload=True)
+    await db.commit()
+    return result
 
 
 async def update_category(
@@ -134,10 +137,13 @@ async def update_category(
         target_id=category.category_id,
         metadata={"before": before_name, "after": name},
     )
-    await db.commit()
     # إعادة تحميل الأعمدة فقط (بدل db.refresh الذي يعيد تحميل علاقات
     # التصنيف الافتراضية: الإدارة/المنشئ وشجرتيهما).
-    return await load_category(db, category.category_id, reload=True)
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_category(db, category.category_id, reload=True)
+    await db.commit()
+    return result
 
 
 async def delete_category(
@@ -171,7 +177,10 @@ async def delete_category(
         target_id=category.category_id,
         metadata={"name": category.name},
     )
-    await db.commit()
     # إعادة تحميل الأعمدة فقط (بدل db.refresh الذي يعيد تحميل علاقات
     # التصنيف الافتراضية: الإدارة/المنشئ وشجرتيهما).
-    return await load_category(db, category.category_id, reload=True)
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_category(db, category.category_id, reload=True)
+    await db.commit()
+    return result

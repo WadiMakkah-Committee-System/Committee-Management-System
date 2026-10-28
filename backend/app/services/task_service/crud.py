@@ -81,8 +81,11 @@ async def create_task(
         target_type="task",
         target_id=task.task_id,
     )
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_task(db, task.task_id, reload=True)
     await db.commit()
-    return await load_task(db, task.task_id, reload=True)
+    return result
 
 
 async def get_task(db: AsyncSession, task_id: uuid.UUID, *, actor: User) -> Task:
@@ -233,8 +236,11 @@ async def update_task(
         target_id=task.task_id,
         metadata=audit_metadata,
     )
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_task(db, task.task_id, reload=True)
     await db.commit()
-    return await load_task(db, task.task_id, reload=True)
+    return result
 
 
 async def delete_task(db: AsyncSession, *, actor: User, task_id: uuid.UUID) -> None:

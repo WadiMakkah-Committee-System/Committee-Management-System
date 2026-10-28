@@ -1,8 +1,14 @@
 import { apiClient } from '@/lib/apiClient'
-import type { Permission, Role, RoleCreatePayload, RoleUpdatePayload } from '@/types'
+import type { Permission, Role, RoleCreatePayload, RoleOption, RoleUpdatePayload } from '@/types'
 
 export async function fetchRoles(): Promise<Role[]> {
   const { data } = await apiClient.get<Role[]>('/roles')
+  return data
+}
+
+/** أسماء الأدوار فقط (بدون الصلاحيات) — للقوائم المنسدلة والفلاتر. */
+export async function fetchRoleOptions(): Promise<RoleOption[]> {
+  const { data } = await apiClient.get<RoleOption[]>('/roles/options')
   return data
 }
 

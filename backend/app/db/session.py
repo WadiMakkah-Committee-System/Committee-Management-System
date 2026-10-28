@@ -9,7 +9,9 @@
   لكل طلب ويغلقها تلقائيًا بعد انتهائه (حتى لو حصل استثناء).
 
 الاعتماديات:
-SQLAlchemy (async) + asyncpg كـ driver، app.core.config لقراءة DATABASE_URL.
+SQLAlchemy (async) + psycopg 3 كـ driver افتراضي (asyncpg بديل فوري عبر
+DB_DRIVER=asyncpg — راجعي "اختيار مشغّل قاعدة البيانات" أدناه، 2026-10-28)،
+app.core.config لقراءة DATABASE_URL.
 
 ملاحظات:
 - الاتصال بقاعدة الإنتاج (Supabase) يجب أن يكون عبر قناة تتجاوز RLS
@@ -71,22 +73,166 @@ SQLAlchemy (async) + asyncpg كـ driver، app.core.config لقراءة DATABASE
    طلبته لاما 2026-09-09.
 """
 
+import asyncio
+import logging
+import sys
 import time as _perf_time
 from collections.abc import AsyncGenerator
+from datetime import timezone
+from typing import Any
 
 from sqlalchemy import event
 from sqlalchemy import exc as exc_mod
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 
+from starlette.requests import HTTPConnection
+
 from app.core import perf_probe
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
+# ============================================================
+# اختيار مشغّل قاعدة البيانات — تحسين أداء 2026-10-28
+# ============================================================
+# القياس المحلي (وكيل يعدّ رحلات الشبكة بين الباك والقاعدة) أثبت أن كل
+# استعلام SQL مع asyncpg يكلّف 3 رحلات شبكة كاملة لا رحلة واحدة:
+#   1) PREPARE (Parse/Describe) لأن ذاكرة الجمل المُجهَّزة معطّلة
+#      (prepared_statement_cache_size=0 — ضروري مع Supavisor بوضع Transaction).
+#   2) التنفيذ نفسه (Bind/Execute).
+#   3) إغلاق الجملة المُجهَّزة المسمّاة (Close) قبل الاستعلام التالي.
+# هذا بالضبط سبب رقم "≈0.355 ثانية لكل استعلام" بتقرير الأداء: 3 رحلات ×
+# المسافة بين الخادم والقاعدة.
+#
+# psycopg 3 مع prepare_threshold=None يرسل Parse+Bind+Execute بدفعة واحدة
+# (جملة غير مسمّاة) = رحلة واحدة لكل استعلام، وهو آمن تمامًا مع Supavisor
+# بوضع Transaction لأنه لا يترك أي جملة مُجهَّزة على السيرفر. نفس
+# الاستعلامات ونفس النتائج، فقط رحلات شبكة أقل (≈ الثلث).
+#
+# asyncpg يبقى مثبّتًا كبديل فوري: DB_DRIVER=asyncpg بمتغيرات البيئة يرجّع
+# السلوك القديم بدون أي تعديل كود.
+
+
+def _windows_loop_supports_psycopg() -> bool:
+    """
+    الهدف: معرفة هل حلقة الأحداث الحالية على Windows تدعم psycopg async.
+
+    المسؤولية: psycopg لا يعمل مع ProactorEventLoop (الافتراضي على Windows)،
+    ويعمل مع SelectorEventLoop (اللي يفعّله uvicorn تلقائيًا عند --reload).
+
+    المخرجات: True إذا كانت الحلقة الجارية (أو السياسة الحالية إن لم تكن هناك
+    حلقة جارية بعد) من نوع Selector.
+
+    التأثيرات الجانبية: لا يوجد.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return isinstance(
+            asyncio.get_event_loop_policy(),
+            asyncio.WindowsSelectorEventLoopPolicy,  # type: ignore[attr-defined]
+        )
+    return isinstance(loop, asyncio.SelectorEventLoop)
+
+
+def _select_driver() -> str:
+    """
+    الهدف: تحديد مشغّل قاعدة البيانات المستخدم ("psycopg" أو "asyncpg").
+
+    المسؤولية:
+    - DB_DRIVER من الإعدادات إن حُدِّد صراحة (للرجوع الفوري لـasyncpg).
+    - غير ذلك psycopg (أقل رحلات شبكة)، إلا على Windows مع حلقة Proactor
+      (تشغيل uvicorn بدون --reload) فيُستخدم asyncpg تلقائيًا بدل الانهيار.
+
+    المخرجات: اسم المشغّل كنص.
+
+    التأثيرات الجانبية: لا يوجد.
+    """
+    forced = (settings.DB_DRIVER or "").strip().lower()
+    if forced in {"asyncpg", "psycopg"}:
+        return forced
+    if sys.platform == "win32" and not _windows_loop_supports_psycopg():
+        return "asyncpg"
+    return "psycopg"
+
+
+def _engine_url(driver: str) -> URL:
+    """
+    الهدف: بناء رابط الاتصال بنفس DATABASE_URL الحالي مع المشغّل المختار.
+
+    المسؤولية: لا يحتاج أحد تعديل DATABASE_URL (يبقى postgresql+asyncpg://
+    كما هو بالإنتاج والـ.env) — يُستبدَل اسم المشغّل هنا فقط. معامل ssl
+    الخاص بـasyncpg يُترجَم لمكافئه sslmode بصيغة libpq عند استخدام psycopg.
+
+    المدخلات: driver — "psycopg" أو "asyncpg".
+    المخرجات: كائن URL جاهز لـcreate_async_engine.
+    """
+    url = make_url(settings.DATABASE_URL)
+    if driver == "asyncpg":
+        return url.set(drivername="postgresql+asyncpg")
+    query = dict(url.query)
+    if "ssl" in query and "sslmode" not in query:
+        ssl_value = str(query.pop("ssl")).lower()
+        query["sslmode"] = "require" if ssl_value in {"true", "1", "on"} else ssl_value
+    return url.set(drivername="postgresql+psycopg", query=query)
+
+
+def _connect_args(driver: str) -> dict[str, Any]:
+    """
+    الهدف: معاملات الاتصال الخاصة بكل مشغّل، بنفس الضمانات للاثنين.
+
+    - asyncpg: كما كانت حرفيًا (تعطيل ذاكرتي الجمل المُجهَّزة + حماية
+      idle_in_transaction_session_timeout).
+    - psycopg: prepare_threshold=None (لا جمل مُجهَّزة مسمّاة إطلاقًا — نفس
+      ضمان asyncpg مع Supavisor) + نفس حماية idle_in_transaction عبر options.
+    """
+    if driver == "psycopg":
+        return {
+            "prepare_threshold": None,
+            "options": "-c idle_in_transaction_session_timeout=30000",
+        }
+    return {
+        "prepared_statement_cache_size": 0,
+        "statement_cache_size": 0,
+        "server_settings": {"idle_in_transaction_session_timeout": "30000"},
+    }
+
+
+def _register_psycopg_utc_datetimes() -> None:
+    """
+    الهدف: أن ترجع حقول timestamptz بتوقيت UTC دائمًا مع psycopg، مطابقة
+    لسلوك asyncpg حرفيًا.
+
+    السبب: asyncpg يرجّع التواريخ بتوقيت UTC، بينما psycopg يرجّعها بتوقيت
+    جلسة القاعدة (TimeZone). على Supabase هو UTC أصلًا، لكن قاعدة محلية على
+    جهاز مضبوط بتوقيت الرياض كانت سترجع +03:00 — نفس اللحظة الزمنية، لكن
+    أي كود يقارن .date() أو يعرض النص قد يختلف. هذا يضمن تطابقًا تامًا.
+
+    التأثيرات الجانبية: يسجّل Loader عام بـpsycopg (قبل إنشاء الـEngine).
+    """
+    import psycopg
+    from psycopg.types.datetime import TimestamptzLoader
+
+    class _UtcTimestamptzLoader(TimestamptzLoader):
+        def load(self, data):  # type: ignore[override]
+            value = super().load(data)
+            return value.astimezone(timezone.utc) if value.tzinfo is not None else value
+
+    psycopg.adapters.register_loader("timestamptz", _UtcTimestamptzLoader)
+
+
+DB_DRIVER = _select_driver()
+if DB_DRIVER == "psycopg":
+    _register_psycopg_utc_datetimes()
+logger.info("Database driver: %s", DB_DRIVER)
+
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    _engine_url(DB_DRIVER),
     echo=False,
     # تحديث 2026-09-10 (ب): التراجع عن NullPool (كان تعديل سابق بنفس اليوم) بعد بلاغ لاما: بعد تفعيل NullPool لحل DuplicatePreparedStatementError، صفحة المحضر رجعت تظهر فارغة (Skeleton رمادي معلّق للأبد). تبيّن أن هذا بالضبط العارض الموثّق أعلاه بتعليق 2026-09-09 البند (2): NullPool يفتح اتصال TCP/TLS جديداً بالكامل بكل طلب، وصفحة المحضر وحدها تطلق ٥-٦ طلبات متزامنة (اجتماع/لجنة/محضر/قوالب/بنود مستخرجة) فتعلق الطلبات بانتظار اتصالات جديدة بدل إعادة استخدام Pool محلي جاهز — وهو بالضبط سبب رفض NullPool يوم 2026-09-09 لصالح QueuePool بحجم صغير صريح (راجعي أعلاه). يعني تفعيل NullPool اليوم كان تراجعًا غير مقصود عن إصلاح الأمس.
     #
@@ -154,11 +300,7 @@ engine = create_async_engine(
     pool_size=8,
     max_overflow=4,
     pool_recycle=300,
-    connect_args={
-        "prepared_statement_cache_size": 0,
-        "statement_cache_size": 0,
-        "server_settings": {"idle_in_transaction_session_timeout": "30000"},
-    },
+    connect_args=_connect_args(DB_DRIVER),
 )
 
 # ============================================================
@@ -280,13 +422,80 @@ AsyncSessionLocal = async_sessionmaker(
     autoflush=False,
 )
 
+# ============================================================
+# جلسات القراءة بدون BEGIN/ROLLBACK — تحسين أداء 2026-10-28
+# ============================================================
+# كل طلب GET كان يدفع رحلتي شبكة إضافيتين لا علاقة لهما بالبيانات: BEGIN
+# قبل أول استعلام، وROLLBACK عند إغلاق الجلسة. طلبات القراءة تُنفَّذ الآن
+# بوضع AUTOCOMMIT (نفس الـPool ونفس الاتصالات) فتسقط الرحلتان.
+#
+# لماذا لا يتغير أي شيء بالبيانات المعروضة: مستوى العزل الافتراضي بـPostgres
+# هو READ COMMITTED، وفيه كل استعلام يأخذ لقطة جديدة أصلًا حتى داخل معاملة —
+# أي أن ما يراه طلب القراءة هو نفسه بالضبط مع أو بدون معاملة.
+#
+# الاستثناء: راوتات GET قليلة تكتب فعلًا أثناء القراءة (مثل إغلاق تصويت
+# انتهت مدته عند فتح القرار، أو إنشاء محضر تلقائيًا) — هذه تُعلَّم بـ
+# @writes_on_read فتبقى بمعاملة كاملة كالسابق حفاظًا على ذرّية الكتابة.
+_read_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+AsyncReadSessionLocal = async_sessionmaker(
+    bind=_read_engine,
+    expire_on_commit=False,
+    autoflush=False,
+)
+
+_WRITES_ON_READ_ATTR = "_writes_on_read"
+
+
+def writes_on_read(endpoint):
+    """
+    الهدف: تعليم راوت GET يكتب بالقاعدة أثناء القراءة، ليبقى داخل معاملة
+    كاملة (BEGIN/COMMIT) بدل جلسة القراءة السريعة.
+
+    المدخلات: دالة الراوت. المخرجات: نفس الدالة بعد إضافة علامة.
+    الاستخدام: يوضع تحت @router.get(...) مباشرة.
+    """
+    setattr(endpoint, _WRITES_ON_READ_ATTR, True)
+    return endpoint
+
+
+def _is_read_only_request(connection: HTTPConnection) -> bool:
+    """طلب GET/HEAD لراوت غير مُعلَّم بـ@writes_on_read."""
+    if connection.scope.get("method") not in {"GET", "HEAD"}:
+        return False
+    endpoint = connection.scope.get("endpoint")
+    return not getattr(endpoint, _WRITES_ON_READ_ATTR, False)
+
+
+@event.listens_for(engine.sync_engine, "before_cursor_execute")
+def _warn_write_in_read_session(conn, cursor, statement, parameters, context, executemany):
+    """
+    حارس: لو راوت GET غير مُعلَّم كتب بالقاعدة، الكتابة تتم فعلًا (بلا خطأ
+    للمستخدم) لكن بدون ذرّية معاملة واحدة — نسجّل تحذيرًا واضحًا ليُعلَّم
+    الراوت بـ@writes_on_read. فحص نصي بسيط، تكلفته مهملة.
+    """
+    if conn.get_execution_options().get("isolation_level") != "AUTOCOMMIT":
+        return
+    verb = statement.lstrip()[:6].upper()
+    if verb in {"INSERT", "UPDATE", "DELETE"}:
+        logger.warning(
+            "Write executed in a read-only (AUTOCOMMIT) request; mark the GET route "
+            "with @writes_on_read: %s",
+            " ".join(statement.split())[:160],
+        )
+
+
+async def get_db(connection: HTTPConnection) -> AsyncGenerator[AsyncSession, None]:
     """
     FastAPI Dependency: تفتح جلسة قاعدة بيانات جديدة لكل طلب، وتضمن إغلاقها
     دائمًا (حتى عند حدوث خطأ)، مع التراجع التلقائي (rollback) عند الفشل.
+
+    طلبات القراءة (GET) تأخذ جلسة AUTOCOMMIT بلا BEGIN/ROLLBACK (راجعي
+    الشرح أعلى AsyncReadSessionLocal)؛ أي طلب آخر يأخذ جلسة بمعاملة كاملة
+    كما كان.
     """
-    async with AsyncSessionLocal() as session:
+    factory = AsyncReadSessionLocal if _is_read_only_request(connection) else AsyncSessionLocal
+    async with factory() as session:
         try:
             yield session
         except Exception:

@@ -102,8 +102,11 @@ async def extract_meeting_items(
                 created_by=actor.user_id,
             )
         )
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _list_extracted_items_query(db, meeting_id)
     await db.commit()
-    return await _list_extracted_items_query(db, meeting_id)
+    return result
 
 
 async def add_manual_extracted_item(
@@ -127,8 +130,10 @@ async def add_manual_extracted_item(
         created_by=actor.user_id,
     )
     db.add(item)
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(item)
+    await db.commit()
     return item
 
 
@@ -198,8 +203,10 @@ async def assign_extracted_item_as_task(
     )
     item.status = MeetingExtractedItemStatus.assigned_task
     item.linked_task_id = task.task_id
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(item)
+    await db.commit()
     return item, task
 
 
@@ -237,6 +244,8 @@ async def assign_extracted_item_as_decision(
     )
     item.status = MeetingExtractedItemStatus.assigned_decision
     item.linked_decision_id = decision.decision_id
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(item)
+    await db.commit()
     return item, decision

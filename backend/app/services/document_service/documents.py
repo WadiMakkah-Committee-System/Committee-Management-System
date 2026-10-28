@@ -267,11 +267,12 @@ async def create_document(
         target_id=document.document_id,
         metadata={"title": title, "file_name": file_name, "size_bytes": len(content)},
     )
-    await db.commit()
-
     # الرافع يرى وثيقته دائمًا (uploaded_by == actor.user_id) — نفس نتيجة
     # get_document، مع إعادة تحميل الكائن الجديد بخيارات التحميل الصريحة.
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     created = await load_document(db, document.document_id, with_content=True, reload=True)
+    await db.commit()
     assert created is not None
     return created
 
@@ -371,10 +372,13 @@ async def update_document(
         target_id=document.document_id,
         metadata=changes or {"note": "تعديل بيانات وصفية/رؤية"},
     )
-    await db.commit()
     # إعادة تحميل بخيارات التحميل الصريحة (بدل db.refresh الذي يعيد تحميل
     # كل علاقات الوثيقة الافتراضية بشجرتها الكاملة).
-    return await load_document(db, document.document_id, reload=True)
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_document(db, document.document_id, reload=True)
+    await db.commit()
+    return result
 
 
 async def delete_document(db: AsyncSession, *, actor: User, document_id: uuid.UUID) -> Document | None:

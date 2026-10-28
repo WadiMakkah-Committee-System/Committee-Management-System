@@ -5,6 +5,9 @@ import { REFERENCE_STALE_TIME } from '@/hooks/useCommittees'
 
 export const rolesKeys = {
   all: ['roles'] as const,
+  // تحت ['roles'] عمدًا: أي invalidate لـrolesKeys.all بعد إنشاء/تعديل دور
+  // يُبطل قائمة الخيارات الخفيفة أيضًا.
+  options: ['roles', 'options'] as const,
   permissions: ['permissions'] as const,
 }
 
@@ -12,6 +15,20 @@ export function useRoles(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: rolesKeys.all,
     queryFn: rolesApi.fetchRoles,
+    enabled: options?.enabled ?? true,
+  })
+}
+
+/**
+ * الهدف: قائمة أدوار خفيفة (اسم ونوع فقط) للقوائم المنسدلة والفلاتر — صفحة
+ * المستخدمين ونموذج المستخدم. تحسين أداء 2026-10-28: بدل useRoles() اللي
+ * تجلب كل دور بكل صلاحياته (≈80 كيلوبايت) لعرض أسماء الأدوار فقط.
+ */
+export function useRoleOptions(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: rolesKeys.options,
+    queryFn: rolesApi.fetchRoleOptions,
+    staleTime: REFERENCE_STALE_TIME,
     enabled: options?.enabled ?? true,
   })
 }
