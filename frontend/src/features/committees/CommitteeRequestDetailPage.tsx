@@ -38,7 +38,8 @@ import { ReasonConfirmDialog } from '@/components/ui/ReasonConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { CommitteeRequestFormModal, type CommitteeRequestFormSubmitValues } from './CommitteeRequestFormModal'
 import { RequestPipeline } from './RequestPipeline'
-import { cn, extractErrorMessage, formatDate, formatDateTime, scopeFor } from '@/lib/utils'
+import { cn, extractErrorMessage, formatDateTime, scopeFor } from '@/lib/utils'
+import { formatCommitteePeriod } from '@/features/committees/committeePeriod'
 
 type BannerTone = 'warning' | 'danger' | 'success'
 
@@ -464,7 +465,7 @@ export function CommitteeRequestDetailPage() {
           {
             icon: <CalendarDays size={20} />,
             tone: 'bg-brand-teal/10 text-brand-teal',
-            value: `${formatDate(request.start_date)} — ${formatDate(request.end_date)}`,
+            value: formatCommitteePeriod(request),
             label: 'فترة عمل اللجنة',
           },
           {

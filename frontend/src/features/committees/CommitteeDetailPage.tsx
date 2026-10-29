@@ -23,6 +23,7 @@ import { useToast } from '@/components/ui/Toast'
 import { CommitteeDatesEditModal } from '@/features/committees/CommitteeDatesEditModal'
 import { DocumentFormModal, type DocumentFormSubmitValues } from '@/features/documents/DocumentFormModal'
 import { cn, extractErrorMessage, formatDate, formatDateTime, formatFileSize } from '@/lib/utils'
+import { formatCommitteePeriod } from '@/features/committees/committeePeriod'
 
 /**
  * تفاصيل لجنة معتمدة واحدة — Phase 5، عرض فقط (Read-only) لبيانات
@@ -158,7 +159,8 @@ export function CommitteeDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {canEditDates && (
+          {/* اللجنة الدائمة بلا فترة، ونوعها ثابت بعد الاعتماد (قرار 2026-10-29). */}
+          {canEditDates && committee.duration_type === 'temporary' && (
             <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => setDatesEditOpen(true)}>
               تعديل فترة اللجنة
             </Button>
@@ -180,7 +182,7 @@ export function CommitteeDetailPage() {
           {
             icon: <CalendarDays size={20} />,
             tone: 'bg-brand-teal/10 text-brand-teal',
-            value: `${formatDate(committee.start_date)} — ${formatDate(committee.end_date)}`,
+            value: formatCommitteePeriod(committee),
             label: 'فترة عمل اللجنة',
           },
           {

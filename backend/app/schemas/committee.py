@@ -14,9 +14,9 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.committee_request import CommitteeRequestStatus
+from app.models.committee_request import CommitteeDurationType, CommitteeRequestStatus
 
 
 class CommitteeMemberUserOut(BaseModel):
@@ -102,8 +102,11 @@ class CommitteeFormationRequestCreate(BaseModel):
 
     committee_name: str = Field(min_length=2, max_length=200)
     statement: str | None = None
-    start_date: date
-    end_date: date
+    # دائمة/مؤقتة (الهجرة 0037) — الافتراضي مؤقتة للتوافق مع العملاء القدامى.
+    duration_type: CommitteeDurationType = CommitteeDurationType.temporary
+    # إلزاميان للمؤقتة، ويجب أن يكونا فارغين للدائمة — راجعي _period_matches_type.
+    start_date: date | None = None
+    end_date: date | None = None
     proposed_member_ids: list[uuid.UUID] = Field(min_length=1)
     # رئيس اللجنة — إلزامي دائمًا (حتى بحالة draft)، بنفس منطق proposed_member_ids
     # أعلاه (قرار موثّق 2026-08-27). التحقق من كونه فعلًا أحد proposed_member_ids
@@ -118,13 +121,21 @@ class CommitteeFormationRequestCreate(BaseModel):
             raise ValueError("لا يمكن تكرار نفس العضو أكثر من مرة بقائمة الأعضاء المقترحين")
         return v
 
-    @field_validator("end_date")
-    @classmethod
-    def _end_after_start(cls, v: date, info) -> date:
-        start = info.data.get("start_date")
-        if start is not None and v <= start:
+    @model_validator(mode="after")
+    def _period_matches_type(self) -> "CommitteeFormationRequestCreate":
+        """
+        تحقق مبكر (الطبقة الفعلية بالخدمة: committee_service._resolve_period):
+        المؤقتة تتطلب بداية ونهاية (النهاية بعد البداية)، والدائمة بلا تواريخ.
+        """
+        if self.duration_type == CommitteeDurationType.permanent:
+            if self.start_date is not None or self.end_date is not None:
+                raise ValueError("اللجنة الدائمة لا تحتوي على تاريخ بداية أو نهاية")
+            return self
+        if self.start_date is None or self.end_date is None:
+            raise ValueError("تاريخ البداية والنهاية مطلوبان للجنة المؤقتة")
+        if self.end_date <= self.start_date:
             raise ValueError("تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية")
-        return v
+        return self
 
     @field_validator("chair_user_id")
     @classmethod
@@ -144,6 +155,10 @@ class CommitteeFormationRequestUpdate(BaseModel):
 
     committee_name: str | None = Field(default=None, min_length=2, max_length=200)
     statement: str | None = None
+    # قابل للتغيير ما دام الطلب قابلًا للتعديل (قبل الاعتماد). عند التحويل
+    # لدائمة تُمسح التواريخ تلقائيًا؛ وعند التحويل لمؤقتة يجب إرسال التاريخين
+    # (لو لم يكونا محفوظين) — يُفرض بطبقة الخدمة (committee_service._resolve_period).
+    duration_type: CommitteeDurationType | None = None
     start_date: date | None = None
     end_date: date | None = None
     proposed_member_ids: list[uuid.UUID] | None = Field(default=None, min_length=1)
@@ -183,8 +198,10 @@ class CommitteeFormationRequestOut(BaseModel):
     request_id: uuid.UUID
     committee_name: str
     statement: str | None
-    start_date: date
-    end_date: date
+    duration_type: CommitteeDurationType
+    # None للجنة الدائمة.
+    start_date: date | None
+    end_date: date | None
     status: CommitteeRequestStatus
     requester: CommitteeMemberUserOut
     proposed_members: list[ProposedMemberOut]
@@ -207,8 +224,10 @@ class CommitteeOut(BaseModel):
     committee_id: uuid.UUID
     name: str
     statement: str | None
-    start_date: date
-    end_date: date
+    duration_type: CommitteeDurationType
+    # None للجنة الدائمة.
+    start_date: date | None
+    end_date: date | None
     source_request_id: uuid.UUID
     members: list[CommitteeMemberUserOut]
     # مراجعة لاما 2026-08-31: نفس الأعضاء أعلاه، لكن مع دور كل واحد منهم

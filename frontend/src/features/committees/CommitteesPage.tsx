@@ -11,7 +11,8 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { CardSkeleton } from '@/components/ui/Skeleton'
 import { StatCard } from '@/components/ui/StatCard'
 import { CommitteeLifecycleBadge } from '@/components/ui/StatusBadge'
-import { cardToneClass, cn, formatDate } from '@/lib/utils'
+import { cardToneClass, cn } from '@/lib/utils'
+import { formatCommitteePeriod } from '@/features/committees/committeePeriod'
 
 /**
  * قائمة اللجان المعتمدة رسميًا — Phase 5 (حسب ترقيم Lama)، عرض فقط
@@ -124,7 +125,7 @@ export function CommitteesPage() {
                 </div>
                 <p className="flex items-center gap-1.5 text-xs text-text-secondary">
                   <CalendarDays size={12} />
-                  {formatDate(committee.start_date)} — {formatDate(committee.end_date)}
+                  {formatCommitteePeriod(committee)}
                 </p>
                 <p className="flex items-center gap-1.5 text-xs text-text-secondary">
                   <Users2 size={12} />

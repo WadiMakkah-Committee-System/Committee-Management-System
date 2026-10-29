@@ -314,10 +314,10 @@ export function DecisionFormModal({
               label="تاريخ بداية التنفيذ"
               required
               error={errors.start_date?.message}
-              min={selectedCommittee?.start_date}
-              max={selectedCommittee?.end_date}
+              min={selectedCommittee?.start_date ?? undefined}
+              max={selectedCommittee?.end_date ?? undefined}
               hint={
-                selectedCommittee
+                selectedCommittee?.start_date && selectedCommittee.end_date
                   ? `ضمن فترة اللجنة (${selectedCommittee.start_date} - ${selectedCommittee.end_date})`
                   : undefined
               }
@@ -328,8 +328,8 @@ export function DecisionFormModal({
               label="تاريخ نهاية التنفيذ"
               required
               error={errors.end_date?.message}
-              min={selectedCommittee?.start_date}
-              max={selectedCommittee?.end_date}
+              min={selectedCommittee?.start_date ?? undefined}
+              max={selectedCommittee?.end_date ?? undefined}
               {...register('end_date')}
             />
           </div>
