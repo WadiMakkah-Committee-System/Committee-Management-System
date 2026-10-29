@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+import { AppFooter } from './AppFooter'
 import { ChangePasswordModal } from '@/features/auth/ChangePasswordModal'
 
 export function AppShell() {
@@ -32,6 +33,7 @@ export function AppShell() {
             <Outlet />
           </motion.div>
         </main>
+        <AppFooter />
       </div>
       <ChangePasswordModal />
     </div>
