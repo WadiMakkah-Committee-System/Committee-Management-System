@@ -18,7 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser, require_super_admin
 from app.db.session import get_db
-from app.schemas.role import PermissionOut, RoleCreate, RoleDetailOut, RolePermissionOut, RoleUpdate
+from app.schemas.role import (
+    PermissionOut,
+    RoleCreate,
+    RoleDetailOut,
+    RoleOut,
+    RolePermissionOut,
+    RoleUpdate,
+)
 from app.services import role_service
 
 router = APIRouter(
@@ -76,6 +83,19 @@ def _to_detail_out(entry: dict) -> RoleDetailOut:
 async def list_roles(db: AsyncSession = Depends(get_db)) -> list[RoleDetailOut]:
     entries = await role_service.list_roles(db)
     return [_to_detail_out(e) for e in entries]
+
+
+@router.get("/options", response_model=list[RoleOut])
+async def list_role_options(db: AsyncSession = Depends(get_db)) -> list[RoleOut]:
+    """
+    الهدف: قائمة أدوار خفيفة للقوائم المنسدلة والفلاتر (تحسين أداء 2026-10-28).
+
+    نفس الأدوار ونفس الحماية مثل GET /roles، لكن بدون الصلاحيات والعدّادات —
+    صفحة المستخدمين (أول صفحة بعد تسجيل الدخول حاليًا) كانت تجلب ≈80
+    كيلوبايت من الصلاحيات لتعرض أسماء الأدوار فقط.
+    """
+    roles = await role_service.list_role_options(db)
+    return [RoleOut.model_validate(r) for r in roles]
 
 
 @router.post("", response_model=RoleDetailOut, status_code=status.HTTP_201_CREATED)

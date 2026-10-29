@@ -96,8 +96,10 @@ async def create_department(
         metadata={"name": name, "code": code, "manager_user_id": str(manager_user_id)},
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(department)
+    await db.commit()
     return department
 
 
@@ -203,8 +205,10 @@ async def update_department(
         },
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(department)
+    await db.commit()
     return department
 
 
@@ -227,6 +231,8 @@ async def soft_delete_department(
         metadata={"name": department.name},
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(department)
+    await db.commit()
     return department

@@ -14,7 +14,7 @@ const schema = z
   .object({
     committee_id: z.string().min(1, 'يجب اختيار اللجنة'),
     title: z.string().min(2, 'اسم القرار يجب أن يكون حرفين على الأقل').max(255),
-    classification: z.enum(['final', 'voting'], { required_error: 'يجب اختيار تصنيف القرار' }),
+    classification: z.enum(['final', 'voting'], { message: 'يجب اختيار تصنيف القرار' }),
     start_date: z.string().min(1, 'يجب تحديد تاريخ البداية'),
     end_date: z.string().min(1, 'يجب تحديد تاريخ النهاية'),
   })

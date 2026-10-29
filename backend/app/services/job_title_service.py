@@ -69,8 +69,10 @@ async def create_job_title(db: AsyncSession, *, actor_user_id: uuid.UUID, name: 
         metadata={"name": name},
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(job_title)
+    await db.commit()
     return job_title
 
 
@@ -96,8 +98,10 @@ async def update_job_title(
         metadata={"before": before_name, "after": name},
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(job_title)
+    await db.commit()
     return job_title
 
 

@@ -33,7 +33,6 @@ export function DepartmentDetailPage() {
   const { depId } = useParams<{ depId: string }>()
   const navigate = useNavigate()
   const { data: detail, isLoading, isError, refetch } = useDepartmentDetail(depId)
-  const { data: allUsers } = useUsers()
   const updateMutation = useUpdateUser()
   const assignMutation = useUpdateUser()
   const { showToast } = useToast()
@@ -43,6 +42,8 @@ export function DepartmentDetailPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [detailUserId, setDetailUserId] = useState<string | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
+  // كل المستخدمين لمودال "إضافة موظف موجود" فقط — يُجلب عند فتحه (تحسين أداء 2026-10-24).
+  const { data: allUsers } = useUsers({ enabled: assignOpen })
   const [assignError, setAssignError] = useState<string | null>(null)
   const [assignBusy, setAssignBusy] = useState(false)
   /** تحديد المودال — مرفوع هنا (بدل useState داخلي بالمودال) عشان بعد فشل

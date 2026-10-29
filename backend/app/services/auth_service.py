@@ -20,7 +20,9 @@
 
 import asyncio
 import secrets
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from typing import TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,16 +39,28 @@ from app.models.user import User, UserStatus
 from app.services import audit_service, user_service
 
 
+T = TypeVar("T")
+
+
 class AuthError(Exception):
     """خطأ مصادقة عام (بيانات خاطئة، حساب مقفل، حساب موقوف...)."""
 
 
 async def authenticate(
-    db: AsyncSession, *, username: str, password: str
-) -> tuple[User, str, str]:
+    db: AsyncSession,
+    *,
+    username: str,
+    password: str,
+    before_commit: Callable[[User], Awaitable[T]] | None = None,
+) -> tuple[User, str, str, T | None]:
     """
     محاولة تسجيل دخول. عند النجاح تُرجع (المستخدم، access_token،
-    refresh_token). عند الفشل تُرجع AuthError برسالة عامة موحّدة.
+    refresh_token، ناتج before_commit). عند الفشل تُرجع AuthError برسالة
+    عامة موحّدة.
+
+    before_commit (اختياري): دالة قراءة تُنفَّذ داخل معاملة الدخول نفسها
+    قبل commit (مثل بناء الملف الشخصي لرد الدخول) — لا يجوز أن تعدّل أي
+    بيانات، فهي للقراءة فقط.
     """
     user = await user_service.get_user_by_username(db, username)
 
@@ -95,16 +109,25 @@ async def authenticate(
         target_id=user.user_id,
         metadata={"event": "login_success"},
     )
-    await db.commit()
-    await db.refresh(user)
+    # بدون db.refresh(user) هنا (تحسين أداء 2026-10-24): القيم المحدَّثة
+    # موجودة أصلًا بالكائن (expire_on_commit=False)، والـrefresh كان يحجز
+    # اتصالًا جديدًا من الـpool (pre-ping) ويعيد تحميل المستخدم ودوره وكل
+    # صلاحياته (4 استعلامات) رغم أن الاستجابة لا تحتاج منها شيئًا.
 
-    session_id = await create_session(user.user_id)
+    # تحسين أداء 2026-10-28 (تسجيل الدخول):
+    # - before_commit (بيانات الملف الشخصي لرد الدخول) يُنفَّذ داخل نفس
+    #   المعاملة بدل معاملة قراءة ثانية بعد commit — توفير BEGIN/ROLLBACK.
+    # - إنشاء الجلسة في Redis يتم بالتوازي مع commit بدل بعده. لو فشل commit
+    #   يُرفع الخطأ كالسابق ولا تُصدَر أي توكنات؛ مفتاح الجلسة اليتيم ينتهي
+    #   وحده بعد مدة الخمول (لا يمكن استخدامه بلا توكن موقَّع يحمل معرّفه).
+    extra = await before_commit(user) if before_commit is not None else None
+    session_id, _ = await asyncio.gather(create_session(user.user_id), db.commit())
     access_token = create_access_token(
         user.user_id, user.role.name if user.role else None, session_id
     )
     refresh_token = create_refresh_token(user.user_id, session_id)
 
-    return user, access_token, refresh_token
+    return user, access_token, refresh_token, extra
 
 
 async def logout(session_id: str) -> None:

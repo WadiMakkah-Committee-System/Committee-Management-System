@@ -21,7 +21,7 @@ import {
   useUsers,
 } from '@/hooks/useUsers'
 import { useDepartments } from '@/hooks/useDepartments'
-import { useRoles } from '@/hooks/useRoles'
+import { useRoleOptions } from '@/hooks/useRoles'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/Button'
 import { SearchInput } from '@/components/ui/SearchInput'
@@ -51,7 +51,7 @@ type PendingAction =
 export function UsersPage() {
   const { data: users, isLoading, isError, refetch } = useUsers()
   const { data: departments } = useDepartments()
-  const { data: roles } = useRoles()
+  const { data: roles } = useRoleOptions()
   const createMutation = useCreateUser()
   const updateMutation = useUpdateUser()
   const deleteMutation = useDeleteUser()

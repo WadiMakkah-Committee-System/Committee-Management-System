@@ -7,7 +7,9 @@ import type {
   AssignAsDecisionPayload,
   AssignAsTaskPayload,
 } from '@/api/meetingExtractedItems'
+import { applyOptimistic, removeFromLists, rollbackOptimistic } from '@/lib/optimistic'
 import type {
+  MeetingListItem,
   MeetingAgendaItemCreatePayload,
   MeetingAgendaItemUpdatePayload,
   MeetingAttachmentKind,
@@ -55,6 +57,20 @@ export function useMeetings() {
  * الـHook هو Observer مستقل بخياراته الخاصة رغم مشاركة نفس queryKey/الـ
  * Cache، فلا يتأثر أي استدعاء آخر بهذا الخيار).
  */
+/**
+ * تحميل مسبق لتفاصيل اجتماع عند مرور الماوس على بطاقته (تحسين أداء
+ * 2026-10-24) — يبدأ الطلب قبل الضغط بلحظات، فتفتح الصفحة غالبًا بالبيانات
+ * جاهزة. لو البيانات حديثة أصلًا بالكاش (staleTime) لا يُرسَل أي طلب.
+ */
+export function usePrefetchMeeting() {
+  const queryClient = useQueryClient()
+  return (meetingId: string) =>
+    queryClient.prefetchQuery({
+      queryKey: meetingsKeys.detail(meetingId),
+      queryFn: () => meetingsApi.fetchMeeting(meetingId),
+    })
+}
+
 export function useMeetingDetail(
   meetingId: string | undefined,
   options?: { refetchIntervalMs?: number },
@@ -114,7 +130,17 @@ export function useDeleteMeeting() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (meetingId: string) => meetingsApi.deleteMeeting(meetingId),
-    onSuccess: () => invalidateMeetingQueries(queryClient),
+    // تحديث متفائل: الاجتماع يختفي من القائمة والتقويم فورًا، ويرجع لو فشل الحذف.
+    onMutate: (meetingId) =>
+      applyOptimistic(queryClient, [
+        {
+          queryKey: meetingsKeys.all,
+          exact: true,
+          update: removeFromLists<MeetingListItem>((m) => m.meeting_id === meetingId),
+        },
+      ]),
+    onError: (_err, _meetingId, snapshot) => rollbackOptimistic(queryClient, snapshot),
+    onSettled: () => invalidateMeetingQueries(queryClient),
   })
 }
 

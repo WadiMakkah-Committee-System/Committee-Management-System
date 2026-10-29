@@ -63,6 +63,10 @@ export interface Role {
   user_count: number
 }
 
+/** شكل خفيف للدور (GET /roles/options) — للقوائم المنسدلة والفلاتر فقط، بدون
+ * الصلاحيات والعدّادات (تحسين أداء 2026-10-28). */
+export type RoleOption = Omit<Role, 'permissions' | 'permission_count' | 'user_count'>
+
 export interface RoleCreatePayload {
   name: string
   description: string | null
@@ -211,6 +215,8 @@ export interface TokenResponse {
   refresh_token: string
   token_type: string
   must_change_password: boolean
+  /** رد تسجيل الدخول فقط: نفس شكل GET /users/me (يوفّر طلبًا متتابعًا بعد الدخول). */
+  user?: UserDetail | null
 }
 
 export interface AuditLogEntry {
@@ -574,6 +580,17 @@ export interface Meeting {
   agenda_items: MeetingAgendaItem[]
   created_at: string
   updated_at: string
+}
+
+/**
+ * عنصر قائمة الاجتماعات (GET /meetings) — يقابل MeetingListItem بالباك-إند
+ * (إعادة هيكلة 2026-10-24). نفس حقول Meeting بدون التفاصيل الثقيلة
+ * (creator/participants/agenda_items) التي كانت تُحمَّل لكل اجتماع بالقائمة
+ * رغم أن القائمة لا تعرض منها إلا عدد المشاركين — صار participant_count.
+ * التفاصيل الكاملة تبقى من GET /meetings/{id} (Meeting).
+ */
+export type MeetingListItem = Omit<Meeting, 'creator' | 'participants' | 'agenda_items'> & {
+  participant_count: number
 }
 
 export interface MeetingCreatePayload {

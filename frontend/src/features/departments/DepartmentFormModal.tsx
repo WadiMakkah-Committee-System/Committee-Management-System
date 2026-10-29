@@ -40,7 +40,7 @@ export function DepartmentFormModal({
   serverError,
 }: DepartmentFormModalProps) {
   const isEdit = !!department
-  const { data: users } = useUsers()
+  const { data: users } = useUsers({ enabled: open })
   const managerOptions = (users ?? []).map((u) => ({
     value: u.user_id,
     label: `${u.first_name} ${u.last_name}`,

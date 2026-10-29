@@ -66,15 +66,22 @@ async def semantic_search(
         .where(Document.deleted_at.is_(None), Document.embedding.is_not(None))
         .order_by(Document.embedding.cosine_distance(query_vector))
         .limit(over_fetch_limit)
+        # ما يحتاجه فحص الرؤية + content_text للسياق — بلا عمود embedding
+        # نفسه (الترتيب يتم داخل SQL) ولا شجرة العلاقات الافتراضية
+        # (إعادة هيكلة 2026-10-24، راجعي document_service/loading.py).
+        .options(*document_service.document_options(with_content=True))
     )
     result = await db.execute(stmt)
-    candidates = list(result.scalars().all())
+    candidates = list(result.scalars().unique().all())
 
+    viewer = document_service.DocumentViewer(db, current_user)
     visible: list[Document] = []
     for candidate in candidates:
         if len(visible) >= limit:
             break
-        if await document_service.can_view_document(db, current_user=current_user, document=candidate):
+        if await document_service.can_view_document(
+            db, current_user=current_user, document=candidate, viewer=viewer
+        ):
             visible.append(candidate)
     return visible
 

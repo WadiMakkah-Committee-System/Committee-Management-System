@@ -47,17 +47,18 @@ export function DocumentDetailPage() {
 
   const { data: doc, isLoading, isError, refetch } = useDocumentDetail(documentId)
   const chatSession = useDocumentChatSession(documentId)
-  const { data: categories } = useDocumentCategories()
+  const [formOpen, setFormOpen] = useState(false)
+  // بيانات نموذج التعديل فقط — تُجلب عند فتحه (تحسين أداء 2026-10-24).
   // إدارات ولجان الرفع مُصفَّاة مسبقًا حسب مبدأ أقل صلاحية ممكنة — راجعي
   // نفس التعليق في DocumentsPage.tsx.
-  const { data: publishTargets } = useDocumentPublishTargets()
-  const { data: users } = useUsers()
+  const { data: categories } = useDocumentCategories({ enabled: formOpen })
+  const { data: publishTargets } = useDocumentPublishTargets({ enabled: formOpen })
+  const { data: users } = useUsers({ enabled: formOpen })
 
   const updateMutation = useUpdateDocument()
   const deleteMutation = useDeleteDocument()
   const downloadMutation = useDownloadDocument()
 
-  const [formOpen, setFormOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)

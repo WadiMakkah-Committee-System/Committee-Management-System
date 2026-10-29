@@ -76,9 +76,10 @@ export function CommitteeDetailPage() {
   const { data: committeeDocuments, isLoading: documentsLoading } = useDocuments({
     committee_id: committeeId,
   })
-  const { data: documentCategories } = useDocumentCategories()
-  const { data: publishTargets } = useDocumentPublishTargets()
-  const { data: usersList } = useUsers()
+  // بيانات نموذج رفع الوثيقة فقط — تُجلب عند فتحه (تحسين أداء 2026-10-24).
+  const { data: documentCategories } = useDocumentCategories({ enabled: documentFormOpen })
+  const { data: publishTargets } = useDocumentPublishTargets({ enabled: documentFormOpen })
+  const { data: usersList } = useUsers({ enabled: documentFormOpen })
   const uploadDocumentMutation = useUploadDocument()
   const downloadDocumentMutation = useDownloadDocument()
 

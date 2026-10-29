@@ -32,6 +32,10 @@ class Settings(BaseSettings):
 
     # --- Database ---
       DATABASE_URL: str
+    # مشغّل قاعدة البيانات (تحسين أداء 2026-10-28، راجعي app/db/session.py):
+    # فارغ = اختيار تلقائي (psycopg، أو asyncpg على Windows بدون --reload).
+    # "asyncpg" = الرجوع للمشغّل القديم فورًا بدون تعديل كود.
+      DB_DRIVER: str = ""
 
     # --- Auth / JWT ---
       JWT_SECRET: str

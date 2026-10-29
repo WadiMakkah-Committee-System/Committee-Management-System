@@ -38,7 +38,7 @@ export function RoleFormModal({
   serverError,
 }: RoleFormModalProps) {
   const isEdit = !!role
-  const { data: permissions, isLoading: permissionsLoading } = usePermissionsCatalog()
+  const { data: permissions, isLoading: permissionsLoading } = usePermissionsCatalog({ enabled: open })
   // مراجعة لاما 2026-08-31 ("أدوار اللجان"): عند تعديل دور لجنة (رئيس/عضو)،
   // تُخفى فقط الأقسام الثلاثة اللي ما تخدم اللجان إطلاقًا (الإدارات،
   // المستخدمون، المسميات الوظيفية) — قرار صريح من لاما: "تظهر كل الأقسام

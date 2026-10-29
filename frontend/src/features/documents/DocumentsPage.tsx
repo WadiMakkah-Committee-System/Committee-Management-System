@@ -20,6 +20,7 @@ import {
   useDocumentPublishTargets,
   useDocuments,
   useDownloadDocument,
+  usePrefetchDocument,
   useUpdateDocument,
   useUploadDocument,
 } from '@/hooks/useDocuments'
@@ -83,6 +84,8 @@ function documentScopeBadge(doc: Document): { label: string; icon: typeof Globe2
  */
 export function DocumentsPage() {
   const navigate = useNavigate()
+  // تحميل مسبق للتفاصيل عند مرور الماوس/التركيز على العنصر (تحسين أداء 2026-10-24).
+  const prefetchDocument = usePrefetchDocument()
   const user = useAuthStore((s) => s.user)
   const { showToast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -121,15 +124,17 @@ export function DocumentsPage() {
   // إدارات ولجان الرفع مُصفَّاة مسبقًا حسب مبدأ أقل صلاحية ممكنة (راجعي
   // DocumentFormModal وdocument_service.get_publish_targets) — وليست
   // القوائم الكاملة لكل إدارات/لجان الشركة كما كانت سابقًا.
-  const { data: publishTargets } = useDocumentPublishTargets()
-  const { data: users } = useUsers()
+  // لنموذج الرفع/التعديل فقط — تُجلب عند فتحه، لا مع كل تحميل للصفحة
+  // (تحسين أداء 2026-10-24: كانت قائمة كل المستخدمين تُطلب هنا دائمًا).
+  const [formOpen, setFormOpen] = useState(false)
+  const { data: publishTargets } = useDocumentPublishTargets({ enabled: formOpen })
+  const { data: users } = useUsers({ enabled: formOpen })
 
   const uploadMutation = useUploadDocument()
   const updateMutation = useUpdateDocument()
   const deleteMutation = useDeleteDocument()
   const downloadMutation = useDownloadDocument()
 
-  const [formOpen, setFormOpen] = useState(false)
   const [editingDoc, setEditingDoc] = useState<Document | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Document | null>(null)
@@ -142,7 +147,7 @@ export function DocumentsPage() {
   const canDelete = permissions.includes('documents.delete')
   const canDownload = permissions.includes('documents.download')
   const canManageCategories =
-    !!user?.role.is_super_admin ||
+    !!user?.role?.is_super_admin ||
     ['create_global', 'create_department', 'update_global', 'update_department', 'delete_global', 'delete_department'].some(
       (suffix) => permissions.includes(`document_categories.${suffix}`),
     )
@@ -163,7 +168,7 @@ export function DocumentsPage() {
   const visibleScopeFilterOptions = useMemo(
     () =>
       SCOPE_FILTER_OPTIONS.filter(({ value }) => {
-        if (value === 'department') return !!user?.role.is_super_admin || !!user?.dep_id
+        if (value === 'department') return !!user?.role?.is_super_admin || !!user?.dep_id
         if (value === 'committee') return !!user?.has_any_committee_membership
         return true
       }),
@@ -222,12 +227,14 @@ export function DocumentsPage() {
   function handleDelete() {
     if (!deleteTarget) return
     setDeleteError(null)
-    deleteMutation.mutate(deleteTarget.document_id, {
-      onSuccess: () => {
-        setDeleteTarget(null)
-        showToast('تم حذف الوثيقة بنجاح', 'success')
-      },
-      onError: (err) => setDeleteError(extractErrorMessage(err)),
+    // تحديث متفائل (2026-10-24): العنصر يختفي من القائمة فورًا ونغلق نافذة
+    // التأكيد بدون انتظار السيرفر — لو فشل الحذف يرجع العنصر مكانه
+    // (rollback داخل الـhook) وتظهر رسالة الخطأ.
+    const documentId = deleteTarget.document_id
+    setDeleteTarget(null)
+    deleteMutation.mutate(documentId, {
+      onSuccess: () => showToast('تم حذف الوثيقة بنجاح', 'success'),
+      onError: (err) => showToast(extractErrorMessage(err), 'error'),
     })
   }
 
@@ -366,6 +373,8 @@ export function DocumentsPage() {
                 <Card
                   interactive
                   onClick={() => navigate(`/documents/${doc.document_id}`)}
+                  onMouseEnter={() => prefetchDocument(doc.document_id)}
+                  onFocus={() => prefetchDocument(doc.document_id)}
                   className={cn('flex h-full flex-col gap-3', cardToneClass(i))}
                 >
                   <div className="flex items-start justify-between gap-2">
