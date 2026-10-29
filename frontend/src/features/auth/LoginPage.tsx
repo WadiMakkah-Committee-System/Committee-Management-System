@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { CalendarDays, FileSignature, Gavel, ListChecks, LogIn, ShieldCheck, Sparkles } from 'lucide-react'
+import { LogIn, ShieldCheck } from 'lucide-react'
 import * as authApi from '@/api/auth'
 import * as usersApi from '@/api/users'
 import { usersKeys } from '@/hooks/useUsers'
@@ -56,7 +56,7 @@ export function LoginPage() {
   return (
     <div className="relative flex min-h-svh bg-bg-app">
       {/* ===== لوحة الهوية (شاشات كبيرة) ===== */}
-      <aside className="relative hidden w-[46%] max-w-[720px] flex-col justify-between overflow-hidden bg-[linear-gradient(160deg,#0b1633_0%,#122a63_55%,#105ea7_120%)] p-12 text-white lg:flex">
+      <aside className="relative hidden w-[46%] max-w-[720px] flex-col overflow-hidden bg-[linear-gradient(160deg,#0b1633_0%,#122a63_55%,#105ea7_120%)] p-12 text-white lg:flex">
         <div aria-hidden className="bg-grid-soft absolute inset-0 opacity-[0.18]" />
         <div aria-hidden className="animate-float-soft absolute -top-24 -left-24 h-80 w-80 rounded-full bg-[var(--wm-cyan)] opacity-20 blur-3xl" />
         <div
@@ -71,57 +71,17 @@ export function LoginPage() {
           transition={{ duration: 0.7, ease: EASE_OUT_EXPO }}
           className="relative flex items-center gap-3"
         >
-          <div className="flex h-12 items-center rounded-sm bg-white px-2.5 shadow-lg">
-            <img src={wadiMakkahMark} alt="شعار وادي مكة" className="h-9 w-auto" />
-          </div>
+          <img src={wadiMakkahMark} alt="شعار وادي مكة" className="h-11 w-auto" />
           <div className="leading-tight">
             <p className="text-sm font-bold">شركة وادي مكة للتقنية</p>
             <p className="text-xs text-white/60">Wadi Makkah Company For Technology</p>
           </div>
         </motion.div>
 
-        <div className="relative">
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6, delay: 0.15 }}
-            className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/80 backdrop-blur"
-          >
-            <Sparkles size={14} className="text-[var(--wm-gold)]" />
-            مدعوم بالذكاء الاصطناعي
-          </motion.p>
+        <div className="relative my-auto">
           <h2 className="text-4xl font-bold leading-[1.35] xl:text-[2.75rem]">
-            <SplitWords text="منصة ذكية لإدارة" delay={0.2} />
-            <br />
-            <SplitWords
-              text="اللجان والاجتماعات"
-              delay={0.38}
-              wordClassName="bg-[linear-gradient(90deg,var(--wm-cyan),#8fdcf5_60%,var(--wm-lime))] bg-clip-text text-transparent"
-            />
+            <SplitWords text="منصة إدارة اللجان" delay={0.2} />
           </h2>
-          <motion.p
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.6, ease: EASE_OUT_EXPO }}
-            className="mt-5 max-w-md text-[15px] leading-7 text-white/70"
-          >
-            من تشكيل اللجنة إلى المحضر والقرار والمهمة — كل مراحل العمل المؤسسي في مكان واحد.
-          </motion.p>
-
-          <ul className="mt-8 flex flex-wrap gap-2.5">
-            {FEATURES.map((f, idx) => (
-              <motion.li
-                key={f.label}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.75 + idx * 0.08, ease: EASE_OUT_EXPO }}
-                className="flex items-center gap-2 rounded-sm border border-white/10 bg-white/[0.06] px-3 py-2 text-sm text-white/85 backdrop-blur-sm"
-              >
-                <f.icon size={16} style={{ color: f.color }} />
-                {f.label}
-              </motion.li>
-            ))}
-          </ul>
         </div>
 
         <motion.div
@@ -133,10 +93,6 @@ export function LoginPage() {
         >
           <BrandWave height={150} speed={1.1} className="translate-y-6 opacity-90" />
         </motion.div>
-
-        <p className="relative text-xs text-white/45">
-          © {new Date().getFullYear()} شركة وادي مكة للتقنية — جميع الحقوق محفوظة
-        </p>
       </aside>
 
       {/* ===== نموذج الدخول ===== */}
@@ -215,19 +171,9 @@ export function LoginPage() {
               تسجيل الدخول
             </Button>
           </form>
-
-          <p className="mt-6 text-center text-xs text-text-muted lg:hidden">
-            © {new Date().getFullYear()} شركة وادي مكة للتقنية — جميع الحقوق محفوظة
-          </p>
         </motion.div>
       </main>
     </div>
   )
 }
 
-const FEATURES = [
-  { label: 'اجتماعات مرئية', icon: CalendarDays, color: 'var(--wm-cyan)' },
-  { label: 'محاضر ذكية', icon: FileSignature, color: 'var(--wm-gold)' },
-  { label: 'قرارات وتصويت', icon: Gavel, color: 'var(--wm-lime)' },
-  { label: 'مهام ومتابعة', icon: ListChecks, color: '#c99bd0' },
-]

@@ -209,9 +209,7 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
         />
 
         <div className="relative flex h-20 items-center gap-3 px-5">
-          <div className="flex h-11 items-center justify-center rounded-sm bg-white/95 px-2 shadow-sm ring-1 ring-white/20">
-            <img src={wadiMakkahMark} alt="شعار وادي مكة" className="h-8 w-auto shrink-0" />
-          </div>
+          <img src={wadiMakkahMark} alt="شعار وادي مكة" className="h-9 w-auto shrink-0" />
           <div className="leading-tight">
             <p className="text-sm font-bold text-white">وادي مكة للتقنية</p>
             <p className="mt-0.5 text-[11px] text-white/55">إدارة اللجان والاجتماعات</p>
