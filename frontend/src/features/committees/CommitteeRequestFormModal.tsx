@@ -7,26 +7,39 @@ import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { DateField } from '@/components/ui/DateField'
 import { Textarea } from '@/components/ui/Textarea'
+import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { useCommitteeEligibleMembers } from '@/hooks/useCommitteeRequests'
 import { MemberPicker } from './MemberPicker'
-import type { CommitteeFormationRequest } from '@/types'
+import { COMMITTEE_DURATION_OPTIONS } from './committeePeriod'
+import type { CommitteeDurationType, CommitteeFormationRequest } from '@/types'
 
 const schema = z
   .object({
     committee_name: z.string().min(2, 'اسم اللجنة يجب أن يكون حرفين على الأقل').max(200),
     statement: z.string().max(2000).optional(),
-    start_date: z.string().min(1, 'تاريخ البداية مطلوب'),
-    end_date: z.string().min(1, 'تاريخ النهاية مطلوب'),
+    // دائمة/مؤقتة (الهجرة 0037) — التواريخ إلزامية للمؤقتة فقط (راجعي superRefine أدناه).
+    duration_type: z.enum(['temporary', 'permanent'], { message: 'يجب اختيار نوع اللجنة' }),
+    start_date: z.string().optional(),
+    end_date: z.string().optional(),
     proposed_member_ids: z.array(z.string()).min(1, 'اختر عضوًا واحدًا على الأقل'),
     // رئيس اللجنة (Committee Role مؤقت) — يُختار من ضمن الأعضاء المقترحين
     // فقط، وليس دورًا عامًا بجدول الأدوار (System Role)؛ نفس القيد مطبّق
     // بالباك-إند (CommitteeFormationRequestCreate._chair_must_be_a_proposed_member).
     chair_user_id: z.string().min(1, 'يجب اختيار رئيس للجنة'),
   })
-  .refine((v) => v.end_date > v.start_date, {
-    message: 'تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية',
-    path: ['end_date'],
+  .superRefine((v, ctx) => {
+    // الدائمة بلا تواريخ إطلاقًا — لا تحقق عليها.
+    if (v.duration_type !== 'temporary') return
+    if (!v.start_date) ctx.addIssue({ code: 'custom', message: 'تاريخ البداية مطلوب', path: ['start_date'] })
+    if (!v.end_date) ctx.addIssue({ code: 'custom', message: 'تاريخ النهاية مطلوب', path: ['end_date'] })
+    if (v.start_date && v.end_date && v.end_date <= v.start_date) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية',
+        path: ['end_date'],
+      })
+    }
   })
   .refine((v) => !v.chair_user_id || v.proposed_member_ids.includes(v.chair_user_id), {
     message: 'رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب',
@@ -66,8 +79,10 @@ function FormSection({
 export interface CommitteeRequestFormSubmitValues {
   committee_name: string
   statement: string | null
-  start_date: string
-  end_date: string
+  duration_type: CommitteeDurationType
+  /** null للجنة الدائمة. */
+  start_date: string | null
+  end_date: string | null
   proposed_member_ids: string[]
   chair_user_id: string
 }
@@ -116,16 +131,22 @@ export function CommitteeRequestFormModal({
     handleSubmit,
     reset,
     control,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
+
+  // حقلا التاريخ يظهران فقط للجنة المؤقتة.
+  const durationType = watch('duration_type')
 
   /** تحويل قيم النموذج (FormValues) إلى شكل الإرسال النهائي (trim + null بدل فراغ). */
   function toSubmitValues(values: FormValues): CommitteeRequestFormSubmitValues {
     return {
       committee_name: values.committee_name,
       statement: values.statement?.trim() || null,
-      start_date: values.start_date,
-      end_date: values.end_date,
+      duration_type: values.duration_type,
+      // الدائمة تُرسَل بلا تواريخ حتى لو عُبّئت قبل تغيير النوع.
+      start_date: values.duration_type === 'temporary' ? values.start_date || null : null,
+      end_date: values.duration_type === 'temporary' ? values.end_date || null : null,
       proposed_member_ids: values.proposed_member_ids,
       chair_user_id: values.chair_user_id,
     }
@@ -141,6 +162,8 @@ export function CommitteeRequestFormModal({
       reset({
         committee_name: request?.committee_name ?? '',
         statement: request?.statement ?? '',
+        // طلب جديد: بلا اختيار مسبق — المستخدم يحدد النوع صراحة.
+        duration_type: request?.duration_type ?? ('' as unknown as CommitteeDurationType),
         start_date: request?.start_date ?? '',
         end_date: request?.end_date ?? '',
         proposed_member_ids: request?.proposed_members.map((m) => m.user_id) ?? [],
@@ -206,35 +229,48 @@ export function CommitteeRequestFormModal({
           />
         </FormSection>
 
-        <FormSection icon={<CalendarRange size={13} />} title="الفترة الزمنية">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Controller
-              control={control}
-              name="start_date"
-              render={({ field }) => (
-                <DateField
-                  label="تاريخ بداية عمل اللجنة"
-                  required
-                  error={errors.start_date?.message}
-                  value={field.value ?? ''}
-                  onChange={field.onChange}
-                />
-              )}
-            />
-            <Controller
-              control={control}
-              name="end_date"
-              render={({ field }) => (
-                <DateField
-                  label="تاريخ نهاية عمل اللجنة"
-                  required
-                  error={errors.end_date?.message}
-                  value={field.value ?? ''}
-                  onChange={field.onChange}
-                />
-              )}
-            />
-          </div>
+        <FormSection icon={<CalendarRange size={13} />} title="نوع اللجنة والفترة الزمنية" required>
+          <Select
+            label="نوع اللجنة"
+            required
+            placeholder="اختر نوع اللجنة"
+            options={COMMITTEE_DURATION_OPTIONS}
+            error={errors.duration_type?.message}
+            {...register('duration_type')}
+          />
+          {durationType === 'permanent' && (
+            <p className="text-xs text-text-muted">اللجنة الدائمة ليس لها تاريخ بداية أو نهاية.</p>
+          )}
+          {durationType === 'temporary' && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Controller
+                control={control}
+                name="start_date"
+                render={({ field }) => (
+                  <DateField
+                    label="تاريخ بداية عمل اللجنة"
+                    required
+                    error={errors.start_date?.message}
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
+              <Controller
+                control={control}
+                name="end_date"
+                render={({ field }) => (
+                  <DateField
+                    label="تاريخ نهاية عمل اللجنة"
+                    required
+                    error={errors.end_date?.message}
+                    value={field.value ?? ''}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
+            </div>
+          )}
         </FormSection>
 
         <FormSection icon={<UsersIcon size={13} />} title="الأعضاء المقترحون ورئيس اللجنة" required>

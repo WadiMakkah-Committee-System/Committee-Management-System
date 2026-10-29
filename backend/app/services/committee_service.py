@@ -67,7 +67,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, joinedload, noload, raiseload, selectinload
 
 from app.models.committee import Committee, CommitteeMember, committee_members
-from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
+from app.models.committee_request import (
+    CommitteeDurationType,
+    CommitteeFormationRequest,
+    CommitteeRequestStatus,
+)
 from app.models.decision import Decision
 from app.models.department import Department
 from app.models.meeting import Meeting
@@ -183,14 +187,48 @@ def _assert_dates_valid(start_date: date, end_date: date) -> None:
         raise ValueError("تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية")
 
 
+def _resolve_period(
+    duration_type: CommitteeDurationType,
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[date | None, date | None]:
+    """
+    الهدف: المصدر الوحيد لقاعدة "نوع مدة اللجنة" (الهجرة 0037، طلب صاحبة
+    المشروع 2026-10-29) لطلبات التشكيل — إنشاءً وتعديلًا.
+
+    المدخلات: نوع المدة والتاريخان النهائيان (بعد دمج القيم المحفوظة مع
+    المُرسَلة عند التعديل).
+
+    المخرجات: (start_date, end_date) كما تُحفظ — (None, None) للدائمة.
+
+    قواعد العمل:
+    - دائمة: تُمسح التواريخ دائمًا (حتى لو كانت محفوظة من نوع سابق).
+    - مؤقتة: التاريخان إلزاميان، والنهاية بعد البداية.
+
+    الأخطاء: ValueError (تُترجَم إلى 400) عند نقص تاريخ للمؤقتة أو ترتيب خاطئ.
+    """
+    if duration_type == CommitteeDurationType.permanent:
+        return None, None
+    if start_date is None or end_date is None:
+        raise ValueError("تاريخ البداية والنهاية مطلوبان للجنة المؤقتة")
+    _assert_dates_valid(start_date, end_date)
+    return start_date, end_date
+
+
+def _iso(value: date | None) -> str | None:
+    """تحويل تاريخ اختياري لنص ISO لسجل العمليات (None للجنة الدائمة)."""
+    return value.isoformat() if value is not None else None
+
+
 async def create_request(
     db: AsyncSession,
     *,
     actor_user_id: uuid.UUID,
     committee_name: str,
     statement: str | None,
-    start_date: date,
-    end_date: date,
+    duration_type: CommitteeDurationType,
+    start_date: date | None,
+    end_date: date | None,
     proposed_member_ids: list[uuid.UUID],
     chair_user_id: uuid.UUID,
 ) -> CommitteeFormationRequest:
@@ -203,7 +241,7 @@ async def create_request(
     هنا أيضًا (طبقة الخدمة هي مصدر الحقيقة الفعلي، والـSchema مجرد تحقق
     مبكر لتجربة مستخدم أفضل).
     """
-    _assert_dates_valid(start_date, end_date)
+    start_date, end_date = _resolve_period(duration_type, start_date, end_date)
     members = await _resolve_members(db, proposed_member_ids)
     if chair_user_id not in {m.user_id for m in members}:
         raise ValueError("رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
@@ -211,6 +249,7 @@ async def create_request(
     request = CommitteeFormationRequest(
         committee_name=committee_name,
         statement=statement,
+        duration_type=duration_type,
         start_date=start_date,
         end_date=end_date,
         status=CommitteeRequestStatus.draft,
@@ -227,7 +266,11 @@ async def create_request(
         action_type="create",
         target_type="committee_formation_request",
         target_id=request.request_id,
-        metadata={"committee_name": committee_name, "member_count": len(members)},
+        metadata={
+            "committee_name": committee_name,
+            "member_count": len(members),
+            "duration_type": duration_type.value,
+        },
     )
 
     # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
@@ -321,6 +364,7 @@ async def update_request(
     request_id: uuid.UUID,
     committee_name: str | None,
     statement: str | None,
+    duration_type: CommitteeDurationType | None,
     start_date: date | None,
     end_date: date | None,
     proposed_member_ids: list[uuid.UUID] | None,
@@ -377,15 +421,19 @@ async def update_request(
             "الطلب في حالة نهائية (معتمد أو مرفوض) ولا يمكن تعديله"
         )
 
-    new_start = start_date if start_date is not None else request.start_date
-    new_end = end_date if end_date is not None else request.end_date
-    _assert_dates_valid(new_start, new_end)
+    new_type = duration_type if duration_type is not None else request.duration_type
+    new_start, new_end = _resolve_period(
+        new_type,
+        start_date if start_date is not None else request.start_date,
+        end_date if end_date is not None else request.end_date,
+    )
 
     before = {
         "committee_name": request.committee_name,
         "statement": request.statement,
-        "start_date": request.start_date.isoformat(),
-        "end_date": request.end_date.isoformat(),
+        "duration_type": request.duration_type.value,
+        "start_date": _iso(request.start_date),
+        "end_date": _iso(request.end_date),
         "member_ids": sorted(str(u.user_id) for u in request.proposed_members),
         "chair_user_id": str(request.chair_user_id) if request.chair_user_id else None,
     }
@@ -394,6 +442,7 @@ async def update_request(
         request.committee_name = committee_name
     if statement is not None:
         request.statement = statement
+    request.duration_type = new_type
     request.start_date = new_start
     request.end_date = new_end
     if proposed_member_ids is not None:
@@ -620,6 +669,8 @@ async def approve_request(
     committee = Committee(
         name=request.committee_name,
         statement=request.statement,
+        # النوع يُنسَخ مرة واحدة هنا ولا يتغيّر بعد الاعتماد (قرار 2026-10-29).
+        duration_type=request.duration_type,
         start_date=request.start_date,
         end_date=request.end_date,
         source_request_id=request.request_id,
@@ -848,6 +899,9 @@ async def update_committee(
     committee = result.scalar_one_or_none()
     if committee is None or committee.is_deleted:
         raise CommitteeNotFoundError("اللجنة غير موجودة")
+    # نوع اللجنة ثابت بعد الاعتماد (قرار 2026-10-29) — الدائمة بلا فترة أصلًا.
+    if committee.is_permanent:
+        raise ValueError("اللجنة دائمة وليس لها فترة زمنية قابلة للتعديل")
 
     new_start = start_date if start_date is not None else committee.start_date
     new_end = end_date if end_date is not None else committee.end_date

@@ -588,8 +588,13 @@ async def notify_committee_created(committee: Committee) -> None:
     body = _wrap_html(
         "<p>تم اعتماد وإنشاء اللجنة التالية:</p>"
         f"<h3>{committee.name}</h3>"
-        f"<p><strong>تاريخ انتهاء عمل اللجنة:</strong> "
-        f"{committee.end_date.strftime('%Y-%m-%d')}</p>"
+        + (
+            # اللجنة الدائمة بلا تاريخ انتهاء (الهجرة 0037).
+            "<p><strong>نوع اللجنة:</strong> دائمة</p>"
+            if committee.end_date is None
+            else f"<p><strong>تاريخ انتهاء عمل اللجنة:</strong> "
+            f"{committee.end_date.strftime('%Y-%m-%d')}</p>"
+        )
     )
     await send_email(to=_committee_member_emails(committee), subject=subject, html_body=body)
 

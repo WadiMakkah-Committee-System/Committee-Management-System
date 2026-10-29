@@ -34,13 +34,13 @@ export function CommitteeDatesEditModal({
   loading,
   serverError,
 }: CommitteeDatesEditModalProps) {
-  const [startDate, setStartDate] = useState(committee.start_date)
-  const [endDate, setEndDate] = useState(committee.end_date)
+  const [startDate, setStartDate] = useState(committee.start_date ?? '')
+  const [endDate, setEndDate] = useState(committee.end_date ?? '')
 
   useEffect(() => {
     if (open) {
-      setStartDate(committee.start_date)
-      setEndDate(committee.end_date)
+      setStartDate(committee.start_date ?? '')
+      setEndDate(committee.end_date ?? '')
     }
   }, [open, committee.start_date, committee.end_date])
 

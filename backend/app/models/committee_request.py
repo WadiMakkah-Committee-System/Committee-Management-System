@@ -47,6 +47,19 @@ class CommitteeRequestStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class CommitteeDurationType(str, enum.Enum):
+    """
+    نوع مدة اللجنة (db/migrations/0037_committee_duration_type.sql) — طلب
+    صاحبة المشروع 2026-10-29:
+    - temporary (مؤقتة): بتاريخ بداية ونهاية إلزاميين.
+    - permanent (دائمة): بلا أي تاريخ، وتُعتبر جارية دائمًا بعد الاعتماد.
+    يُحدَّد بطلب التشكيل، ويُنسَخ للجنة عند الاعتماد، ولا يتغيّر بعدها.
+    """
+
+    temporary = "temporary"
+    permanent = "permanent"
+
+
 # الأعضاء المقترحون بالطلب — جدول وسيط بسيط (request_id, user_id)، بنفس
 # نمط role_permissions في role.py. قابل للتعديل فقط أثناء draft/returned
 # (تُفرض هذه القاعدة في الخدمة، Phase 2 — ليست قيدًا بقاعدة البيانات).
@@ -72,8 +85,14 @@ class CommitteeFormationRequest(Base):
     )
     committee_name: Mapped[str] = mapped_column(String(200), nullable=False)
     statement: Mapped[str | None] = mapped_column(Text, nullable=True)
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    duration_type: Mapped[CommitteeDurationType] = mapped_column(
+        SAEnum(CommitteeDurationType, name="committee_duration_type", native_enum=True),
+        nullable=False,
+        server_default=CommitteeDurationType.temporary.value,
+    )
+    # NULL فقط للجنة الدائمة (CHECK chk_committee_formation_requests_dates، الهجرة 0037).
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     status: Mapped[CommitteeRequestStatus] = mapped_column(
         SAEnum(CommitteeRequestStatus, name="committee_request_status", native_enum=True),
