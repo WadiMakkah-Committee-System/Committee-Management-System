@@ -12,7 +12,7 @@ FR-UM-010)، وتفصل شكل الـ API عن نموذج قاعدة البيا�
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DepartmentManagerOut(BaseModel):
@@ -32,6 +32,17 @@ class DepartmentCreate(BaseModel):
     code: str = Field(min_length=1, max_length=20)
     description: str | None = None
     manager_user_id: uuid.UUID
+    # أعضاء الإدارة من نفس نموذج الإنشاء (طلب صاحبة المشروع 2026-10-29) —
+    # اختياري؛ المسؤول يُضاف تلقائيًا دائمًا فلا حاجة لتكراره هنا. من كان
+    # بإدارة أخرى يُنقَل إليها (نفس قاعدة المسؤول القائمة).
+    member_user_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @field_validator("member_user_ids")
+    @classmethod
+    def _no_duplicate_members(cls, v: list[uuid.UUID]) -> list[uuid.UUID]:
+        if len(set(v)) != len(v):
+            raise ValueError("لا يمكن تكرار نفس العضو أكثر من مرة")
+        return v
 
 
 class DepartmentUpdate(BaseModel):

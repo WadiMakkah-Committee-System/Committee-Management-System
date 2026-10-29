@@ -196,6 +196,8 @@ export interface DepartmentCreatePayload {
   code: string
   description: string | null
   manager_user_id: string
+  /** أعضاء يُضافون للإدارة من نفس نموذج الإنشاء (اختياري) — المسؤول يُضاف تلقائيًا دائمًا. */
+  member_user_ids?: string[]
 }
 
 export interface DepartmentUpdatePayload {

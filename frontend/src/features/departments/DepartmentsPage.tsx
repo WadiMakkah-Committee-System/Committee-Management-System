@@ -18,7 +18,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { StatCard } from '@/components/ui/StatCard'
 import { useToast } from '@/components/ui/Toast'
-import { DepartmentFormModal } from './DepartmentFormModal'
+import { DepartmentFormModal, type DepartmentFormSubmitValues } from './DepartmentFormModal'
 import { cardToneClass, cn, extractErrorMessage, formatDate } from '@/lib/utils'
 import type { Department } from '@/types'
 
@@ -58,11 +58,13 @@ export function DepartmentsPage() {
     setFormOpen(true)
   }
 
-  function handleSubmit(values: { name: string; code: string; description: string | null; manager_user_id: string }) {
+  function handleSubmit(values: DepartmentFormSubmitValues) {
     setFormError(null)
     if (editingDept) {
+      // الأعضاء يُحدَّدون عند الإنشاء فقط — التعديل يدير أعضاءه من صفحة تفاصيل الإدارة.
+      const { member_user_ids: _ignored, ...payload } = values
       updateMutation.mutate(
-        { depId: editingDept.dep_id, payload: values },
+        { depId: editingDept.dep_id, payload },
         {
           onSuccess: () => {
             setFormOpen(false)
