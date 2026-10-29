@@ -49,8 +49,11 @@ async def update_status(
         target_id=task.task_id,
         metadata={"action": "status_update", "status": status.value},
     )
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_task(db, task.task_id, reload=True)
     await db.commit()
-    return await load_task(db, task.task_id, reload=True)
+    return result
 
 
 async def reassign_task(
@@ -95,5 +98,8 @@ async def reassign_task(
         target_id=task.task_id,
         metadata={"action": "reassign"},
     )
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_task(db, task.task_id, reload=True)
     await db.commit()
-    return await load_task(db, task.task_id, reload=True)
+    return result

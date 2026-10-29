@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import storage_client
 from app.core.dependencies import CurrentUser, require_permission
 from app.core.gemini_client import GeminiError
-from app.db.session import get_db
+from app.db.session import get_db, writes_on_read
 from app.models.user import User
 from app.schemas.document import (
     DocumentCategoryCreate,
@@ -523,6 +523,8 @@ async def delete_document(
     "/{document_id}/download",
     dependencies=[Depends(require_permission("documents.download"))],
 )
+# يكتب أثناء القراءة (راجعي writes_on_read بـapp/db/session.py)
+@writes_on_read
 async def download_document(
     document_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> Response:

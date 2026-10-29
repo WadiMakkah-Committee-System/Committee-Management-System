@@ -9,7 +9,7 @@ import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { CreatableSelect } from '@/components/ui/CreatableSelect'
 import { useToast } from '@/components/ui/Toast'
-import { useRoles } from '@/hooks/useRoles'
+import { useRoleOptions } from '@/hooks/useRoles'
 import { useCreateJobTitle, useJobTitles } from '@/hooks/useJobTitles'
 import { generateTemporaryPassword, suggestUsernameFromEmail } from '@/lib/credentialSuggestions'
 import { roleLabel } from '@/lib/utils'
@@ -81,7 +81,7 @@ export function UserFormModal({
   // Chrome لصفحات اللجان/الاجتماعات/المهام/القرارات، يطلعان فيها رغم
   // عدم فتح هذا المودال إطلاقًا). enabled: open يمنع الجلب إلا لما
   // المودال يُفتح فعليًا.
-  const { data: roles } = useRoles({ enabled: open })
+  const { data: roles } = useRoleOptions({ enabled: open })
   const { data: jobTitles } = useJobTitles({ enabled: open })
   const createJobTitleMutation = useCreateJobTitle()
   // مراجعة لاما 2026-08-31 ("أدوار اللجان"): "رئيس اللجنة"/"عضو اللجنة" لا

@@ -97,8 +97,11 @@ async def create_meeting(
         target_type="meeting",
         target_id=meeting.meeting_id,
     )
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
     await db.commit()
-    return await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
+    return result
 
 
 async def get_meeting(db: AsyncSession, meeting_id: uuid.UUID, *, actor: User) -> Meeting:
@@ -254,8 +257,10 @@ async def update_meeting(
         target_type="meeting",
         target_id=meeting.meeting_id,
     )
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     meeting = await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
+    await db.commit()
     return meeting, changes
 
 

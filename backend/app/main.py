@@ -27,7 +27,7 @@ from app.api.v1.router import api_router
 from app.core import perf_probe
 from app.core.config import settings
 from app.core.scheduler import start_scheduler
-from app.db.session import get_db
+from app.db.session import DB_DRIVER, get_db
 
 
 @asynccontextmanager
@@ -55,6 +55,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # تحسين أداء 2026-10-28: الواجهة والباك على نطاقين مختلفين، فالمتصفح
+    # يرسل طلب فحص مسبق (OPTIONS) قبل أي رابط جديد — رحلة شبكة كاملة إضافية
+    # للخادم. الافتراضي يحفظ نتيجة الفحص 10 دقائق فقط؛ ساعتان (أقصى ما
+    # يقبله Chrome) تلغي تكرار الفحص لنفس الروابط طوال الاستخدام اليومي.
+    max_age=7200,
 )
 
 # تحديث 2026-09-12: ضغط الاستجابات (gzip) لأي استجابة أكبر من 1KB —
@@ -112,8 +117,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 @app.get("/health", tags=["Health"])
 async def health_check() -> dict[str, str]:
-    """فحص بسيط للتأكد من أن الخدمة تعمل — لا يتحقق من الاتصال بقاعدة البيانات."""
-    return {"status": "ok", "environment": settings.ENVIRONMENT}
+    """فحص بسيط للتأكد من أن الخدمة تعمل — لا يتحقق من الاتصال بقاعدة البيانات.
+
+    db_driver (2026-10-28): مشغّل قاعدة البيانات الفعلي (psycopg أو asyncpg)
+    — للتأكد بعد التشغيل المحلي أو النشر أي مسار يعمل (راجعي app/db/session.py)."""
+    return {"status": "ok", "environment": settings.ENVIRONMENT, "db_driver": DB_DRIVER}
 
 
 # ============================================================

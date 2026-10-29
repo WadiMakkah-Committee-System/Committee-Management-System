@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import perf_probe
 from app.core.background import run_detached
 from app.core.dependencies import CurrentUser
-from app.db.session import get_db
+from app.db.session import get_db, writes_on_read
 from app.schemas.committee import CommitteeMemberUserOut
 from app.schemas.meeting_minutes import (
     MeetingMinutesDetailOut,
@@ -93,6 +93,8 @@ def _minutes_detail_committee_out(committee) -> MinutesDetailCommitteeOut:
 
 
 @router.get("/{meeting_id}/minutes/detail", response_model=MeetingMinutesDetailOut)
+# يكتب أثناء القراءة (راجعي writes_on_read بـapp/db/session.py)
+@writes_on_read
 async def get_meeting_minutes_detail(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> MeetingMinutesDetailOut:
@@ -168,6 +170,8 @@ async def list_minutes_templates(
 
 
 @router.get("/{meeting_id}/minutes", response_model=MeetingMinutesOut)
+# يكتب أثناء القراءة (راجعي writes_on_read بـapp/db/session.py)
+@writes_on_read
 async def get_meeting_minutes(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> MeetingMinutesOut:

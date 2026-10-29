@@ -13,7 +13,7 @@ from app.core.background import run_detached
 from app.core.committee_period import CommitteePeriodError
 from app.core.dependencies import CurrentUser
 from app.core.socketio_server import sio
-from app.db.session import get_db
+from app.db.session import get_db, writes_on_read
 from app.schemas.decision import (
     DecisionCreate,
     DecisionOpenVoting,
@@ -97,6 +97,8 @@ async def create_decision(
 
 
 @router.get("", response_model=list[DecisionOut])
+# يكتب أثناء القراءة (راجعي writes_on_read بـapp/db/session.py)
+@writes_on_read
 async def list_decisions(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -110,6 +112,8 @@ async def list_decisions(
 
 
 @router.get("/{decision_id}", response_model=DecisionOut)
+# يكتب أثناء القراءة (راجعي writes_on_read بـapp/db/session.py)
+@writes_on_read
 async def get_decision(
     decision_id: uuid.UUID,
     current_user: CurrentUser,

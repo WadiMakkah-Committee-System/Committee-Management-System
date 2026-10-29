@@ -41,8 +41,10 @@ async def add_agenda_item(
         meeting_id=meeting_id, title=title, description=description, sort_order=sort_order
     )
     db.add(item)
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(item)
+    await db.commit()
     return item
 
 
@@ -82,8 +84,10 @@ async def update_agenda_item(
         item.description = description
     if sort_order is not None:
         item.sort_order = sort_order
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(item)
+    await db.commit()
     return item
 
 

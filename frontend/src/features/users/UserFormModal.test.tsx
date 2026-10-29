@@ -6,7 +6,7 @@ import { UserFormModal } from './UserFormModal'
 import type { User } from '@/types'
 
 // الهوكات تجلب من الـAPI عبر React Query — نستبدلها ببيانات ثابتة
-vi.mock('@/hooks/useRoles', () => ({ useRoles: () => ({ data: [] }) }))
+vi.mock('@/hooks/useRoles', () => ({ useRoles: () => ({ data: [] }), useRoleOptions: () => ({ data: [] }) }))
 vi.mock('@/hooks/useJobTitles', () => ({
   useJobTitles: () => ({ data: [] }),
   useCreateJobTitle: () => ({ mutateAsync: vi.fn() }),

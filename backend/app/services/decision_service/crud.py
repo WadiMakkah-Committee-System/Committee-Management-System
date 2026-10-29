@@ -96,10 +96,13 @@ async def create_decision(
         target_type="decision",
         target_id=decision.decision_id,
     )
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    # الإخفاء (_redact_votes_if_unauthorized) يبقى بعد commit عمدًا — لا يجوز
+    # أن يمر أي تعديل عرض فقط على كائنات الجلسة قبل commit.
+    await db.flush()
+    loaded = await load_decision(db, decision.decision_id, reload=True)
     await db.commit()
-    return await _redact_votes_if_unauthorized(
-        access, committee, await load_decision(db, decision.decision_id, reload=True)
-    )
+    return await _redact_votes_if_unauthorized(access, committee, loaded)
 
 
 async def get_decision(

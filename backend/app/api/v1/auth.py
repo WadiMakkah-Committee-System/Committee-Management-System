@@ -32,8 +32,13 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     try:
-        user, access_token, refresh_token = await auth_service.authenticate(
-            db, username=payload.username, password=payload.password
+        # الملف الشخصي يُبنى داخل معاملة الدخول نفسها قبل commit (تحسين أداء
+        # 2026-10-28 — راجعي auth_service.authenticate).
+        user, access_token, refresh_token, profile = await auth_service.authenticate(
+            db,
+            username=payload.username,
+            password=payload.password,
+            before_commit=lambda u: build_my_profile(db, u),
         )
     except AuthError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
@@ -42,7 +47,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> To
         access_token=access_token,
         refresh_token=refresh_token,
         must_change_password=user.must_change_password,
-        user=await build_my_profile(db, user),
+        user=profile,
     )
 
 

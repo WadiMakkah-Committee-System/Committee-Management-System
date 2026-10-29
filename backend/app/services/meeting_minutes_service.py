@@ -492,8 +492,11 @@ async def select_template(
             for member in _all_committee_members(committee)
         ]
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
+    return result
 
 
 # ============================== عرض / تعديل المحتوى ==============================
@@ -510,8 +513,11 @@ async def get_or_create_minutes(db: AsyncSession, *, meeting_id: uuid.UUID, acto
     _require_meeting_finished(meeting)
     minutes = MeetingMinutes(meeting_id=meeting_id)
     db.add(minutes)
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
+    return result
 
 
 async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: User) -> dict:
@@ -589,8 +595,10 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
         _require_meeting_finished(meeting)
         minutes = MeetingMinutes(meeting_id=meeting_id)
         db.add(minutes)
-        await db.commit()
+        # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+        await db.flush()
         minutes = await _load_minutes_or_404(db, meeting_id)
+        await db.commit()
 
     templates = (
         list_templates()
@@ -748,8 +756,11 @@ async def update_sections(
         raise MinutesInvalidStateError("لا يمكن تعديل المحضر في مرحلته الحالية")
 
     minutes.sections = sections
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
+    return result
 
 
 # ============================== المراجعة ==============================
@@ -786,8 +797,11 @@ async def submit_review(
     reviewer_row.comment = comment
     reviewer_row.reviewed_at = datetime.now(UTC)
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
+    return result
 
 
 # ============================== الاعتماد ==============================
@@ -813,8 +827,11 @@ async def approve_minutes(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
     minutes.stage = MeetingMinutesStage.signature
     minutes.approved_at = datetime.now(UTC)
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
+    return result
 
 
 async def return_for_edit(
@@ -838,8 +855,11 @@ async def return_for_edit(
         r.comment = comment if r.comment is None else r.comment
         r.reviewed_at = None
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
+    return result
 
 
 # ============================== التوقيع الإلكتروني ==============================
@@ -863,8 +883,11 @@ async def send_for_signature(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
         ]
     minutes.sent_for_signature_at = datetime.now(UTC)
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
+    return result
 
 
 async def sign_minutes(
@@ -888,5 +911,8 @@ async def sign_minutes(
         minutes.stage = MeetingMinutesStage.completed
         minutes.completed_at = datetime.now(UTC)
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
-    return await _load_minutes_or_404(db, meeting_id)
+    return result
