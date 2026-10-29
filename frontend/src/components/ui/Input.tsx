@@ -33,7 +33,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             aria-invalid={!!error}
             className={cn(
               'h-10 w-full rounded-sm border bg-bg-surface px-3 text-sm text-text-primary placeholder:text-text-muted',
-              'transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-brand-accent/40',
+              'transition-[border-color,box-shadow,background-color] duration-200 hover:border-text-muted/40 focus:outline-none focus:ring-4 focus:ring-brand-accent/15',
               error
                 ? 'border-danger focus:border-danger'
                 : 'border-border-default focus:border-brand-primary',

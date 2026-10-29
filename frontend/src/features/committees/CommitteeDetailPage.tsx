@@ -141,7 +141,7 @@ export function CommitteeDetailPage() {
           </button>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-bold text-text-primary">{committee.name}</h1>
+              <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">{committee.name}</h1>
               <CommitteeLifecycleBadge state={committee.lifecycle_state} />
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">

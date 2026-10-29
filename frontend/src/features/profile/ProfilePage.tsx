@@ -30,7 +30,7 @@ export function ProfilePage() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-bold text-text-primary">الملف الشخصي</h1>
+        <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">الملف الشخصي</h1>
         <p className="mt-1 text-sm text-text-muted">بياناتك الشخصية وإدارتك في النظام</p>
       </div>
 

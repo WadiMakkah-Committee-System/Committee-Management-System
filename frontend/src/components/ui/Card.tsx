@@ -34,9 +34,9 @@ export function Card({ className, interactive, onClick, onKeyDown, ...props }: C
       onClick={onClick}
       onKeyDown={interactive ? handleKeyDown : onKeyDown}
       className={cn(
-        'rounded-md border border-border-default bg-bg-surface p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
+        'rounded-md border border-border-default bg-bg-surface p-4 shadow-xs',
         interactive &&
-          'cursor-pointer transition-shadow duration-150 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-app',
+          'cursor-pointer transition-[transform,box-shadow,border-color] duration-300 ease-out-expo hover:-translate-y-0.5 hover:border-brand-primary/25 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-app',
         className,
       )}
       {...props}

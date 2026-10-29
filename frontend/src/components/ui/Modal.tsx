@@ -42,23 +42,23 @@ export function Modal({ open, onClose, title, description, children, footer, siz
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+            transition={{ duration: 0.25 }}
+            className="absolute inset-0 bg-[#0a1430]/45 backdrop-blur-[3px]"
             onClick={onClose}
           />
           <motion.div
             role="dialog"
             aria-modal="true"
             aria-labelledby="modal-title"
-            initial={{ opacity: 0, scale: 0.96, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 8 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
+            initial={{ opacity: 0, scale: 0.97, y: 18 }}
+            animate={{ opacity: 1, scale: 1, y: 0, transition: { type: 'spring', stiffness: 380, damping: 32, mass: 0.8 } }}
+            exit={{ opacity: 0, scale: 0.98, y: 10, transition: { duration: 0.16, ease: 'easeIn' } }}
             className={cn(
-              'relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-md border border-border-default bg-bg-elevated shadow-2xl',
+              'relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg border border-border-default bg-bg-surface shadow-2xl',
               SIZE_CLASSES[size],
             )}
           >
+            <div aria-hidden className="brand-stripe h-[3px] w-full shrink-0 opacity-90" />
             <div className="flex items-start justify-between gap-4 border-b border-border-default px-6 py-4">
               <div>
                 <h2 id="modal-title" className="text-lg font-semibold text-text-primary">
@@ -68,7 +68,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
               </div>
               <button
                 onClick={onClose}
-                className="shrink-0 rounded-sm p-1.5 text-text-muted transition-colors hover:bg-bg-surface hover:text-text-primary"
+                className="shrink-0 rounded-sm p-1.5 text-text-muted transition-[color,background-color,transform] duration-200 hover:rotate-90 hover:bg-bg-elevated hover:text-text-primary"
                 aria-label="إغلاق"
               >
                 <X size={18} />
@@ -76,7 +76,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
             </div>
             <div className="overflow-y-auto px-6 py-5">{children}</div>
             {footer && (
-              <div className="flex items-center justify-end gap-2 border-t border-border-default bg-bg-surface px-6 py-4">
+              <div className="flex items-center justify-end gap-2 border-t border-border-default bg-bg-elevated/60 px-6 py-4">
                 {footer}
               </div>
             )}

@@ -117,7 +117,7 @@ export function RoleDetailPage() {
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-text-primary">{roleLabel(role)}</h1>
+              <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">{roleLabel(role)}</h1>
               {role.is_system && (
                 <span className="rounded-xs bg-neutral-bg px-1.5 py-0.5 text-[10px] font-semibold text-neutral">
                   نظامي

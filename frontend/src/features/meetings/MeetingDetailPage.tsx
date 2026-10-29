@@ -534,7 +534,7 @@ export function MeetingDetailPage() {
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-text-primary">{meeting.title}</h1>
+              <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">{meeting.title}</h1>
               <MeetingStatusBadge status={meeting.status} />
             </div>
             {committee && <p className="mt-1 text-sm text-text-muted">لجنة: {committee.name}</p>}
