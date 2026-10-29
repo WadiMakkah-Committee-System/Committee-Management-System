@@ -121,7 +121,7 @@ export function CommitteeRequestsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-xl font-bold text-text-primary">طلبات تشكيل اللجان</h1>
+          <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">طلبات تشكيل اللجان</h1>
           <p className="mt-1 text-sm text-text-muted">
             {canCreate ? 'إنشاء ومتابعة طلبات تشكيل اللجان الخاصة بك' : 'متابعة طلبات تشكيل اللجان المُرسَلة'}
           </p>

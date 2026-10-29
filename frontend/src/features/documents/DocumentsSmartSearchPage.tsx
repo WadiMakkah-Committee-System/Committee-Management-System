@@ -20,7 +20,7 @@ export function DocumentsSmartSearchPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-bold text-text-primary">البحث الذكي</h1>
+        <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">البحث الذكي</h1>
         <p className="mt-1 text-sm text-text-muted">اسأل عن أي وثيقة تملك صلاحية الاطلاع عليها، وسيبحث النظام في كل الوثائق المسموح لك بها</p>
       </div>
 

@@ -239,7 +239,7 @@ export function DecisionDetailPage() {
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-text-primary">{decision.title}</h1>
+              <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">{decision.title}</h1>
               <DecisionStatusBadge status={decision.status} />
             </div>
             {committee && <p className="mt-1 text-sm text-text-muted">لجنة: {committee.name}</p>}

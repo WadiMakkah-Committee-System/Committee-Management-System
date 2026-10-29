@@ -36,8 +36,8 @@ export function Tabs({ items, value, onChange }: TabsProps) {
             {isActive && (
               <motion.div
                 layoutId="tabs-active-indicator"
-                className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-brand-primary"
-                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="absolute inset-x-2 -bottom-px h-[3px] rounded-full bg-[linear-gradient(90deg,var(--wm-cyan),var(--brand-primary))]"
+                transition={{ type: 'spring', stiffness: 500, damping: 38 }}
               />
             )}
           </button>

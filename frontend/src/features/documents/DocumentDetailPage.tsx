@@ -132,7 +132,7 @@ export function DocumentDetailPage() {
             <ArrowRight size={18} />
           </button>
           <div>
-            <h1 className="text-xl font-bold text-text-primary">{doc.title}</h1>
+            <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">{doc.title}</h1>
             <p className="mt-1 text-sm text-text-muted">{doc.file_name}</p>
           </div>
         </div>

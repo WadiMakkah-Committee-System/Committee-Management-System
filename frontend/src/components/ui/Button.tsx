@@ -15,11 +15,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 /** أزرار موحّدة حسب §10 من دليل الهوية: Primary / Secondary / Danger. */
 const VARIANT_CLASSES: Record<Variant, string> = {
   primary:
-    'bg-brand-primary text-white hover:bg-brand-primary-hover active:scale-[0.98] shadow-sm disabled:hover:bg-brand-primary',
+    'btn-shine bg-brand-primary bg-[linear-gradient(135deg,var(--brand-primary),var(--brand-primary-hover))] text-white shadow-[0_1px_0_rgba(255,255,255,0.18)_inset,0_6px_16px_-6px_color-mix(in_srgb,var(--brand-primary)_70%,transparent)] hover:-translate-y-px hover:shadow-[0_1px_0_rgba(255,255,255,0.18)_inset,0_10px_22px_-8px_color-mix(in_srgb,var(--brand-primary)_80%,transparent)] active:translate-y-0 active:scale-[0.98] disabled:hover:translate-y-0',
   secondary:
-    'bg-bg-surface text-brand-primary border border-brand-primary hover:bg-brand-primary/5 active:scale-[0.98]',
+    'bg-bg-surface text-brand-primary border border-brand-primary/40 hover:border-brand-primary hover:bg-brand-primary/[0.06] active:scale-[0.98]',
   danger:
-    'bg-danger text-white hover:brightness-95 active:scale-[0.98] shadow-sm',
+    'bg-danger text-white shadow-[0_6px_16px_-8px_var(--status-error-main)] hover:-translate-y-px hover:brightness-105 active:translate-y-0 active:scale-[0.98] disabled:hover:translate-y-0',
   ghost:
     'bg-transparent text-text-secondary hover:bg-bg-elevated hover:text-text-primary active:scale-[0.98]',
 }
@@ -37,7 +37,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled || loading}
         className={cn(
-          'inline-flex items-center justify-center rounded-sm font-semibold transition-all duration-150',
+          'inline-flex select-none items-center justify-center rounded-sm font-semibold transition-[transform,box-shadow,background-color,border-color,color,filter] duration-200 ease-out-quart',
           'disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-app',
           VARIANT_CLASSES[variant],

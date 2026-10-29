@@ -24,6 +24,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
+import { BrandWave } from '@/components/brand/BrandWave'
 
 interface NavItem {
   label: string
@@ -181,49 +182,82 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
 
   return (
     <>
-      {mobileOpen && (
-        <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={onCloseMobile} />
-      )}
+      <AnimatePresence>
+        {mobileOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="fixed inset-0 z-30 bg-[#0a1430]/50 backdrop-blur-[2px] lg:hidden"
+            onClick={onCloseMobile}
+          />
+        )}
+      </AnimatePresence>
       <aside
         className={cn(
-          'fixed inset-y-0 right-0 z-40 flex w-64 shrink-0 flex-col bg-sidebar-bg transition-transform duration-200 lg:sticky lg:top-0 lg:h-svh lg:translate-x-0',
+          'fixed inset-y-0 right-0 z-40 flex w-[17rem] shrink-0 flex-col overflow-hidden transition-transform duration-500 ease-out-expo lg:sticky lg:top-0 lg:h-svh lg:translate-x-0',
+          'bg-[linear-gradient(180deg,var(--sidebar-bg)_0%,var(--sidebar-bg-2)_100%)] shadow-2xl lg:shadow-none',
           mobileOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0',
         )}
       >
-        <div className="flex h-20 items-center gap-2.5 px-5">
-          <img src={wadiMakkahMark} alt="شعار وادي مكة" className="h-9 w-auto shrink-0" />
+        {/* شريط الطيف + توهّج خافت بلون الهوية أعلى القائمة */}
+        <div aria-hidden className="brand-stripe h-[3px] w-full shrink-0" />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -top-24 -right-20 h-64 w-64 rounded-full bg-[var(--wm-cyan)] opacity-[0.10] blur-3xl"
+        />
+
+        <div className="relative flex h-20 items-center gap-3 px-5">
+          <div className="flex h-11 items-center justify-center rounded-sm bg-white/95 px-2 shadow-sm ring-1 ring-white/20">
+            <img src={wadiMakkahMark} alt="شعار وادي مكة" className="h-8 w-auto shrink-0" />
+          </div>
           <div className="leading-tight">
-            <p className="text-sm font-bold text-white">وادي مكة</p>
-            <p className="text-[11px] text-white/50">إدارة اللجان والاجتماعات</p>
+            <p className="text-sm font-bold text-white">وادي مكة للتقنية</p>
+            <p className="mt-0.5 text-[11px] text-white/55">إدارة اللجان والاجتماعات</p>
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-2">
-          <ul className="flex flex-col gap-1">
-            {items.map((item) => {
+        <div aria-hidden className="mx-5 mb-2 h-px bg-gradient-to-l from-transparent via-white/15 to-transparent" />
+
+        <nav className="relative flex-1 overflow-y-auto px-3 py-2 [scrollbar-width:thin]">
+          <ul className="flex flex-col gap-0.5">
+            {items.map((item, index) => {
               if (item.children) {
                 const isOpen = openLabel === item.label
                 const hasActiveChild = item.children.some(
                   (child) => child.path && isChildPathActive(location.pathname, child.path),
                 )
                 return (
-                  <li key={item.label}>
+                  <motion.li
+                    key={item.label}
+                    initial={{ opacity: 0, x: 12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.45, delay: 0.04 * index, ease: [0.16, 1, 0.3, 1] }}
+                  >
                     <button
                       type="button"
                       aria-expanded={isOpen}
                       onClick={() => setOpenLabel((k) => (k === item.label ? null : item.label))}
                       className={cn(
-                        'flex w-full items-center justify-between gap-3 rounded-sm px-3 py-2.5 text-sm font-medium transition-colors',
+                        'group flex w-full items-center justify-between gap-3 rounded-sm px-3 py-2.5 text-sm font-medium transition-colors duration-200',
                         hasActiveChild ? 'text-white' : 'text-white/70 hover:bg-sidebar-hover-bg hover:text-white',
                       )}
                     >
                       <span className="flex items-center gap-3">
-                        <item.icon size={18} />
+                        <item.icon
+                          size={18}
+                          className={cn(
+                            'transition-transform duration-300 group-hover:scale-110',
+                            hasActiveChild && 'text-[var(--wm-cyan)]',
+                          )}
+                        />
                         {item.label}
                       </span>
                       <motion.span
                         animate={{ rotate: isOpen ? 180 : 0 }}
-                        transition={{ duration: 0.2, ease: 'easeOut' }}
+                        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                        className="text-white/50"
                       >
                         <ChevronDown size={16} />
                       </motion.span>
@@ -235,8 +269,8 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
                           initial={{ height: 0, opacity: 0 }}
                           animate={{ height: 'auto', opacity: 1 }}
                           exit={{ height: 0, opacity: 0 }}
-                          transition={{ duration: 0.2, ease: 'easeOut' }}
-                          className="flex flex-col gap-1 overflow-hidden"
+                          transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                          className="relative mr-[1.35rem] flex flex-col gap-0.5 overflow-hidden border-r border-white/10 pr-2"
                         >
                           {item.children.map((child) => (
                             <li key={child.path}>
@@ -245,27 +279,35 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
                                 onClick={onCloseMobile}
                                 className={({ isActive }) =>
                                   cn(
-                                    'mt-1 flex items-center gap-3 rounded-sm py-2 pr-9 pl-3 text-sm font-medium transition-colors',
-                                    isActive
-                                      ? 'bg-sidebar-active-bg text-white'
-                                      : 'text-white/60 hover:bg-sidebar-hover-bg hover:text-white',
+                                    'relative mt-0.5 flex items-center gap-3 rounded-sm py-2 pr-3 pl-3 text-[13px] font-medium transition-colors duration-200',
+                                    isActive ? 'text-white' : 'text-white/60 hover:bg-sidebar-hover-bg hover:text-white',
                                   )
                                 }
                               >
-                                <child.icon size={16} />
-                                {child.label}
+                                {({ isActive }) => (
+                                  <>
+                                    {isActive && <ActivePill />}
+                                    <child.icon size={16} className="relative" />
+                                    <span className="relative">{child.label}</span>
+                                  </>
+                                )}
                               </NavLink>
                             </li>
                           ))}
                         </motion.ul>
                       )}
                     </AnimatePresence>
-                  </li>
+                  </motion.li>
                 )
               }
 
               return (
-                <li key={item.label}>
+                <motion.li
+                  key={item.label}
+                  initial={{ opacity: 0, x: 12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.45, delay: 0.04 * index, ease: [0.16, 1, 0.3, 1] }}
+                >
                   {item.comingSoon || !item.path ? (
                     <div className="flex cursor-not-allowed items-center justify-between gap-3 rounded-sm px-3 py-2.5 text-sm text-white/35">
                       <span className="flex items-center gap-3">
@@ -280,23 +322,55 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
                       onClick={onCloseMobile}
                       className={({ isActive }) =>
                         cn(
-                          'flex items-center gap-3 rounded-sm px-3 py-2.5 text-sm font-medium transition-colors',
-                          isActive
-                            ? 'bg-sidebar-active-bg text-white'
-                            : 'text-white/70 hover:bg-sidebar-hover-bg hover:text-white',
+                          'group relative flex items-center gap-3 rounded-sm px-3 py-2.5 text-sm font-medium transition-colors duration-200',
+                          isActive ? 'text-white' : 'text-white/70 hover:bg-sidebar-hover-bg hover:text-white',
                         )
                       }
                     >
-                      <item.icon size={18} />
-                      {item.label}
+                      {({ isActive }) => (
+                        <>
+                          {isActive && <ActivePill />}
+                          <item.icon
+                            size={18}
+                            className={cn(
+                              'relative transition-transform duration-300 group-hover:scale-110',
+                              isActive && 'text-[var(--wm-cyan)]',
+                            )}
+                          />
+                          <span className="relative">{item.label}</span>
+                        </>
+                      )}
                     </NavLink>
                   )}
-                </li>
+                </motion.li>
               )
             })}
           </ul>
         </nav>
+
+        {/* موجة الهوية أسفل القائمة — زخرفة خافتة ثابتة الموقع */}
+        <div aria-hidden className="pointer-events-none relative shrink-0 overflow-hidden opacity-[0.55]">
+          <BrandWave height={90} speed={0.8} className="translate-y-3" />
+          <div className="absolute inset-0 bg-gradient-to-b from-[var(--sidebar-bg-2)] via-transparent to-transparent" />
+        </div>
       </aside>
     </>
+  )
+}
+
+/**
+ * مؤشر العنصر النشط — "حبة" تنزلق بين العناصر بحركة نابضية (layoutId)،
+ * مع خط جانبي بلون السماوي من الهوية. مستوحى من انتقالات Flip بالمواقع
+ * المرجعية، لكن عبر framer-motion الموجودة أصلًا.
+ */
+function ActivePill() {
+  return (
+    <motion.span
+      layoutId="sidebar-active-pill"
+      transition={{ type: 'spring', stiffness: 420, damping: 36, mass: 0.9 }}
+      className="absolute inset-0 rounded-sm bg-[linear-gradient(270deg,rgba(36,186,233,0.22),rgba(16,94,167,0.12))] ring-1 ring-inset ring-white/10"
+    >
+      <span className="absolute inset-y-1.5 right-0 w-[3px] rounded-full bg-[var(--wm-cyan)] shadow-[0_0_12px_var(--wm-cyan)]" />
+    </motion.span>
   )
 }

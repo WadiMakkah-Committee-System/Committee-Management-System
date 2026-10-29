@@ -1,100 +1,132 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   نظام إدارة اللجان والاجتماعات — Design Tokens
-   المصدر: Wadi_Makkah_UI_Design_System_AR_v2.md
-   قاعدة: لا Hex Colors مباشرة داخل الأكواد — كل شيء عبر Tokens (§28.14)
+   نظام إدارة اللجان والاجتماعات — Design Tokens (v3 — هوية وادي مكة)
+   المصدر: لوحة ألوان هوية شركة وادي مكة للتقنية (14 لونًا من موجة الشعار)
+   قاعدة: لا Hex Colors مباشرة داخل الأكواد — كل شيء عبر Tokens.
    ========================================================================== */
 
 :root {
-  /* --- Semantic tokens: Light Mode (§28.14 + §7) --- */
-  --bg-app: #f8fafc;
+  /* --- Brand palette (ثابتة — مطابقة لدليل الهوية) --- */
+  --wm-blue: #105ea7;
+  --wm-navy: #2b3f90;
+  --wm-indigo: #53519c;
+  --wm-purple: #9a559c;
+  --wm-teal: #018b85;
+  --wm-cyan: #24bae9;
+  --wm-green: #1ba64b;
+  --wm-lime: #99c23e;
+  --wm-forest: #345842;
+  --wm-gold: #e9a625;
+  --wm-yellow: #facc12;
+  --wm-brown: #9d5036;
+  --wm-charcoal: #3c3f3c;
+  --wm-gray: #808184;
+
+  /* شريط "الطيف" المستوحى من موجة الشعار */
+  --brand-spectrum: linear-gradient(
+    90deg,
+    var(--wm-blue) 0%,
+    var(--wm-cyan) 18%,
+    var(--wm-teal) 34%,
+    var(--wm-lime) 50%,
+    var(--wm-gold) 66%,
+    var(--wm-purple) 82%,
+    var(--wm-navy) 100%
+  );
+  --brand-gradient: linear-gradient(135deg, var(--wm-blue) 0%, var(--wm-navy) 100%);
+
+  /* --- Semantic tokens: Light Mode --- */
+  --bg-app: #f4f6fb;
   --bg-surface: #ffffff;
-  --bg-elevated: #ffffff;
-  --text-primary: #1f2937;
-  --text-secondary: #6b7280;
-  --text-muted: #9ca3af;
-  --border-default: #e5e7eb;
+  --bg-elevated: #f2f5fa;
+  --text-primary: #18213a;
+  --text-secondary: #4a5064;
+  --text-muted: #7a7f8c;
+  --border-default: #e3e8f1;
   --brand-primary: #105ea7;
-  --brand-primary-hover: #0b4d8a;
+  --brand-primary-hover: #2b3f90;
   --brand-accent: #24bae9;
 
-  /* --- Sidebar (§14) --- */
-  --sidebar-bg: #1f2937;
-  --sidebar-active-bg: #105ea7;
+  /* --- Sidebar --- */
+  --sidebar-bg: #0d1836;
+  --sidebar-bg-2: #15285c;
+  --sidebar-active-bg: rgba(255, 255, 255, 0.1);
   --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
 
-  /* --- Status colors (§8) --- */
+  /* --- Status colors --- */
   --status-success-main: #1ba64b;
-  --status-success-bg: #eaf8ef;
+  --status-success-bg: #e9f7ee;
   --status-success-border: #1ba64b;
-  --status-warning-main: #e9a625;
-  --status-warning-bg: #fff7e6;
+  --status-warning-main: #c98a0c;
+  --status-warning-bg: #fdf4e1;
   --status-warning-border: #e9a625;
-  --status-error-main: #dc3545;
-  --status-error-bg: #fdecec;
-  --status-error-border: #dc3545;
+  --status-error-main: #d43f3a;
+  --status-error-bg: #fcecec;
+  --status-error-border: #d43f3a;
   --status-info-main: #105ea7;
-  --status-info-bg: #eaf3fa;
+  --status-info-bg: #e8f1fa;
   --status-info-border: #105ea7;
-  --status-neutral-main: #6b7280;
-  --status-neutral-bg: #f3f4f6;
-  --status-neutral-border: #6b7280;
+  --status-neutral-main: #5f6472;
+  --status-neutral-bg: #eff2f7;
+  --status-neutral-border: #808184;
 
-  /* --- Table (§13) --- */
-  --table-header-bg: #f8fafc;
-  --table-hover-bg: #f8fafc;
+  /* --- Table --- */
+  --table-header-bg: #f6f8fc;
+  --table-hover-bg: #f3f7fd;
+
+  /* --- Elevation (ظلال مائلة للكحلي بدل الأسود الصافي) --- */
+  --shadow-color: 222 60% 18%;
 
   color-scheme: light;
 }
 
 [data-theme="dark"] {
-  /* --- Semantic tokens: Dark Mode (§28.1, §28.2, §28.14) --- */
-  --bg-app: #0f172a;
-  --bg-surface: #1e293b;
-  --bg-elevated: #243244;
-  --text-primary: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
-  --border-default: #2a3441;
-  --brand-primary: #105ea7;
-  --brand-primary-hover: #24bae9;
+  --bg-app: #080f1f;
+  --bg-surface: #0f182c;
+  --bg-elevated: #16213a;
+  --text-primary: #eef2f9;
+  --text-secondary: #b9c2d6;
+  --text-muted: #8a94ab;
+  --border-default: #1f2c47;
+  --brand-primary: #2a7fd4;
+  --brand-primary-hover: #3f93e6;
   --brand-accent: #24bae9;
 
-  /* --- Sidebar (§28.8) --- */
-  --sidebar-bg: #0f172a;
-  --sidebar-active-bg: #105ea7;
-  --sidebar-hover-bg: #1e293b;
+  --sidebar-bg: #060c1b;
+  --sidebar-bg-2: #0d1a3d;
+  --sidebar-active-bg: rgba(255, 255, 255, 0.09);
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.05);
 
-  /* --- Status colors (§28.4) --- */
-  --status-success-main: #22c55e;
-  --status-success-bg: #12351f;
+  --status-success-main: #3cc46a;
+  --status-success-bg: #0f2c1c;
   --status-success-border: #1f6b3a;
-  --status-warning-main: #facc15;
-  --status-warning-bg: #3a2f0b;
+  --status-warning-main: #facc12;
+  --status-warning-bg: #33280b;
   --status-warning-border: #6b5810;
-  --status-error-main: #ef4444;
-  --status-error-bg: #3a1518;
+  --status-error-main: #f0605b;
+  --status-error-bg: #361416;
   --status-error-border: #6b252a;
   --status-info-main: #24bae9;
-  --status-info-bg: #102e3a;
+  --status-info-bg: #0d2a38;
   --status-info-border: #1b5267;
-  --status-neutral-main: #cbd5e1;
-  --status-neutral-bg: #1e293b;
+  --status-neutral-main: #c3cad8;
+  --status-neutral-bg: #16213a;
   --status-neutral-border: #334155;
 
-  /* --- Table (§28.9) --- */
-  --table-header-bg: #243244;
-  --table-hover-bg: #243244;
+  --table-header-bg: #131d33;
+  --table-hover-bg: #16213a;
+
+  --shadow-color: 225 70% 3%;
 
   color-scheme: dark;
 }
 
 @theme {
-  /* Typography (§3, §4, §5) */
+  /* Typography */
   --font-sans: "IBM Plex Sans Arabic", "Noto Sans Arabic", "Inter", Arial, sans-serif;
 
-  /* Semantic → utility bridge (bg-app, text-primary, border-default, ...) */
+  /* Semantic → utility bridge */
   --color-bg-app: var(--bg-app);
   --color-bg-surface: var(--bg-surface);
   --color-bg-elevated: var(--bg-elevated);
@@ -130,21 +162,44 @@
   --color-table-header: var(--table-header-bg);
   --color-table-hover: var(--table-hover-bg);
 
-  /* Brand identity accents (§6) — ثابتة في الوضعين */
+  /* Brand identity accents — ثابتة في الوضعين */
+  --color-brand-blue: #105ea7;
   --color-brand-dark-blue: #2b3f90;
+  --color-brand-indigo: #53519c;
   --color-brand-teal: #018b85;
+  --color-brand-cyan: #24bae9;
+  --color-brand-green: #1ba64b;
   --color-brand-lime: #99c23e;
+  --color-brand-forest: #345842;
   --color-brand-orange: #e9a625;
   --color-brand-yellow: #facc12;
   --color-brand-brown: #9d5036;
   --color-brand-purple: #9a559c;
   --color-brand-purple-dark: #53519c;
+  --color-brand-charcoal: #3c3f3c;
+  --color-brand-gray: #808184;
 
-  /* Radius scale (§17) */
-  --radius-xs: 4px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  /* Radius scale */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+
+  /* Elevation — تُعيد تعريف shadow-sm/md/lg/xl/2xl بظلال ناعمة بلون الهوية */
+  --shadow-xs: 0 1px 2px hsl(var(--shadow-color) / 0.05);
+  --shadow-sm: 0 1px 2px hsl(var(--shadow-color) / 0.06), 0 1px 3px hsl(var(--shadow-color) / 0.04);
+  --shadow-md: 0 2px 4px hsl(var(--shadow-color) / 0.04), 0 8px 20px -6px hsl(var(--shadow-color) / 0.12);
+  --shadow-lg: 0 4px 8px hsl(var(--shadow-color) / 0.04), 0 16px 36px -10px hsl(var(--shadow-color) / 0.18);
+  --shadow-xl: 0 8px 16px hsl(var(--shadow-color) / 0.06), 0 28px 56px -16px hsl(var(--shadow-color) / 0.24);
+  --shadow-2xl: 0 12px 24px hsl(var(--shadow-color) / 0.08), 0 40px 80px -20px hsl(var(--shadow-color) / 0.32);
+
+  /* Motion — منحنيات حركة سينمائية هادئة */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --animate-pulse-shimmer: shimmer 1.6s linear infinite;
+  --animate-fade-up: fade-up 0.6s var(--ease-out-expo) both;
 }
 
 /* ==========================================================================
@@ -157,6 +212,7 @@
 
 html {
   color-scheme: light dark;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -168,7 +224,7 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 #root {
@@ -176,21 +232,143 @@ body {
 }
 
 ::selection {
-  background-color: var(--brand-accent);
-  color: #ffffff;
+  background-color: color-mix(in srgb, var(--wm-cyan) 35%, transparent);
+  color: var(--text-primary);
+}
+
+:focus-visible {
+  outline-color: var(--brand-accent);
+}
+
+/* عناوين الصفحات — وزن وتباعد أدق */
+h1 {
+  letter-spacing: -0.01em;
 }
 
 /* Scrollbar — خفيف واحترافي */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background-color: var(--border-default);
-  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+}
+
+/* ==========================================================================
+   Brand utilities
+   ========================================================================== */
+
+/* شريط الطيف الرفيع (مستوحى من موجة الشعار) */
+.brand-stripe {
+  background-image: var(--brand-spectrum);
+}
+
+/* نص بتدرّج الهوية */
+.text-brand-gradient {
+  background-image: linear-gradient(90deg, var(--wm-blue), var(--wm-teal) 55%, var(--wm-cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* خلفية شبكية ناعمة جدًا للمساحات الكبيرة */
+.bg-grid-soft {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--text-muted) 9%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--text-muted) 9%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* زر رئيسي: لمعة خفيفة تعبر الزر عند المرور */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.22) 50%, transparent 65%);
+  transform: translateX(110%);
+  transition: transform 0.7s var(--ease-out-expo);
+}
+.btn-shine:hover::after {
+  transform: translateX(-110%);
+}
+
+/* ==========================================================================
+   Keyframes
+   ========================================================================== */
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* انجراف موجات الهوية — حركة أفقية مستمرة وبطيئة جدًا (GPU transform فقط) */
+@keyframes wave-drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.wave-ribbon {
+  transform-box: fill-box;
+  animation: wave-drift var(--wave-duration, 30s) linear infinite;
+  will-change: transform;
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -10px, 0);
+  }
+}
+.animate-float-soft {
+  animation: float-soft 9s var(--ease-in-out-soft) infinite;
+}
+
+@keyframes loader-bar {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+.animate-loader-bar {
+  animation: loader-bar 1.3s var(--ease-in-out-soft) infinite;
 }
 
 /* ==========================================================================
@@ -227,4 +405,23 @@ body {
 
 .animate-live-dot-pulse {
   animation: live-dot-pulse 1.4s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   احترام تفضيل "تقليل الحركة" بنظام التشغيل — وصولية + راحة
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .wave-ribbon,
+  .animate-float-soft {
+    animation: none !important;
+  }
 }

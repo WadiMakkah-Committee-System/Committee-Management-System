@@ -20,6 +20,8 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { formatDate, formatDateTime } from '@/lib/utils'
+import { BrandWave } from '@/components/brand/BrandWave'
+import { EASE_OUT_EXPO, SplitWords } from '@/components/motion/primitives'
 import type {
   DashboardDecisionItem,
   DashboardMeetingItem,
@@ -68,39 +70,42 @@ export function DashboardPage() {
 }
 
 function HeroGreeting({ firstName }: { firstName: string }) {
+  const greeting = `${getGreeting()}${firstName ? `، ${firstName}` : ''}`
   return (
-    <div className="relative overflow-hidden rounded-md border border-border-default bg-bg-surface px-6 py-8 sm:px-8">
-      {/* شكلان عضويان زخرفيان خافتان — اللمسة الجريئة الوحيدة بالصفحة، لا تتكرر بأي قسم آخر. */}
-      <svg
+    <div className="relative overflow-hidden rounded-lg border border-white/10 bg-[linear-gradient(135deg,#0d1a3d_0%,#14306f_55%,#105ea7_100%)] px-6 pt-8 pb-20 text-white shadow-xl sm:px-10 sm:pt-10">
+      {/* شبكة خافتة + توهّجات بألوان الهوية + موجة الشعار المتحركة — اللمسة البصرية الأبرز بالصفحة */}
+      <div aria-hidden className="bg-grid-soft absolute inset-0 opacity-[0.14]" />
+      <div aria-hidden className="animate-float-soft absolute -top-20 left-10 h-56 w-56 rounded-full bg-[var(--wm-cyan)] opacity-20 blur-3xl" />
+      <div
         aria-hidden
-        className="pointer-events-none absolute -left-16 -top-20 h-64 w-64 text-brand-primary/[0.07]"
-        viewBox="0 0 200 200"
-      >
-        <path
-          fill="currentColor"
-          d="M45.3,-58.5C58.2,-49.6,67.4,-34.5,71.6,-17.9C75.8,-1.3,75,17.8,66.6,32.6C58.2,47.4,42.2,57.9,25.1,64.5C8,71,-10.2,73.6,-26.8,68.7C-43.4,63.8,-58.3,51.4,-66.8,35.5C-75.2,19.6,-77.1,0.2,-72.4,-16.9C-67.7,-34,-56.4,-48.8,-42.1,-57.6C-27.8,-66.4,-13.9,-69.2,1.6,-71.5C17.1,-73.9,34.3,-67.4,45.3,-58.5Z"
-          transform="translate(100 100)"
-        />
-      </svg>
-      <svg
-        aria-hidden
-        className="pointer-events-none absolute -bottom-24 -right-10 h-72 w-72 text-brand-teal/[0.06]"
-        viewBox="0 0 200 200"
-      >
-        <path
-          fill="currentColor"
-          d="M39.6,-51.2C52.5,-42.6,64.7,-31.4,69.8,-17.1C74.9,-2.8,72.9,14.6,64.9,28.6C56.9,42.6,42.9,53.2,27.4,60.1C11.9,67,-5.1,70.2,-21.1,66.5C-37.1,62.8,-52.1,52.2,-61.4,37.9C-70.7,23.6,-74.3,5.6,-70.6,-10.5C-66.9,-26.6,-55.9,-40.8,-42.5,-49.5C-29.1,-58.2,-14.6,-61.4,-0.1,-61.3C14.4,-61.1,26.7,-59.8,39.6,-51.2Z"
-          transform="translate(100 100)"
-        />
-      </svg>
+        className="animate-float-soft absolute -bottom-16 right-1/3 h-48 w-48 rounded-full bg-[var(--wm-gold)] opacity-[0.12] blur-3xl"
+        style={{ animationDelay: '-3s' }}
+      />
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0">
+        <BrandWave height={120} className="translate-y-6 opacity-80" />
+      </div>
 
-      <div className="relative flex flex-col gap-1">
-        <p className="text-sm font-medium text-text-muted">{formatTodayLabel()}</p>
-        <h1 className="text-2xl font-bold text-text-primary sm:text-3xl">
-          {getGreeting()}
-          {firstName ? `، ${firstName}` : ''}
+      <div className="relative flex flex-col gap-1.5">
+        <motion.p
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: EASE_OUT_EXPO }}
+          className="inline-flex w-fit items-center gap-2 rounded-full border border-white/15 bg-white/[0.07] px-3 py-1 text-xs font-medium text-white/80 backdrop-blur"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--wm-lime)]" />
+          {formatTodayLabel()}
+        </motion.p>
+        <h1 className="mt-2 text-2xl font-bold sm:text-[2rem] sm:leading-tight">
+          <SplitWords text={greeting} delay={0.1} />
         </h1>
-        <p className="mt-1 text-sm text-text-secondary">هذا ملخص ما يخصّك اليوم عبر النظام.</p>
+        <motion.p
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, delay: 0.35, ease: EASE_OUT_EXPO }}
+          className="mt-1 text-sm text-white/70 sm:text-[15px]"
+        >
+          هذا ملخص ما يخصّك اليوم عبر النظام.
+        </motion.p>
       </div>
     </div>
   )
@@ -178,9 +183,9 @@ function DashboardContent({
         {stats.map((stat, i) => (
           <motion.div
             key={stat.key}
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, delay: i * 0.05, ease: 'easeOut' }}
+            transition={{ duration: 0.6, delay: 0.15 + i * 0.07, ease: EASE_OUT_EXPO }}
           >
             <button onClick={() => onNavigate(stat.path)} className="block w-full text-right">
               <StatCard label={stat.label} value={stat.value} icon={stat.icon} tone={stat.tone} tintCard />

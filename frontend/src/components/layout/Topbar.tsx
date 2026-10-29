@@ -37,7 +37,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   if (!user) return null
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border-default bg-bg-surface/80 px-4 backdrop-blur-md sm:px-6">
+    <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border-default/80 bg-bg-surface/75 px-4 shadow-[0_1px_0_rgba(255,255,255,0.4)_inset] backdrop-blur-xl backdrop-saturate-150 sm:px-6">
       <button
         onClick={onOpenMobileNav}
         className="rounded-sm p-2 text-text-secondary hover:bg-bg-elevated lg:hidden"
@@ -54,7 +54,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setMenuOpen((o) => !o)}
-            className="flex items-center gap-2 rounded-sm py-1.5 pr-1 pl-2.5 transition-colors hover:bg-bg-elevated"
+            className="group flex items-center gap-2 rounded-sm py-1.5 pr-1 pl-2.5 transition-colors hover:bg-bg-elevated"
           >
             <Avatar firstName={user.first_name} lastName={user.last_name} size={32} />
             <span className="hidden text-right sm:block">
@@ -65,24 +65,25 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 {roleLabel(user.role)}
               </span>
             </span>
-            <ChevronDown size={14} className="text-text-muted" />
+            <ChevronDown size={14} className={`text-text-muted transition-transform duration-300 ${menuOpen ? 'rotate-180' : ''}`} />
           </button>
 
           <AnimatePresence>
             {menuOpen && (
               <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                initial={{ opacity: 0, scale: 0.96, y: -6 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                transition={{ duration: 0.12 }}
-                className="absolute left-0 top-full mt-2 w-52 overflow-hidden rounded-sm border border-border-default bg-bg-elevated py-1 shadow-lg"
+                exit={{ opacity: 0, scale: 0.97, y: -4 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                style={{ transformOrigin: 'top left' }}
+                className="absolute left-0 top-full mt-2 w-56 overflow-hidden rounded-md border border-border-default bg-bg-surface py-1 shadow-xl"
               >
                 <button
                   onClick={() => {
                     setMenuOpen(false)
                     navigate('/profile')
                   }}
-                  className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-right text-sm text-text-primary transition-colors hover:bg-bg-surface"
+                  className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-right text-sm text-text-primary transition-colors hover:bg-bg-elevated"
                 >
                   <UserCircle size={16} />
                   الملف الشخصي

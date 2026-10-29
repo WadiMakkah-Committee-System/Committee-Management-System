@@ -5,6 +5,7 @@ import { useAuthStore } from '@/store/authStore'
 import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute } from '@/routes/ProtectedRoute'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { IntroSplash, shouldShowIntro } from '@/components/brand/IntroSplash'
 import { usersKeys } from '@/hooks/useUsers'
 import * as usersApi from '@/api/users'
 
@@ -148,7 +149,28 @@ function AppBootstrap({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
+  // الشاشة الافتتاحية: مرة واحدة لكل جلسة، وفقط لزائر غير مسجّل الدخول
+  // (قبل صفحة تسجيل الدخول) — المستخدم المسجّل يدخل مباشرة بلا انتظار.
+  const hasToken = useAuthStore((s) => !!s.accessToken)
+  const [intro, setIntro] = useState<'show' | 'leaving' | 'done'>(() =>
+    !hasToken && shouldShowIntro() ? 'show' : 'done',
+  )
+
+  useEffect(() => {
+    // تحميل حزمة صفحة الدخول مسبقًا أثناء الافتتاحية حتى تظهر فورًا بعدها
+    if (intro === 'show') void import('@/features/auth/LoginPage')
+  }, [intro])
+
+  const splash =
+    intro !== 'done' ? (
+      <IntroSplash onLeave={() => setIntro('leaving')} onDone={() => setIntro('done')} />
+    ) : null
+
   return (
+    <>
+      {/* نفس الموضع بالشجرة دائمًا — حتى لا تُعاد الافتتاحية من البداية عند ظهور التطبيق تحتها */}
+      {splash}
+      {intro !== 'show' && (
     <AppBootstrap>
       <Suspense fallback={<PageSpinner />}>
         <Routes>
@@ -254,6 +276,8 @@ function App() {
         </Routes>
       </Suspense>
     </AppBootstrap>
+      )}
+    </>
   )
 }
 

@@ -56,7 +56,7 @@ export function CommitteesPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-bold text-text-primary">اللجان المعتمدة</h1>
+        <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">اللجان المعتمدة</h1>
         <p className="mt-1 text-sm text-text-muted">اللجان التي تشكّلت رسميًا بعد اعتماد طلبات تشكيلها</p>
       </div>
 

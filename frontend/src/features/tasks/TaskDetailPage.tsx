@@ -228,7 +228,7 @@ export function TaskDetailPage() {
             </button>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-xl font-bold text-text-primary">{task.title}</h1>
+                <h1 className="text-xl font-bold tracking-tight text-text-primary sm:text-[1.6rem] sm:leading-tight">{task.title}</h1>
                 <TaskStatusBadge status={task.status} />
                 <TaskPriorityBadge priority={task.priority} />
                 {overdue && <TaskOverdueBadge />}
