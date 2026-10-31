@@ -46,21 +46,61 @@ redis_client = redis.from_url(
 )
 
 _SESSION_KEY_PREFIX = "session:"
+# فهرس جلسات كل مستخدم (تحديث 2026-10-31 — FR-UM-018: إبطال كل جلسات
+# المستخدم بعد استعادة كلمة المرور). Set بـ"user_sessions:{user_id}" يحوي
+# session_id لكل جلسة أُنشئت له. قد يبقى فيه معرّفات لجلسات انتهت فعليًا
+# (انتهاء الخمول يحذف مفتاح الجلسة فقط) — غير ضار، حذفها لاحقًا no-op.
+# صلاحيته = عمر Refresh Token + يوم، ويتجدد مع كل تسجيل دخول جديد: بعد
+# انتهاء الـRefresh Token لا يمكن استخدام أي جلسة قديمة أصلًا.
+# ملاحظة: الجلسات المُنشأة قبل هذا التحديث غير مفهرسة، فلن تُبطَل بهذه
+# الآلية (تنتهي طبيعيًا بالخمول) — حالة انتقالية لمرة واحدة بعد النشر.
+_USER_SESSIONS_KEY_PREFIX = "user_sessions:"
 
 
 def _session_key(session_id: str) -> str:
     return f"{_SESSION_KEY_PREFIX}{session_id}"
 
 
+def _user_sessions_key(user_id: uuid.UUID | str) -> str:
+    return f"{_USER_SESSIONS_KEY_PREFIX}{user_id}"
+
+
 async def create_session(user_id: uuid.UUID) -> str:
-    """إنشاء جلسة جديدة في Redis وإرجاع session_id الفريد الخاص بها."""
+    """
+    إنشاء جلسة جديدة في Redis وإرجاع session_id الفريد الخاص بها.
+    يسجّلها أيضًا بفهرس جلسات المستخدم (لـinvalidate_all_user_sessions).
+    """
     session_id = str(uuid.uuid4())
-    await redis_client.set(
-        _session_key(session_id),
-        str(user_id),
-        ex=timedelta(minutes=settings.SESSION_IDLE_TIMEOUT_MINUTES),
-    )
+    index_key = _user_sessions_key(user_id)
+    async with redis_client.pipeline(transaction=True) as pipe:
+        pipe.set(
+            _session_key(session_id),
+            str(user_id),
+            ex=timedelta(minutes=settings.SESSION_IDLE_TIMEOUT_MINUTES),
+        )
+        pipe.sadd(index_key, session_id)
+        pipe.expire(index_key, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS + 1))
+        await pipe.execute()
     return session_id
+
+
+async def invalidate_all_user_sessions(user_id: uuid.UUID) -> int:
+    """
+    الهدف:
+    إبطال كل جلسات مستخدم واحد فورًا على كل الأجهزة (بعد استعادة كلمة
+    المرور — FR-UM-018، قرار لاما 2026-10-31).
+
+    المدخلات: user_id — معرّف المستخدم.
+    المخرجات: int — عدد مفاتيح الجلسات التي كانت موجودة وحُذفت فعليًا.
+    التأثيرات الجانبية: يحذف مفاتيح session:* الخاصة به وفهرسه من Redis.
+    """
+    index_key = _user_sessions_key(user_id)
+    session_ids = await redis_client.smembers(index_key)
+    deleted = 0
+    if session_ids:
+        deleted = await redis_client.delete(*(_session_key(sid) for sid in session_ids))
+    await redis_client.delete(index_key)
+    return int(deleted)
 
 
 async def touch_session(session_id: str) -> bool:

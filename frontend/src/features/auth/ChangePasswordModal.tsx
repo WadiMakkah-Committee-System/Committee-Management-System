@@ -10,16 +10,12 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { extractErrorMessage } from '@/lib/utils'
+import { NEW_PASSWORD_HINT, newPasswordSchema } from './passwordPolicy'
 
 const schema = z
   .object({
     current_password: z.string().min(1, 'كلمة المرور الحالية مطلوبة'),
-    new_password: z
-      .string()
-      .min(8, 'يجب أن تحتوي على 8 أحرف على الأقل')
-      .regex(/[A-Z]/, 'يجب أن تحتوي على حرف كبير')
-      .regex(/[a-z]/, 'يجب أن تحتوي على حرف صغير')
-      .regex(/[0-9]/, 'يجب أن تحتوي على رقم'),
+    new_password: newPasswordSchema,
     confirm_password: z.string(),
   })
   .refine((data) => data.new_password === data.confirm_password, {
@@ -91,7 +87,7 @@ export function ChangePasswordModal() {
         <Input
           label="كلمة المرور الجديدة"
           type="password"
-          hint="8 أحرف على الأقل، حرف كبير وصغير ورقم"
+          hint={NEW_PASSWORD_HINT}
           error={errors.new_password?.message}
           {...register('new_password')}
         />
