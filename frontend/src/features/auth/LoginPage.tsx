@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { LogIn, ShieldCheck } from 'lucide-react'
 import * as authApi from '@/api/auth'
@@ -152,6 +152,13 @@ export function LoginPage() {
               error={errors.password?.message}
               {...register('password')}
             />
+            {/* FR-UM-018: الدخول لتدفق استعادة كلمة المرور (صفحة عامة) */}
+            <Link
+              to="/forgot-password"
+              className="-mt-2 self-start text-sm font-medium text-brand-primary hover:underline"
+            >
+              نسيت كلمة المرور؟
+            </Link>
 
             <AnimatePresence>
               {serverError && (

@@ -47,6 +47,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
+from html import escape as _escape_html
 from typing import Iterable
 
 from sqlalchemy import func, select, update
@@ -137,6 +138,37 @@ def _wrap_html(body_inner: str) -> str:
         f"{body_inner}"
         "</div>"
     )
+
+
+async def notify_password_reset_code(
+    *, email: str, first_name: str | None, otp_code: str, expires_minutes: int
+) -> None:
+    """
+    الهدف:
+    FR-UM-018: إرسال رمز استعادة كلمة المرور (OTP) لبريد المستخدم.
+
+    المدخلات:
+    - email: str — بريد المستخدم المسجّل (من قاعدة البيانات، لا من الطلب).
+    - first_name: str | None — للتحية فقط (يُهرَّب HTML).
+    - otp_code: str — الرمز الصريح (6 أرقام) — لا يُسجَّل بالسجلات أبدًا.
+    - expires_minutes: int — مدة صلاحية الرمز لعرضها بالرسالة.
+
+    المخرجات: None.
+
+    التأثيرات الجانبية: بريد واحد عبر send_email فقط — بدون إشعار داخل
+    النظام (المستخدم غير مسجّل دخول أصلًا). لا يرفع أي استثناء (send_email
+    تُمسك أخطاءها) — تُستدعى عبر run_detached من POST /auth/forgot-password.
+    """
+    greeting = f"مرحبًا {_escape_html(first_name)}،" if first_name else "مرحبًا،"
+    body = _wrap_html(
+        f"<p>{greeting}</p>"
+        "<p>وصلنا طلب لاستعادة كلمة المرور لحسابك في نظام إدارة اللجان. رمز التحقق:</p>"
+        '<p style="font-size: 28px; font-weight: bold; letter-spacing: 8px; '
+        f'direction: ltr; text-align: center;">{otp_code}</p>'
+        f"<p>الرمز صالح لمدة {expires_minutes} دقيقة ولاستخدام واحد فقط.</p>"
+        "<p>إذا لم تطلب استعادة كلمة المرور، تجاهل هذه الرسالة — كلمة مرورك الحالية لن تتغير.</p>"
+    )
+    await send_email(to=[email], subject="رمز استعادة كلمة المرور — نظام إدارة اللجان", html_body=body)
 
 
 async def notify_meeting_created(meeting: Meeting, *, actor_user_id: uuid.UUID | None = None) -> None:
