@@ -17,28 +17,210 @@
 
 ملاحظة أمنية: SMTP_PASSWORD (App Password غالبًا لا كلمة مرور الحساب
 الفعلية) تُقرأ من .env فقط عبر core.config، ولا تظهر بالسجلات إطلاقًا.
+
+تحديث 2026-10-31 (بلاغ لاما — البريد لا يصل إطلاقًا من بيئة الإنتاج):
+الباك إند على Render بخطة free، وRender يحجب منذ سبتمبر 2025 كل اتصال
+صادر من الخدمات المجانية على منافذ SMTP (25/465/587) — فاتصال aiosmtplib
+يسقط بـtimeout مهما كان الحساب/الـApp Password صحيحًا. الحل: مسار إرسال
+بديل عبر HTTP API لمزوّد بريد (HTTPS على 443 غير محجوب)، يُختار بمتغير
+البيئة EMAIL_PROVIDER:
+- "smtp" (الافتراضي): السلوك القديم كما هو بالضبط — يبقى للسيرفر الخاص
+  بالشركة لاحقًا أو أي بيئة لا تحجب SMTP.
+- "resend": عبر https://api.resend.com/emails (يتطلب دومين مُوثَّق بحساب
+  Resend للإرسال لأي مستلم).
+- "brevo": عبر https://api.brevo.com/v3/smtp/email (يكفي مُرسِل مُوثَّق).
+المفتاح في EMAIL_API_KEY، والمُرسِل الظاهر من SMTP_FROM_EMAIL/SMTP_FROM_NAME
+(نفس المتغيرات القائمة، حتى لا يتكرر تعريف المُرسِل بمكانين). لا مكتبة
+جديدة — httpx موجودة أصلًا بـrequirements.txt.
 """
 
 import logging
 from email.message import EmailMessage
 
 import aiosmtplib
+import httpx
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# نص بديل لعارضات البريد التي لا تدعم HTML — نفس النص بكل المسارات.
+_PLAIN_TEXT_FALLBACK = "هذه الرسالة بصيغة HTML — افتحيها بعارض بريد يدعم HTML."
+
+# نفس حد الـtimeout المستخدم بمسار SMTP (راجعي تعليق 2026-09-10 أدناه):
+# فشل سريع بدل تعليق طويل يحجز جلسة DB الطلب الأصلي.
+_HTTP_TIMEOUT_SECONDS = 10
+
+_RESEND_URL = "https://api.resend.com/emails"
+_BREVO_URL = "https://api.brevo.com/v3/smtp/email"
+_HTTP_PROVIDERS = ("resend", "brevo")
+
 
 async def send_email(*, to: list[str], subject: str, html_body: str) -> None:
     """
+    الهدف:
+    نقطة الدخول الوحيدة لإرسال البريد بالنظام (كل notify_* تستدعيها).
+
+    المسؤولية:
     يرسل نفس الرسالة (subject/html_body) لكل عنوان بـ`to` كرسالة منفصلة —
     عزل الخصوصية بين المستلمين (لا يرى عضو باقي عناوين أعضاء اللجنة بحقل
-    To/Cc)، عبر اتصال SMTP واحد فقط لكل الدفعة.
+    To/Cc) — عبر المزوّد المحدد بـEMAIL_PROVIDER (smtp/resend/brevo).
+
+    المدخلات:
+    - to: list[str] — عناوين المستلمين (القيم الفارغة تُتجاهل).
+    - subject: str — عنوان الرسالة.
+    - html_body: str — محتوى الرسالة بصيغة HTML.
+
+    المخرجات: None.
+
+    التأثيرات الجانبية:
+    اتصال شبكي خارجي (SMTP أو HTTPS لمزوّد البريد). لا يلمس قاعدة البيانات.
+
+    الأخطاء المحتملة:
+    لا يرفع أي استثناء للمستدعي إطلاقًا — كل فشل (إعدادات ناقصة/شبكة/رفض
+    المزوّد) يُسجَّل بالسجلات فقط، لأن البريد إضافة لا شرط لنجاح العملية.
     """
     recipients = [addr for addr in to if addr]
     if not recipients:
         return
 
+    provider = (settings.EMAIL_PROVIDER or "smtp").strip().lower()
+    if provider in _HTTP_PROVIDERS:
+        await _send_via_http_api(provider=provider, recipients=recipients, subject=subject, html_body=html_body)
+        return
+    if provider != "smtp":
+        logger.error("EMAIL_PROVIDER غير معروف (%s) — تم تجاوز إرسال البريد: %s", provider, subject)
+        return
+
+    await _send_via_smtp(recipients=recipients, subject=subject, html_body=html_body)
+
+
+def _build_http_request(
+    *, provider: str, recipient: str, subject: str, html_body: str, from_email: str, from_name: str
+) -> tuple[str, dict[str, str], dict]:
+    """
+    الهدف:
+    بناء طلب HTTP (الرابط + الترويسات + الجسم) لرسالة واحدة حسب صيغة كل مزوّد.
+
+    المدخلات:
+    - provider: "resend" أو "brevo".
+    - recipient: str — مستلم واحد فقط (عزل الخصوصية، نفس مسار SMTP).
+    - subject/html_body: محتوى الرسالة.
+    - from_email/from_name: هوية المُرسِل الظاهرة.
+
+    المخرجات:
+    tuple(url, headers, json_payload).
+
+    التأثيرات الجانبية: لا شيء (دالة نقية — قابلة للاختبار بدون شبكة).
+
+    ملاحظة أمنية: المفتاح يوضع بالترويسة فقط ولا يُسجَّل بالسجلات أبدًا.
+    """
+    if provider == "resend":
+        sender = f"{from_name} <{from_email}>" if from_name else from_email
+        return (
+            _RESEND_URL,
+            {"Authorization": f"Bearer {settings.EMAIL_API_KEY}"},
+            {
+                "from": sender,
+                "to": [recipient],
+                "subject": subject,
+                "html": html_body,
+                "text": _PLAIN_TEXT_FALLBACK,
+            },
+        )
+    # brevo
+    sender_obj = {"email": from_email}
+    if from_name:
+        sender_obj["name"] = from_name
+    return (
+        _BREVO_URL,
+        {"api-key": settings.EMAIL_API_KEY, "accept": "application/json"},
+        {
+            "sender": sender_obj,
+            "to": [{"email": recipient}],
+            "subject": subject,
+            "htmlContent": html_body,
+            "textContent": _PLAIN_TEXT_FALLBACK,
+        },
+    )
+
+
+async def _send_via_http_api(*, provider: str, recipients: list[str], subject: str, html_body: str) -> None:
+    """
+    الهدف:
+    إرسال البريد عبر HTTP API لمزوّد (Resend/Brevo) بدل SMTP — لأن منافذ SMTP
+    محجوبة على Render free (راجعي تحديث 2026-10-31 برأس الملف).
+
+    المسؤولية:
+    - رسالة منفصلة لكل مستلم (نفس عزل الخصوصية بمسار SMTP).
+    - عميل HTTP واحد يُعاد استخدامه لكل الدفعة، بـtimeout=10 ثوانٍ.
+    - إعادة محاولة واحدة لكل مستلم عند خطأ شبكة أو رد 429/5xx (أخطاء
+      مؤقتة). ردود 4xx الأخرى (مفتاح خاطئ/مُرسِل غير مُوثَّق) لا تُعاد —
+      إعادتها لن تنجح، وتُسجَّل مع نص رد المزوّد لتسهيل التشخيص.
+
+    المدخلات: provider، recipients (غير فارغة)، subject، html_body.
+    المخرجات: None.
+
+    التأثيرات الجانبية: طلبات HTTPS خارجية. لا يرفع أي استثناء للمستدعي.
+    """
+    if not settings.EMAIL_API_KEY:
+        logger.warning("EMAIL_API_KEY غير مُهيَّأ بـ.env (EMAIL_PROVIDER=%s) — تم تجاوز إرسال البريد: %s", provider, subject)
+        return
+    from_email = settings.SMTP_FROM_EMAIL
+    if not from_email:
+        logger.warning("SMTP_FROM_EMAIL مطلوب مع EMAIL_PROVIDER=%s — تم تجاوز إرسال البريد: %s", provider, subject)
+        return
+
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+        for recipient in recipients:
+            url, headers, payload = _build_http_request(
+                provider=provider,
+                recipient=recipient,
+                subject=subject,
+                html_body=html_body,
+                from_email=from_email,
+                from_name=settings.SMTP_FROM_NAME,
+            )
+            for attempt in (1, 2):
+                try:
+                    response = await client.post(url, headers=headers, json=payload)
+                except httpx.HTTPError:
+                    logger.exception(
+                        "خطأ شبكة أثناء إرسال بريد لـ %s عبر %s (محاولة %d، الموضوع: %s)",
+                        recipient,
+                        provider,
+                        attempt,
+                        subject,
+                    )
+                    continue
+                if response.is_success:
+                    break
+                logger.error(
+                    "رفض %s إرسال بريد لـ %s — HTTP %d: %s (محاولة %d، الموضوع: %s)",
+                    provider,
+                    recipient,
+                    response.status_code,
+                    response.text[:500],
+                    attempt,
+                    subject,
+                )
+                if response.status_code != 429 and response.status_code < 500:
+                    break
+
+
+async def _send_via_smtp(*, recipients: list[str], subject: str, html_body: str) -> None:
+    """
+    الهدف:
+    مسار الإرسال الأصلي عبر SMTP (منقول كما هو من send_email قبل تحديث
+    2026-10-31 بدون أي تغيير بالمنطق) — يُستخدم عند EMAIL_PROVIDER=smtp.
+
+    المسؤولية:
+    اتصال SMTP واحد لكل الدفعة، رسالة منفصلة لكل مستلم، وإعادة محاولة
+    واحدة باتصال جديد عند الفشل (راجعي إصلاح 2026-09-13 أدناه).
+
+    المدخلات: recipients (غير فارغة)، subject، html_body.
+    المخرجات: None. لا يرفع أي استثناء للمستدعي.
+    """
     if not settings.SMTP_HOST:
         # بيئة تطوير لم تُعبَّأ بيانات SMTP فيها بعد — نتجاوز الإرسال بصمت
         # (تحذير بالسجلات فقط) بدل رمي خطأ يُفشل إنشاء/تعديل/حذف الاجتماع.
@@ -72,7 +254,7 @@ async def send_email(*, to: list[str], subject: str, html_body: str) -> None:
         message["From"] = from_header
         message["To"] = recipient
         message["Subject"] = subject
-        message.set_content("هذه الرسالة بصيغة HTML — افتحيها بعارض بريد يدعم HTML.")
+        message.set_content(_PLAIN_TEXT_FALLBACK)
         message.add_alternative(html_body, subtype="html")
         return message
 
