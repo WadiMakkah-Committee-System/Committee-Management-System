@@ -53,6 +53,13 @@ class Settings(BaseSettings):
       MAX_FAILED_LOGIN_ATTEMPTS: int = 5
       ACCOUNT_LOCKOUT_MINUTES: int = 15
 
+    # --- نسيت كلمة المرور عبر OTP (FR-UM-018 — قرارات لاما 2026-10-31) ---
+    # صلاحية الرمز، أقصى عدد محاولات خاطئة قبل إبطاله (نفس حد FR-UM-019)،
+    # وأقل مدة بين طلبين لنفس البريد (منع إغراق البريد واستهلاك حصة المزوّد).
+      PASSWORD_RESET_OTP_MINUTES: int = 15
+      PASSWORD_RESET_MAX_ATTEMPTS: int = 5
+      PASSWORD_RESET_RESEND_SECONDS: int = 60
+
     # --- Email / SMTP (لإرسال OTP واسترجاع كلمة المرور - FR-UM-018 -
     # ولإشعارات الاجتماعات إنشاء/تعديل/حذف - قرار لاما 2026-09-06) ---
       SMTP_HOST: str = ""

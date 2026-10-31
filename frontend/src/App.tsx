@@ -39,6 +39,9 @@ import * as usersApi from '@/api/users'
  * تغيير.
  */
 const LoginPage = lazy(() => import('@/features/auth/LoginPage').then((m) => ({ default: m.LoginPage })))
+const ForgotPasswordPage = lazy(() =>
+  import('@/features/auth/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })),
+)
 const UsersPage = lazy(() => import('@/features/users/UsersPage').then((m) => ({ default: m.UsersPage })))
 const RolesPermissionsPage = lazy(() =>
   import('@/features/roles/RolesPermissionsPage').then((m) => ({ default: m.RolesPermissionsPage })),
@@ -175,6 +178,7 @@ function App() {
       <Suspense fallback={<PageSpinner />}>
         <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
