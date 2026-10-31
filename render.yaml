@@ -22,6 +22,12 @@ services:
         sync: false
       - key: SMTP_PASSWORD
         sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: EMAIL_API_KEY
+        sync: false
       - key: CLAUDE_API_KEY
         sync: false
       - key: SUPABASE_URL

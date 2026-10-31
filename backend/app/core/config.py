@@ -64,6 +64,12 @@ class Settings(BaseSettings):
       SMTP_FROM_NAME: str = "نظام إدارة اللجان"
       # True لـ Gmail/Outlook القياسي (STARTTLS على المنفذ 587).
       SMTP_USE_TLS: bool = True
+      # مزوّد الإرسال (تحديث 2026-10-31 — Render free يحجب منافذ SMTP، راجعي
+      # رأس core/email_client.py): "smtp" (الافتراضي، السلوك القديم) أو
+      # "resend" أو "brevo" (عبر HTTP API). EMAIL_API_KEY مفتاح المزوّد المختار
+      # فقط (غير مستخدم مع smtp)، والمُرسِل من SMTP_FROM_EMAIL/SMTP_FROM_NAME.
+      EMAIL_PROVIDER: str = "smtp"
+      EMAIL_API_KEY: str = ""
 
     # --- الذكاء الاصطناعي (مراحل لاحقة) ---
       CLAUDE_API_KEY: str = ""
