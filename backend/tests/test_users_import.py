@@ -233,7 +233,7 @@ async def test_any_invalid_row_creates_nobody(client: AsyncClient, auth_headers,
     errors = {(e["row"], e["field"]) for e in detail["errors"]}
     assert (3, "الاسم الأول") in errors
     assert (3, "البريد الإلكتروني") in errors
-    assert (3, "المسمى الوظيفي") in errors
+    assert (3, "المسمى الوظيفي") not in errors  # المسمى الجديد يُضاف تلقائيًا (ليس خطأ)
     assert (3, "الدور في النظام") in errors
     assert (4, "البريد الإلكتروني") in errors
     assert (5, "البريد الإلكتروني") in errors
@@ -365,3 +365,88 @@ async def test_department_scope_limited_to_own_department(
     escalate = await _upload(client, headers, _xlsx([["أ", "ب", "ج", "e@example.com", None, None, "الرئيس التنفيذي"]]))
     assert escalate.status_code == 400
     assert "لا تملك صلاحية إسناد" in escalate.json()["detail"]["errors"][0]["message"]
+
+
+async def test_template_labels_still_work_after_roles_are_renamed(client: AsyncClient, auth_headers, sent) -> None:
+    """
+    إصلاح 2026-11-01: لاما أعادت تسمية الأدوار النظامية من شاشة الأدوار
+    (executive_office_manager ← "المكتب التنفيذي"، admin ← "ادمن") — أسماء
+    النموذج تبقى تعمل، ومدير الإدارة يُحدَّد بالدور نفسه لا باسمه البرمجي.
+    """
+    from sqlalchemy import update
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(Role).where(Role.name == "executive_office_manager").values(name="المكتب التنفيذي"))
+        await db.execute(update(Role).where(Role.name == "admin").values(name="مسؤول الإدارة"))
+        await db.commit()
+    try:
+        response = await _upload(
+            client,
+            auth_headers,
+            _xlsx(
+                [
+                    ["أ", "ب", "ج", "office@example.com", None, None, "المكتب التنفيذي"],
+                    ["د", "ه", "و", "mgr@example.com", "إدارة مُعادة التسمية", None, MANAGER],
+                ]
+            ),
+        )
+        assert response.status_code == 201, response.text
+        users = {u["email"]: u for u in response.json()["users"]}
+        assert users["mgr@example.com"]["is_department_manager"] is True
+        async with AsyncSessionLocal() as db:
+            office = (await db.execute(select(User).where(User.email == "office@example.com"))).scalar_one()
+            role = await db.get(Role, office.role_id)
+        assert role.name == "المكتب التنفيذي"
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(Role).where(Role.name == "المكتب التنفيذي").values(name="executive_office_manager"))
+            await db.execute(update(Role).where(Role.name == "مسؤول الإدارة").values(name="admin"))
+            await db.commit()
+
+
+async def test_missing_job_title_is_created_automatically(client: AsyncClient, auth_headers, sent) -> None:
+    """طلب لاما 2026-11-01: المسمى غير الموجود يُضاف تلقائيًا (مرة واحدة حتى لو تكرر)."""
+    title = f"مطورة {uuid.uuid4().hex[:4]}"
+    response = await _upload(
+        client,
+        auth_headers,
+        _xlsx(
+            [
+                ["أ", "ب", "ج", "jt1@example.com", None, title, None],
+                ["د", "ه", "و", "jt2@example.com", None, f"  {title} ", None],  # نفس المسمى بمسافات
+            ]
+        ),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["job_titles_created"] == [title]
+    async with AsyncSessionLocal() as db:
+        titles = (await db.execute(select(JobTitle).where(JobTitle.name == title))).scalars().all()
+        users = (await db.execute(select(User).where(User.email.in_(["jt1@example.com", "jt2@example.com"])))).scalars().all()
+    assert len(titles) == 1
+    assert {u.job_title_id for u in users} == {titles[0].job_title_id}
+
+
+async def test_department_scope_needs_job_titles_create_to_add_titles(
+    client: AsyncClient, auth_headers, super_admin_user, sent
+) -> None:
+    own = await _department("إدارة المسميات", "JTS", super_admin_user)
+    row = [["أ", "ب", "ج", "jts@example.com", None, f"مسمى {uuid.uuid4().hex[:4]}", None]]
+
+    without = await _login_with_role(
+        client, auth_headers, codes=["users.import"], scopes={"users.import": "department"}, dep_id=own.dep_id
+    )
+    denied = await _upload(client, without, _xlsx(row))
+    assert denied.status_code == 400
+    assert "صلاحية إضافة مسميات" in denied.json()["detail"]["errors"][0]["message"]
+
+    with_create = await _login_with_role(
+        client,
+        auth_headers,
+        codes=["users.import", "job_titles.create"],
+        scopes={"users.import": "department"},
+        dep_id=own.dep_id,
+    )
+    allowed = await _upload(client, with_create, _xlsx(row))
+    assert allowed.status_code == 201, allowed.text
+    assert allowed.json()["job_titles_created"] == [row[0][5]]
+

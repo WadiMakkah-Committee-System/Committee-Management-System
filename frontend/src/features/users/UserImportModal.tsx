@@ -141,6 +141,11 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
                   {result.departments_created.map((d) => `${d.name} (${d.code})`).join('، ')}
                 </p>
               )}
+              {result.job_titles_created.length > 0 && (
+                <p className="mt-1 text-text-secondary">
+                  مسميات وظيفية جديدة أُضيفت: {result.job_titles_created.join('، ')}
+                </p>
+              )}
             </div>
           </div>
           <div className="max-h-72 overflow-auto rounded-sm border border-border-default">
@@ -223,6 +228,7 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
           <ul className="list-disc space-y-1 ps-5 text-xs text-text-secondary">
             <li>الأعمدة الإلزامية: الاسم الأول، الأوسط، العائلة، البريد. الإدارة والمسمى والدور اختيارية.</li>
             <li>الإدارة غير الموجودة تُنشأ تلقائيًا، ومديرها صاحب الصف الذي دوره «مدير إدارة (أدمن)».</li>
+            <li>المسمى الوظيفي غير الموجود يُضاف تلقائيًا لقائمة المسميات.</li>
             <li>لو فيه أي خطأ بأي صف، ما يُضاف أحد — تظهر الأخطاء برقم الصف لتصحيحها.</li>
           </ul>
 
