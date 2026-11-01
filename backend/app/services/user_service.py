@@ -22,7 +22,7 @@ import uuid
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, noload, selectinload
+from sqlalchemy.orm import joinedload, noload, raiseload, selectinload
 
 from app.core.security import hash_password
 from app.models.department import Department
@@ -133,8 +133,11 @@ async def create_user(
         metadata={"username": username, "role": role.name if role else None},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await get_user(db, user.user_id)
     await db.commit()
-    return await get_user(db, user.user_id)
+    return result
 
 
 async def list_users(
@@ -151,15 +154,41 @@ async def list_users(
     # دور × عدد المستخدمين المشتركين بنفس الدور — selectin هنا يبقى فعليًا
     # رحلة شبكة واحدة فقط تغطي كل الأدوار المسحوبة دفعة واحدة، فلا داعٍ
     # لتحمّل مخاطرة تضخّم النتيجة مقابل نفس الفائدة تقريبًا.
+    # إعادة هيكلة 2026-10-24: استعلام واحد بشكل UserOut بالضبط — الدور
+    # (RoleSummaryOut: أعمدته فقط) والمسمى والإدارة ومديرها بـJOIN، بدل
+    # selectin الافتراضي على User.role الذي كان يجرّ روابط صلاحيات كل دور
+    # وكل صلاحية (لا تُعرض بالقائمة إطلاقًا).
+    manager = joinedload(User.department).joinedload(Department.manager)
     stmt = (
         select(User)
-        .options(joinedload(User.department).joinedload(Department.manager))
+        .options(
+            joinedload(User.role).raiseload("*", sql_only=True),
+            joinedload(User.job_title).raiseload("*", sql_only=True),
+            joinedload(User.department).raiseload("*", sql_only=True),
+            manager,
+            manager.raiseload("*", sql_only=True),
+            raiseload("*", sql_only=True),
+        )
         .where(User.deleted_at.is_(None))
     )
     if dep_id is not None:
         stmt = stmt.where(User.dep_id == dep_id)
     result = await db.execute(stmt.order_by(User.created_at.desc()))
     return list(result.unique().scalars().all())
+
+
+def _profile_options() -> tuple:
+    """شكل المستخدم الكامل (UserDetailOut / المصادقة): إدارته (ومديرها بأعمدته
+    فقط) + دوره بكل صلاحياته + مسماه — كلها JOIN باستعلام واحد."""
+    manager = joinedload(User.department).joinedload(Department.manager)
+    return (
+        manager.noload(User.role),
+        manager.noload(User.job_title),
+        joinedload(User.role).joinedload(Role.role_permission_links).joinedload(
+            RolePermission.permission
+        ),
+        joinedload(User.job_title),
+    )
 
 
 async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
@@ -186,14 +215,7 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
     # الرئيسي فيلغي هذا الـround trip كليًا بدل تحسينه فقط.
     result = await db.execute(
         select(User)
-        .options(
-            joinedload(User.department).joinedload(Department.manager).noload(User.role),
-            joinedload(User.department).joinedload(Department.manager).noload(User.job_title),
-            joinedload(User.role).joinedload(Role.role_permission_links).joinedload(
-                RolePermission.permission
-            ),
-            joinedload(User.job_title),
-        )
+        .options(*_profile_options())
         .where(User.user_id == user_id, User.deleted_at.is_(None))
     )
     # .unique() إلزامي هنا لأن role_permission_links مجموعة (one-to-many)
@@ -203,13 +225,22 @@ async def get_user(db: AsyncSession, user_id: uuid.UUID) -> User | None:
 
 
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
-    """جلب مستخدم عبر username — يُستخدم عند تسجيل الدخول."""
+    """جلب مستخدم عبر username — يُستخدم عند تسجيل الدخول.
+
+    تحسين أداء 2026-10-24: كان select(User) يجرّ تلقائيًا (lazy="selectin")
+    الدور ثم روابط صلاحياته ثم الصلاحيات ثم المسمى = 4-5 استعلامات متتالية
+    قبل حتى التحقق من كلمة المرور.
+
+    تحديث 2026-10-25: يُحمَّل المستخدم بشكله الكامل (نفس get_user) بنفس
+    الاستعلام الواحد (JOIN)، لأن رد تسجيل الدخول صار يتضمن بيانات المستخدم
+    (UserDetailOut) — فالواجهة لا تحتاج طلب /users/me منفصلًا بعده.
+    """
     result = await db.execute(
-        select(User).where(
-            func.lower(User.username) == username.lower(), User.deleted_at.is_(None)
-        )
+        select(User)
+        .options(*_profile_options())
+        .where(func.lower(User.username) == username.lower(), User.deleted_at.is_(None))
     )
-    return result.scalar_one_or_none()
+    return result.unique().scalar_one_or_none()
 
 
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
@@ -294,8 +325,11 @@ async def update_user(
         metadata={"before": before, "after": {"role": user.role.name if user.role else None}},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await get_user(db, user.user_id)
     await db.commit()
-    return await get_user(db, user.user_id)
+    return result
 
 
 async def soft_delete_user(
@@ -328,8 +362,10 @@ async def soft_delete_user(
         metadata={"username": user.username},
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(user)
+    await db.commit()
     return user
 
 
@@ -365,5 +401,8 @@ async def set_user_status(
         metadata={"username": user.username},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await get_user(db, user.user_id)
     await db.commit()
-    return await get_user(db, user.user_id)
+    return result

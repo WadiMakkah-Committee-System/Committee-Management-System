@@ -29,8 +29,10 @@ meeting_service، decision_service، task_service، document_service) بنفس
 
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.committee import Committee
 from app.models.decision import Decision, DecisionClassification, DecisionStatus
 from app.models.meeting import Meeting, MeetingStatus
 from app.models.task import Task, TaskStatus
@@ -44,6 +46,7 @@ from app.schemas.dashboard import (
     DashboardTaskItem,
 )
 from app.services import committee_service, decision_service, document_service, meeting_service, task_service
+from app.services.committee_access import CommitteeAccess
 
 _PREVIEW_LIMIT = 5
 
@@ -85,15 +88,48 @@ def _open_tasks(tasks: list[Task]) -> list[Task]:
     return open_tasks
 
 
+async def _committee_names(db: AsyncSession, committee_ids: set) -> dict:
+    if not committee_ids:
+        return {}
+    result = await db.execute(
+        select(Committee.committee_id, Committee.name).where(Committee.committee_id.in_(committee_ids))
+    )
+    return dict(result.all())
+
+
 async def get_dashboard_summary(db: AsyncSession, *, actor: User) -> DashboardSummary:
     committee_scope = actor.scope_for("committees.view") or "own"
-    committees = await committee_service.list_committees(db, actor=actor, scope=committee_scope)
-    meetings = await meeting_service.list_meetings(db, actor=actor)
-    decisions = await decision_service.list_decisions(db, actor=actor)
-    tasks = await task_service.list_tasks(db, actor=actor)
+    committees = await committee_service.list_committees(
+        db, actor=actor, scope=committee_scope, summary=True
+    )
+    # تحسين أداء 2026-10-24: نفس دوال القوائم الأصلية (نفس الصلاحيات والنطاق
+    # حرفيًا — مبدأ هذا الملف)، لكن بفاحص صلاحيات مشترك (أكواد أدوار اللجان
+    # تُجلب مرة واحدة بدل مرة لكل قائمة) وبدون تحميل ما لا تعرضه لوحة التحكم
+    # (منفذو القرارات، مسؤول/منشئ/مسار المهام، أعضاء اللجان).
+    access = CommitteeAccess(db, actor)
+    meetings = [
+        meeting for meeting, _count in await meeting_service.list_meetings(db, actor=actor, access=access)
+    ]
+    decisions = await decision_service.list_decisions(
+        db, actor=actor, access=access, with_assignees=False
+    )
+    tasks = await task_service.list_tasks(db, actor=actor, access=access, summary=True)
     documents = await document_service.list_documents(db, current_user=actor)
 
     upcoming_meetings = _upcoming_meetings(meetings)
+    # list_meetings لم يعد يحمّل اللجنة مع كل اجتماع (إعادة هيكلة 2026-10-24) —
+    # أسماء لجان عناصر المعاينة فقط باستعلام واحد صغير.
+    # تحسين 2026-10-25: الأسماء من قائمة اللجان المحمَّلة أعلاه أولًا (نفس
+    # عمود committees.name)، والاستعلام فقط للجان غير الموجودة فيها (لو نطاق
+    # رؤية اللجان يختلف عن نطاق رؤية الاجتماعات) — غالبًا بلا استعلام إطلاقًا.
+    preview_committee_ids = {m.committee_id for m in upcoming_meetings[:_PREVIEW_LIMIT]}
+    loaded_names = {c.committee_id: c.name for c in committees}
+    meeting_committee_names = {
+        cid: loaded_names[cid] for cid in preview_committee_ids if cid in loaded_names
+    }
+    meeting_committee_names.update(
+        await _committee_names(db, preview_committee_ids - meeting_committee_names.keys())
+    )
     pending_votes = _decisions_pending_my_vote(decisions, actor)
     open_tasks = _open_tasks(tasks)
 
@@ -109,7 +145,7 @@ async def get_dashboard_summary(db: AsyncSession, *, actor: User) -> DashboardSu
                 title=m.title,
                 scheduled_at=m.scheduled_at,
                 mode=m.mode,
-                committee_name=m.committee.name,
+                committee_name=meeting_committee_names.get(m.committee_id, ""),
             )
             for m in upcoming_meetings[:_PREVIEW_LIMIT]
         ],

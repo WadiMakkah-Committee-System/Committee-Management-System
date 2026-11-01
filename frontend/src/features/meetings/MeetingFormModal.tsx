@@ -332,10 +332,10 @@ export function MeetingFormModal({
                   error={errors.meeting_date?.message}
                   value={field.value ?? ''}
                   onChange={field.onChange}
-                  min={selectedCommittee?.start_date}
-                  max={selectedCommittee?.end_date}
+                  min={selectedCommittee?.start_date ?? undefined}
+                  max={selectedCommittee?.end_date ?? undefined}
                   hint={
-                    selectedCommittee
+                    selectedCommittee?.start_date && selectedCommittee.end_date
                       ? `يجب أن يقع ضمن فترة اللجنة (${selectedCommittee.start_date} - ${selectedCommittee.end_date})`
                       : undefined
                   }

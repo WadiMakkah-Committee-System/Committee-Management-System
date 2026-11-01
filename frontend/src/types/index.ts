@@ -63,6 +63,10 @@ export interface Role {
   user_count: number
 }
 
+/** شكل خفيف للدور (GET /roles/options) — للقوائم المنسدلة والفلاتر فقط، بدون
+ * الصلاحيات والعدّادات (تحسين أداء 2026-10-28). */
+export type RoleOption = Omit<Role, 'permissions' | 'permission_count' | 'user_count'>
+
 export interface RoleCreatePayload {
   name: string
   description: string | null
@@ -201,6 +205,8 @@ export interface DepartmentCreatePayload {
   code: string
   description: string | null
   manager_user_id: string
+  /** أعضاء يُضافون للإدارة من نفس نموذج الإنشاء (اختياري) — المسؤول يُضاف تلقائيًا دائمًا. */
+  member_user_ids?: string[]
 }
 
 export interface DepartmentUpdatePayload {
@@ -220,6 +226,8 @@ export interface TokenResponse {
   refresh_token: string
   token_type: string
   must_change_password: boolean
+  /** رد تسجيل الدخول فقط: نفس شكل GET /users/me (يوفّر طلبًا متتابعًا بعد الدخول). */
+  user?: UserDetail | null
 }
 
 export interface AuditLogEntry {
@@ -280,12 +288,20 @@ export interface ProposedMember extends CommitteeMemberUser {
   department: string | null
 }
 
+/**
+ * نوع مدة اللجنة — مطابق لـ CommitteeDurationType بالباك-إند (الهجرة 0037):
+ * مؤقتة بتاريخي بداية ونهاية، أو دائمة بلا تواريخ (تواريخها null).
+ */
+export type CommitteeDurationType = 'temporary' | 'permanent'
+
 export interface CommitteeFormationRequest {
   request_id: string
   committee_name: string
   statement: string | null
-  start_date: string
-  end_date: string
+  duration_type: CommitteeDurationType
+  /** null للجنة الدائمة. */
+  start_date: string | null
+  end_date: string | null
   status: CommitteeRequestStatus
   requester: CommitteeMemberUser
   proposed_members: ProposedMember[]
@@ -295,6 +311,9 @@ export interface CommitteeFormationRequest {
   committee_id: string | null
   rejection_reason: string | null
   return_reason: string | null
+  /** آخر من رفع الطلب للرئيس التنفيذي من المكتب التنفيذي — null لو لم يُرفع بعد (2026-11-01). */
+  escalator: CommitteeMemberUser | null
+  escalated_at: string | null
   created_at: string
   updated_at: string
 }
@@ -302,8 +321,10 @@ export interface CommitteeFormationRequest {
 export interface CommitteeFormationRequestCreatePayload {
   committee_name: string
   statement: string | null
-  start_date: string
-  end_date: string
+  duration_type: CommitteeDurationType
+  /** null للجنة الدائمة. */
+  start_date: string | null
+  end_date: string | null
   proposed_member_ids: string[]
   chair_user_id: string
 }
@@ -311,8 +332,9 @@ export interface CommitteeFormationRequestCreatePayload {
 export interface CommitteeFormationRequestUpdatePayload {
   committee_name?: string
   statement?: string | null
-  start_date?: string
-  end_date?: string
+  duration_type?: CommitteeDurationType
+  start_date?: string | null
+  end_date?: string | null
   proposed_member_ids?: string[]
   chair_user_id?: string
 }
@@ -335,8 +357,10 @@ export interface Committee {
   committee_id: string
   name: string
   statement: string | null
-  start_date: string
-  end_date: string
+  duration_type: CommitteeDurationType
+  /** null للجنة الدائمة. */
+  start_date: string | null
+  end_date: string | null
   source_request_id: string
   members: CommitteeMemberUser[]
   /** نفس الأعضاء أعلاه، لكن مع دور كل واحد منهم داخل هذه اللجنة تحديدًا. */
@@ -583,6 +607,17 @@ export interface Meeting {
   agenda_items: MeetingAgendaItem[]
   created_at: string
   updated_at: string
+}
+
+/**
+ * عنصر قائمة الاجتماعات (GET /meetings) — يقابل MeetingListItem بالباك-إند
+ * (إعادة هيكلة 2026-10-24). نفس حقول Meeting بدون التفاصيل الثقيلة
+ * (creator/participants/agenda_items) التي كانت تُحمَّل لكل اجتماع بالقائمة
+ * رغم أن القائمة لا تعرض منها إلا عدد المشاركين — صار participant_count.
+ * التفاصيل الكاملة تبقى من GET /meetings/{id} (Meeting).
+ */
+export type MeetingListItem = Omit<Meeting, 'creator' | 'participants' | 'agenda_items'> & {
+  participant_count: number
 }
 
 export interface MeetingCreatePayload {

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, Clock3 } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { cn, PERMISSION_CATEGORY_LABELS, PERMISSION_CATEGORY_ORDER } from '@/lib/utils'
 import type { Permission, PermissionScope } from '@/types'
 
@@ -141,7 +141,6 @@ export function PermissionsPicker({
     <div className="flex flex-col gap-2">
       {grouped.map(({ category, items }) => {
         const isOpen = openCategories.has(category)
-        const isEnforced = items[0]?.is_enforced ?? false
         const selectedCount = items.filter((p) => selected.has(p.code)).length
         const allSelected = selectedCount === items.length && items.length > 0
 
@@ -169,12 +168,6 @@ export function PermissionsPicker({
                 <span className="text-sm font-semibold text-text-primary">
                   {PERMISSION_CATEGORY_LABELS[category] ?? category}
                 </span>
-                {!isEnforced && (
-                  <span className="flex items-center gap-1 rounded-xs bg-warning-bg px-1.5 py-0.5 text-[10px] font-semibold text-warning">
-                    <Clock3 size={10} />
-                    قريبًا
-                  </span>
-                )}
               </span>
               <span className="flex items-center gap-3">
                 <span className="text-xs text-text-muted">

@@ -11,6 +11,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import run_detached
+from app.core.config import settings
 from app.core.dependencies import CurrentUser, oauth2_scheme
 from app.core.security import InvalidTokenError, create_access_token, decode_token
 from app.db.session import get_db
@@ -20,9 +22,11 @@ from app.schemas.auth import (
     RefreshRequest,
     ResetPasswordRequest,
     TokenResponse,
+    VerifyResetCodeRequest,
 )
+from app.api.v1.users import build_my_profile
 from app.schemas.user import ChangePasswordRequest
-from app.services import auth_service, user_service
+from app.services import auth_service, notification_service, user_service
 from app.services.auth_service import AuthError
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -31,8 +35,13 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     try:
-        user, access_token, refresh_token = await auth_service.authenticate(
-            db, username=payload.username, password=payload.password
+        # الملف الشخصي يُبنى داخل معاملة الدخول نفسها قبل commit (تحسين أداء
+        # 2026-10-28 — راجعي auth_service.authenticate).
+        user, access_token, refresh_token, profile = await auth_service.authenticate(
+            db,
+            username=payload.username,
+            password=payload.password,
+            before_commit=lambda u: build_my_profile(db, u),
         )
     except AuthError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
@@ -41,6 +50,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> To
         access_token=access_token,
         refresh_token=refresh_token,
         must_change_password=user.must_change_password,
+        user=profile,
     )
 
 
@@ -110,17 +120,59 @@ async def forgot_password(
     payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)
 ) -> None:
     """
-    بدء تدفق نسيت كلمة المرور. يرجع 204 دائمًا (سواء وُجد البريد أم لا)
-    لمنع تعداد عناوين البريد المسجَّلة (Email Enumeration).
-    إرسال رمز OTP فعليًا عبر البريد مهمة لاحقة (تكامل SMTP).
+    POST /auth/forgot-password — عام (بدون مصادقة). FR-UM-018.
+
+    بدء تدفق نسيت كلمة المرور. يرجع 204 دائمًا (بريد موجود أم لا، حساب
+    موقوف، أو طلب متكرر داخل مهلة إعادة الإرسال) لمنع تعداد عناوين البريد
+    المسجَّلة (Email Enumeration).
+
+    تحديث 2026-10-31: إرسال رمز OTP فعليًا بالبريد عبر run_detached بعد
+    الـcommit (نفس نمط إشعارات الاجتماعات — راجعي core/background.py) حتى
+    لا تنتظر الاستجابة مزوّد البريد، ولا يختلف زمنها بين بريد موجود وغير موجود.
+    422: صيغة بريد غير صالحة.
     """
-    await auth_service.request_password_reset(db, email=payload.email)
+    result = await auth_service.request_password_reset(db, email=payload.email)
+    if result is not None:
+        user, otp_code = result
+        run_detached(
+            notification_service.notify_password_reset_code(
+                email=user.email,
+                first_name=user.first_name,
+                otp_code=otp_code,
+                expires_minutes=settings.PASSWORD_RESET_OTP_MINUTES,
+            )
+        )
+
+
+@router.post("/verify-reset-code", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_reset_code(
+    payload: VerifyResetCodeRequest, db: AsyncSession = Depends(get_db)
+) -> None:
+    """
+    POST /auth/verify-reset-code — عام (بدون مصادقة). FR-UM-018.
+
+    التحقق من رمز الاستعادة كخطوة مستقلة قبل إدخال كلمة المرور الجديدة.
+    لا يستهلك الرمز (يبقى صالحًا لـ/reset-password).
+    204: الرمز صحيح. 400: رسالة عامة موحّدة لكل حالات الفشل (تُحتسب
+    المحاولة الخاطئة ضمن حد PASSWORD_RESET_MAX_ATTEMPTS). 422: صيغة غير صالحة.
+    """
+    try:
+        await auth_service.verify_reset_code(db, email=payload.email, otp_code=payload.otp_code)
+    except AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
 async def reset_password(
     payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)
 ) -> None:
+    """
+    POST /auth/reset-password — عام (بدون مصادقة). FR-UM-018.
+
+    تعيين كلمة مرور جديدة بعد إعادة التحقق من الرمز، ثم إبطال كل جلسات
+    المستخدم على كل الأجهزة. 204: نجاح. 400: رمز غير صالح (رسالة عامة).
+    422: صيغة رمز غير صالحة أو كلمة مرور تخالف السياسة.
+    """
     try:
         await auth_service.reset_password(
             db,

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as documentCategoriesApi from '@/api/documentCategories'
 import { documentsKeys } from '@/hooks/useDocuments'
 import type { DocumentCategoryCreatePayload, DocumentCategoryUpdatePayload } from '@/types'
+import { REFERENCE_STALE_TIME } from '@/hooks/useCommittees'
 
 export const documentCategoriesKeys = {
   all: ['documentCategories'] as const,
@@ -17,10 +18,12 @@ function invalidateCategoryRelatedQueries(queryClient: ReturnType<typeof useQuer
   queryClient.invalidateQueries({ queryKey: documentsKeys.all })
 }
 
-export function useDocumentCategories() {
+export function useDocumentCategories(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: documentCategoriesKeys.all,
     queryFn: documentCategoriesApi.fetchDocumentCategories,
+    staleTime: REFERENCE_STALE_TIME, // بيانات مرجعية — راجعي useCommittees.ts
+    enabled: options?.enabled ?? true,
   })
 }
 

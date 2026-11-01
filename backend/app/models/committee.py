@@ -38,10 +38,12 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import Column, Date, DateTime, ForeignKey, String, Table, Text, func
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.committee_request import CommitteeDurationType
 
 # أعضاء اللجنة المعتمدة — نسخة مقفلة عند الاعتماد، منفصلة عن الأعضاء
 # المقترحين بالطلب (committee_formation_request_members في committee_request.py).
@@ -96,8 +98,16 @@ class Committee(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     statement: Mapped[str | None] = mapped_column(Text, nullable=True)
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # نوع المدة — يُنسَخ من طلب التشكيل لحظة الاعتماد ولا يتغيّر بعدها
+    # (راجعي CommitteeDurationType والهجرة 0037).
+    duration_type: Mapped[CommitteeDurationType] = mapped_column(
+        SAEnum(CommitteeDurationType, name="committee_duration_type", native_enum=True),
+        nullable=False,
+        server_default=CommitteeDurationType.temporary.value,
+    )
+    # NULL فقط للجنة الدائمة (CHECK chk_committees_dates، الهجرة 0037).
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     source_request_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -141,6 +151,11 @@ class Committee(Base):
     )
 
     @property
+    def is_permanent(self) -> bool:
+        """True للجنة الدائمة (بلا تواريخ) — راجعي CommitteeDurationType."""
+        return self.duration_type == CommitteeDurationType.permanent
+
+    @property
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
 
@@ -149,6 +164,9 @@ class Committee(Base):
         الحالة الزمنية المحسوبة (upcoming/ongoing/ended) بدل عمود مخزَّن —
         تُستخدم لاحقًا في Phase 2 للتصفية (اللجان الجارية/المنتهية/القادمة).
         """
+        # اللجنة الدائمة بلا فترة — جارية دائمًا من لحظة اعتمادها (الهجرة 0037).
+        if self.start_date is None or self.end_date is None:
+            return "ongoing"
         if today < self.start_date:
             return "upcoming"
         if today > self.end_date:

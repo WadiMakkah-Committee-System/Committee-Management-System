@@ -18,6 +18,7 @@
   المخزّنة داخل التوكن، تحسبًا لأي تغيير دور حدث بعد إصدار التوكن.
 """
 
+import asyncio
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Query, WebSocketException, status
@@ -25,7 +26,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import perf_probe
-from app.core.redis_client import is_session_valid, touch_session
+from app.core.redis_client import touch_session
 from app.core.security import InvalidTokenError, decode_token
 from app.db.session import AsyncSessionLocal, get_db
 from app.models.user import User, UserStatus
@@ -64,23 +65,34 @@ async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
         except InvalidTokenError as exc:
             raise unauthorized from exc
 
+    session_expired = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="انتهت صلاحية الجلسة، يرجى تسجيل الدخول مرة أخرى",
+    )
     session_id: str | None = payload.get("sid")
-    with perf_probe.timed("auth.redis_is_session_valid"):
-        session_ok = session_id is not None and await is_session_valid(session_id)
-    if not session_ok:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="انتهت صلاحية الجلسة، يرجى تسجيل الدخول مرة أخرى",
-        )
+    if session_id is None:
+        raise session_expired
 
     user_id = payload.get("sub")
     if user_id is None:
         raise unauthorized
 
-    with perf_probe.timed("auth.db_get_user"), perf_probe.caller(
+    # تحسين أداء 2026-10-28: كان هنا 3 رحلات شبكة متتالية بكل طلب:
+    # Redis EXISTS ← استعلام المستخدم ← Redis EXPIRE. الآن:
+    # - EXPIRE وحده يتحقق ويجدّد معًا (يرجّع 0 لو المفتاح غير موجود = جلسة
+    #   منتهية/مُبطَلة) — نفس الفحص بالضبط برحلة واحدة بدل اثنتين.
+    # - رحلة Redis ورحلة القاعدة تُنفَّذان بالتوازي بدل التتابع.
+    # الضمانات الأمنية نفسها: لا يُرجَع المستخدم إلا إذا كانت الجلسة صالحة
+    # والحساب موجودًا وغير موقوف. الفرق الوحيد: تجديد مدة جلسة حساب موقوف
+    # (يُرفض طلبه بـ403 على أي حال) — بلا أثر عملي.
+    with perf_probe.timed("auth.redis_and_db"), perf_probe.caller(
         "auth._resolve_user_from_token->user_service.get_user[joinedload dept.manager + role.role_permission_links.permission]"
     ):
-        user = await user_service.get_user(db, user_id)
+        session_ok, user = await asyncio.gather(
+            touch_session(session_id), user_service.get_user(db, user_id)
+        )
+    if not session_ok:
+        raise session_expired
     if user is None:
         raise unauthorized
 
@@ -88,10 +100,6 @@ async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="الحساب موقوف"
         )
-
-    # تجديد مدة الجلسة (Sliding Expiration) عند كل طلب ناجح
-    with perf_probe.timed("auth.redis_touch_session"):
-        await touch_session(session_id)
 
     return user
 

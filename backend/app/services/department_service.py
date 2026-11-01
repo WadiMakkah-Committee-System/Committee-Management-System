@@ -59,6 +59,26 @@ async def _get_active_manager(db: AsyncSession, manager_user_id: uuid.UUID) -> U
     return manager
 
 
+async def _get_active_members(db: AsyncSession, member_user_ids: list[uuid.UUID]) -> list[User]:
+    """
+    الهدف: جلب أعضاء الإدارة المحدَّدين بنموذج الإنشاء والتحقق من وجودهم.
+
+    المدخلات: قائمة معرّفات (قد تكون فارغة).
+    المخرجات: المستخدمون النشطون (غير المحذوفين) بنفس ترتيب الإدخال.
+    الأخطاء: ValueError لو أي معرّف غير موجود أو محذوف.
+    بلا تأثيرات جانبية (قراءة فقط).
+    """
+    if not member_user_ids:
+        return []
+    result = await db.execute(
+        select(User).where(User.user_id.in_(member_user_ids), User.deleted_at.is_(None))
+    )
+    found = {u.user_id: u for u in result.scalars().all()}
+    if len(found) != len(set(member_user_ids)):
+        raise ValueError("بعض الأعضاء المحدَّدين غير موجودين أو محذوفين")
+    return [found[uid] for uid in member_user_ids]
+
+
 async def create_department(
     db: AsyncSession,
     *,
@@ -67,6 +87,7 @@ async def create_department(
     code: str,
     description: str | None,
     manager_user_id: uuid.UUID,
+    member_user_ids: list[uuid.UUID] | None = None,
 ) -> Department:
     """
     إنشاء إدارة جديدة. يرفع ValueError إذا كان الاسم أو الرمز التعريفي
@@ -75,10 +96,21 @@ async def create_department(
     قرار عمل موثّق: المسؤول عن الإدارة يُضاف تلقائيًا كعضو في قائمة أعضاء
     هذه الإدارة (dep_id) عند إنشائها — حتى لو كان عضوًا في إدارة أخرى سابقًا
     (يُنقَل إليها).
+
+    member_user_ids (طلب صاحبة المشروع 2026-10-29): أعضاء إضافيون يُضافون
+    للإدارة بنفس المعاملة وبنفس قاعدة المسؤول — من كان بإدارة أخرى يُنقَل.
+    كل شيء بمعاملة واحدة: لو فشل أي عضو، لا تُنشأ الإدارة أصلًا. التحقق من
+    صلاحية نقل المستخدمين على مستوى الـAPI (create_department بـdepartments.py).
     """
     await _assert_unique_name(db, name)
     await _assert_unique_code(db, code)
     manager = await _get_active_manager(db, manager_user_id)
+    # المسؤول عضو تلقائيًا — يُستبعد من القائمة لو أُرسل ضمنها أيضًا.
+    members = [
+        m
+        for m in await _get_active_members(db, list(member_user_ids or []))
+        if m.user_id != manager.user_id
+    ]
 
     department = Department(name=name, code=code, description=description)
     db.add(department)
@@ -86,6 +118,9 @@ async def create_department(
 
     department.manager_user_id = manager.user_id
     manager.dep_id = department.dep_id
+    moved_from = {str(m.user_id): (str(m.dep_id) if m.dep_id else None) for m in members}
+    for member in members:
+        member.dep_id = department.dep_id
 
     await audit_service.log_action(
         db,
@@ -93,11 +128,19 @@ async def create_department(
         action_type="create",
         target_type="department",
         target_id=department.dep_id,
-        metadata={"name": name, "code": code, "manager_user_id": str(manager_user_id)},
+        metadata={
+            "name": name,
+            "code": code,
+            "manager_user_id": str(manager_user_id),
+            # العضو → إدارته السابقة (None لمن كان بلا إدارة) — لتتبّع النقل.
+            "members_moved_from": moved_from,
+        },
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(department)
+    await db.commit()
     return department
 
 
@@ -203,8 +246,10 @@ async def update_department(
         },
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(department)
+    await db.commit()
     return department
 
 
@@ -227,6 +272,8 @@ async def soft_delete_department(
         metadata={"name": department.name},
     )
 
-    await db.commit()
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
     await db.refresh(department)
+    await db.commit()
     return department

@@ -14,7 +14,7 @@ const schema = z
   .object({
     committee_id: z.string().min(1, 'يجب اختيار اللجنة'),
     title: z.string().min(2, 'اسم القرار يجب أن يكون حرفين على الأقل').max(255),
-    classification: z.enum(['final', 'voting'], { required_error: 'يجب اختيار تصنيف القرار' }),
+    classification: z.enum(['final', 'voting'], { message: 'يجب اختيار تصنيف القرار' }),
     start_date: z.string().min(1, 'يجب تحديد تاريخ البداية'),
     end_date: z.string().min(1, 'يجب تحديد تاريخ النهاية'),
   })
@@ -314,10 +314,10 @@ export function DecisionFormModal({
               label="تاريخ بداية التنفيذ"
               required
               error={errors.start_date?.message}
-              min={selectedCommittee?.start_date}
-              max={selectedCommittee?.end_date}
+              min={selectedCommittee?.start_date ?? undefined}
+              max={selectedCommittee?.end_date ?? undefined}
               hint={
-                selectedCommittee
+                selectedCommittee?.start_date && selectedCommittee.end_date
                   ? `ضمن فترة اللجنة (${selectedCommittee.start_date} - ${selectedCommittee.end_date})`
                   : undefined
               }
@@ -328,8 +328,8 @@ export function DecisionFormModal({
               label="تاريخ نهاية التنفيذ"
               required
               error={errors.end_date?.message}
-              min={selectedCommittee?.start_date}
-              max={selectedCommittee?.end_date}
+              min={selectedCommittee?.start_date ?? undefined}
+              max={selectedCommittee?.end_date ?? undefined}
               {...register('end_date')}
             />
           </div>

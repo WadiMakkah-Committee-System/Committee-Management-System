@@ -2,6 +2,7 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 sqlalchemy[asyncio]==2.0.35
 asyncpg==0.29.0
+psycopg[binary]==3.2.3
 pydantic==2.9.2
 pydantic-settings==2.5.2
 python-jose[cryptography]==3.3.0
@@ -16,6 +17,11 @@ python-socketio==5.16.4
 pgvector==0.3.6
 pypdf==5.1.0
 python-docx==1.1.2
+# رفع ملف المستخدمين (users.import — 2026-11-01): قراءة/توليد ملفات Excel.
+# defusedxml: يستخدمه openpyxl تلقائيًا لحماية تحليل XML من ملفات مرفوعة
+# (XML bomb / XXE) — توصية openpyxl الرسمية لأي ملف غير موثوق.
+openpyxl==3.1.5
+defusedxml==0.7.1
 
 # Dev / testing (تُشغّل مقابل PostgreSQL محلي حقيقي - الـ schema يعتمد على
 # ميزات خاصة بـ Postgres: UUID, ENUM, JSONB, Partial Unique Index)

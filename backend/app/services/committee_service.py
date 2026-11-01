@@ -60,14 +60,18 @@ update_grant.sql). التعديل يُرفض إن وُجد اجتماع/مهمة
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, joinedload, noload, selectinload
+from sqlalchemy.orm import aliased, joinedload, noload, raiseload, selectinload
 
 from app.models.committee import Committee, CommitteeMember, committee_members
-from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
+from app.models.committee_request import (
+    CommitteeDurationType,
+    CommitteeFormationRequest,
+    CommitteeRequestStatus,
+)
 from app.models.decision import Decision
 from app.models.department import Department
 from app.models.meeting import Meeting
@@ -102,23 +106,45 @@ class CommitteeRequestInvalidTransitionError(Exception):
     """محاولة انتقال حالة غير صالح من الحالة الحالية — تُترجَم إلى 400."""
 
 
+def _user_columns(path) -> tuple:
+    """مستخدم بأعمدته فقط (CommitteeMemberUserOut) — بلا دوره/صلاحياته."""
+    return (path, path.raiseload("*", sql_only=True))
+
+
+def _request_load_options(*, with_committee: bool) -> tuple:
+    """
+    إعادة هيكلة 2026-10-24 (قِيس: قائمة الطلبات = 31 استعلامًا، تزيد مع كل
+    طلب): requester/chair/proposed_members كانت تُحمَّل بـselectin ثم تجرّ
+    علاقات User الافتراضية (role → role_permission_links → permission،
+    job_title)، وcommittee تجرّ اللجنة الناتجة بأعضائها وأدوارهم. هنا ما
+    يعرضه CommitteeFormationRequestOut فقط: أعمدة المستخدمين، + المسمى
+    الوظيفي والإدارة للأعضاء المقترحين (ProposedMemberOut)، + معرّف اللجنة
+    الناتجة. عدد الاستعلامات ثابت مهما كان عدد الطلبات (رئيسي + الأعضاء).
+    """
+    members = selectinload(CommitteeFormationRequest.proposed_members)
+    options: list = [
+        *_user_columns(joinedload(CommitteeFormationRequest.requester)),
+        *_user_columns(joinedload(CommitteeFormationRequest.chair)),
+        *_user_columns(joinedload(CommitteeFormationRequest.escalator)),
+        members,
+        members.joinedload(User.department).raiseload("*", sql_only=True),
+        members.joinedload(User.job_title).raiseload("*", sql_only=True),
+        members.raiseload("*", sql_only=True),
+    ]
+    if with_committee:
+        committee = joinedload(CommitteeFormationRequest.committee)
+        options += [committee, committee.raiseload("*", sql_only=True)]
+    options.append(raiseload("*", sql_only=True))
+    return tuple(options)
+
+
 async def _load_request(db: AsyncSession, request_id: uuid.UUID) -> CommitteeFormationRequest | None:
     result = await db.execute(
         select(CommitteeFormationRequest)
-        .options(
-            selectinload(CommitteeFormationRequest.requester),
-            # .selectinload(User.department) إضافية هنا (2026-09-13):
-            # department على User بعكس job_title لا يحمل lazy="selectin"
-            # بمستوى الموديل — بدونها ProposedMemberOut.department كان
-            # سيسبّب MissingGreenlet أول ما يُقرأ الحقل بجلسة async.
-            selectinload(CommitteeFormationRequest.proposed_members).selectinload(User.department),
-            # صراحةً رغم lazy="selectin" على مستوى الـ Model (نفس نمط
-            # requester/proposed_members أعلاه) — لازم هنا تحديدًا لأن
-            # approve_request يستدعي _get_request_or_raise مرتين: قبل
-            # إنشاء اللجنة (حيث committee لا تزال None) وبعد commit()
-            # لإنشائها.
-            selectinload(CommitteeFormationRequest.committee),
-        )
+        # إعادة هيكلة 2026-10-24: راجعي _request_load_options. committee
+        # مُحمَّلة صراحةً لأن approve_request يستدعي _get_request_or_raise
+        # مرتين: قبل إنشاء اللجنة (committee = None) وبعد commit() لإنشائها.
+        .options(*_request_load_options(with_committee=True))
         # AsyncSessionLocal مُعرَّف بـexpire_on_commit=False (app/db/session.py)
         # — أي أن الكائن الذي حُمِّل بأول استدعاء لـ_get_request_or_raise
         # (حيث committee = None، قبل إنشاء اللجنة) يبقى في الـ Identity Map
@@ -162,14 +188,48 @@ def _assert_dates_valid(start_date: date, end_date: date) -> None:
         raise ValueError("تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية")
 
 
+def _resolve_period(
+    duration_type: CommitteeDurationType,
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[date | None, date | None]:
+    """
+    الهدف: المصدر الوحيد لقاعدة "نوع مدة اللجنة" (الهجرة 0037، طلب صاحبة
+    المشروع 2026-10-29) لطلبات التشكيل — إنشاءً وتعديلًا.
+
+    المدخلات: نوع المدة والتاريخان النهائيان (بعد دمج القيم المحفوظة مع
+    المُرسَلة عند التعديل).
+
+    المخرجات: (start_date, end_date) كما تُحفظ — (None, None) للدائمة.
+
+    قواعد العمل:
+    - دائمة: تُمسح التواريخ دائمًا (حتى لو كانت محفوظة من نوع سابق).
+    - مؤقتة: التاريخان إلزاميان، والنهاية بعد البداية.
+
+    الأخطاء: ValueError (تُترجَم إلى 400) عند نقص تاريخ للمؤقتة أو ترتيب خاطئ.
+    """
+    if duration_type == CommitteeDurationType.permanent:
+        return None, None
+    if start_date is None or end_date is None:
+        raise ValueError("تاريخ البداية والنهاية مطلوبان للجنة المؤقتة")
+    _assert_dates_valid(start_date, end_date)
+    return start_date, end_date
+
+
+def _iso(value: date | None) -> str | None:
+    """تحويل تاريخ اختياري لنص ISO لسجل العمليات (None للجنة الدائمة)."""
+    return value.isoformat() if value is not None else None
+
+
 async def create_request(
     db: AsyncSession,
     *,
     actor_user_id: uuid.UUID,
     committee_name: str,
     statement: str | None,
-    start_date: date,
-    end_date: date,
+    duration_type: CommitteeDurationType,
+    start_date: date | None,
+    end_date: date | None,
     proposed_member_ids: list[uuid.UUID],
     chair_user_id: uuid.UUID,
 ) -> CommitteeFormationRequest:
@@ -182,7 +242,7 @@ async def create_request(
     هنا أيضًا (طبقة الخدمة هي مصدر الحقيقة الفعلي، والـSchema مجرد تحقق
     مبكر لتجربة مستخدم أفضل).
     """
-    _assert_dates_valid(start_date, end_date)
+    start_date, end_date = _resolve_period(duration_type, start_date, end_date)
     members = await _resolve_members(db, proposed_member_ids)
     if chair_user_id not in {m.user_id for m in members}:
         raise ValueError("رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
@@ -190,6 +250,7 @@ async def create_request(
     request = CommitteeFormationRequest(
         committee_name=committee_name,
         statement=statement,
+        duration_type=duration_type,
         start_date=start_date,
         end_date=end_date,
         status=CommitteeRequestStatus.draft,
@@ -206,11 +267,18 @@ async def create_request(
         action_type="create",
         target_type="committee_formation_request",
         target_id=request.request_id,
-        metadata={"committee_name": committee_name, "member_count": len(members)},
+        metadata={
+            "committee_name": committee_name,
+            "member_count": len(members),
+            "duration_type": duration_type.value,
+        },
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 def _visible_statuses_for(actor: User) -> list[CommitteeRequestStatus]:
@@ -254,12 +322,7 @@ async def list_requests(
     """
     stmt = (
         select(CommitteeFormationRequest)
-        .options(
-            selectinload(CommitteeFormationRequest.requester),
-            # .selectinload(User.department) إضافية هنا (2026-09-13) —
-            # راجعي نفس الملاحظة بـ_load_request أعلاه.
-            selectinload(CommitteeFormationRequest.proposed_members).selectinload(User.department),
-        )
+        .options(*_request_load_options(with_committee=True))
         .order_by(CommitteeFormationRequest.created_at.desc())
     )
     if not can_view_all:
@@ -302,6 +365,7 @@ async def update_request(
     request_id: uuid.UUID,
     committee_name: str | None,
     statement: str | None,
+    duration_type: CommitteeDurationType | None,
     start_date: date | None,
     end_date: date | None,
     proposed_member_ids: list[uuid.UUID] | None,
@@ -358,15 +422,19 @@ async def update_request(
             "الطلب في حالة نهائية (معتمد أو مرفوض) ولا يمكن تعديله"
         )
 
-    new_start = start_date if start_date is not None else request.start_date
-    new_end = end_date if end_date is not None else request.end_date
-    _assert_dates_valid(new_start, new_end)
+    new_type = duration_type if duration_type is not None else request.duration_type
+    new_start, new_end = _resolve_period(
+        new_type,
+        start_date if start_date is not None else request.start_date,
+        end_date if end_date is not None else request.end_date,
+    )
 
     before = {
         "committee_name": request.committee_name,
         "statement": request.statement,
-        "start_date": request.start_date.isoformat(),
-        "end_date": request.end_date.isoformat(),
+        "duration_type": request.duration_type.value,
+        "start_date": _iso(request.start_date),
+        "end_date": _iso(request.end_date),
         "member_ids": sorted(str(u.user_id) for u in request.proposed_members),
         "chair_user_id": str(request.chair_user_id) if request.chair_user_id else None,
     }
@@ -375,6 +443,7 @@ async def update_request(
         request.committee_name = committee_name
     if statement is not None:
         request.statement = statement
+    request.duration_type = new_type
     request.start_date = new_start
     request.end_date = new_end
     if proposed_member_ids is not None:
@@ -399,8 +468,11 @@ async def update_request(
         metadata={"before": before},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def submit_request(
@@ -437,8 +509,11 @@ async def submit_request(
         metadata={"from_status": from_status.value, "to_status": request.status.value},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def return_to_admin_request(
@@ -482,8 +557,11 @@ async def return_to_admin_request(
         metadata={"direction": "office_to_admin", "return_reason": return_reason},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def return_to_office_request(
@@ -514,8 +592,11 @@ async def return_to_office_request(
         metadata={"direction": "ceo_to_office", "return_reason": return_reason},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def escalate_request(
@@ -538,6 +619,10 @@ async def escalate_request(
 
     request.status = CommitteeRequestStatus.pending_approval
     request.return_reason = None  # لو كان راجعًا من الرئيس التنفيذي سابقًا، السبب لم يعد ساريًا
+    # طلب لاما 2026-11-01: يظهر بصفحة الطلب مَن رفعه من المكتب التنفيذي ومتى
+    # (آخر رفع — يُستبدل لو أُرجع الطلب ثم رُفع مرة ثانية).
+    request.escalated_by = actor.user_id
+    request.escalated_at = datetime.now(timezone.utc)
 
     await audit_service.log_action(
         db,
@@ -548,8 +633,11 @@ async def escalate_request(
         metadata={"to_status": request.status.value},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 async def approve_request(
@@ -575,16 +663,19 @@ async def approve_request(
     # (طلب لاما 2026-08-31: "عند تحديد الأعضاء... يتم تلقائيًا اعتبار كل
     # الأعضاء الآخرين المختارين أعضاء عاديين"). هذا لا يغيّر System Role
     # للمستخدم إطلاقًا — فقط committee_members.committee_role_id.
-    chair_role_result = await db.execute(select(Role).where(Role.committee_role_slug == "chair"))
-    chair_role = chair_role_result.scalar_one()
-    member_role_result = await db.execute(
-        select(Role).where(Role.committee_role_slug == "member")
-    )
-    member_role = member_role_result.scalar_one()
+    # معرّفا الدورين فقط (select(Role) كان يجرّ كل صلاحيات الدورين تلقائيًا).
+    chair_role_id = (
+        await db.execute(select(Role.role_id).where(Role.committee_role_slug == "chair"))
+    ).scalar_one()
+    member_role_id = (
+        await db.execute(select(Role.role_id).where(Role.committee_role_slug == "member"))
+    ).scalar_one()
 
     committee = Committee(
         name=request.committee_name,
         statement=request.statement,
+        # النوع يُنسَخ مرة واحدة هنا ولا يتغيّر بعد الاعتماد (قرار 2026-10-29).
+        duration_type=request.duration_type,
         start_date=request.start_date,
         end_date=request.end_date,
         source_request_id=request.request_id,
@@ -592,9 +683,7 @@ async def approve_request(
             CommitteeMember(
                 user_id=member.user_id,
                 committee_role_id=(
-                    chair_role.role_id
-                    if member.user_id == request.chair_user_id
-                    else member_role.role_id
+                    chair_role_id if member.user_id == request.chair_user_id else member_role_id
                 ),
             )
             for member in request.proposed_members
@@ -612,8 +701,11 @@ async def approve_request(
         metadata={"to_status": request.status.value},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result
 
 
 class CommitteeNotFoundError(Exception):
@@ -642,19 +734,30 @@ def _committee_detail_load_options() -> tuple:
     هذه الدالة (list_committees/get_committee/update_committee — الثلاثة
     تُرجع نفس CommitteeOut بالضبط).
     """
+    # إعادة هيكلة 2026-10-24: نفس البيانات، باستعلامات أقل — رئيس اللجنة
+    # وuser/committee_role لكل عضوية علاقات many-to-one تُدمَج بـJOIN داخل
+    # استعلامها بدل استعلام selectin مستقل لكل منها (6 → 3 استعلامات)،
+    # وraiseload بدل noload: أي قراءة مستقبلية لعلاقة غير محمَّلة تفشل بخطأ
+    # واضح بدل أن تُرجع قائمة فارغة/None بصمت.
+    member_roles = selectinload(Committee.member_roles)
+    members = selectinload(Committee.members)
+    chair = joinedload(Committee.chair)
     return (
-        selectinload(Committee.members).options(noload(User.role), noload(User.job_title)),
-        selectinload(Committee.member_roles).options(
-            selectinload(CommitteeMember.user).options(noload(User.role), noload(User.job_title)),
-            selectinload(CommitteeMember.committee_role).options(
-                noload(Role.role_permission_links)
-            ),
-        ),
-        selectinload(Committee.chair).options(noload(User.role), noload(User.job_title)),
+        members,
+        members.raiseload("*", sql_only=True),
+        member_roles,
+        member_roles.joinedload(CommitteeMember.user).raiseload("*", sql_only=True),
+        member_roles.joinedload(CommitteeMember.committee_role).raiseload("*", sql_only=True),
+        member_roles.raiseload("*", sql_only=True),
+        chair,
+        chair.raiseload("*", sql_only=True),
+        raiseload("*", sql_only=True),
     )
 
 
-async def list_committees(db: AsyncSession, *, actor: User, scope: str) -> list[Committee]:
+async def list_committees(
+    db: AsyncSession, *, actor: User, scope: str, summary: bool = False
+) -> list[Committee]:
     """
     عرض اللجان المعتمدة (صلاحية committees.view، بعد إعادة تسمية
     committees.view_authorized — migration 0014). سطح قراءة بسيط فقط
@@ -675,9 +778,13 @@ async def list_committees(db: AsyncSession, *, actor: User, scope: str) -> list[
       فيه إدارة يُقارَن بها أصلًا.
     - all: كل اللجان بدون تصفية.
     """
-    stmt = select(Committee).options(*_committee_detail_load_options()).order_by(
-        Committee.created_at.desc()
+    # summary=True (لوحة التحكم — تعرض الاسم والمعرّف فقط): أعمدة اللجنة وحدها
+    # بلا الأعضاء/أدوارهم/الرئيس (3 استعلامات أقل). التصفية بالنطاق أدناه شروط
+    # SQL لا تحتاج تحميل أي علاقة (تحسين أداء 2026-10-24).
+    load_options = (
+        (raiseload("*", sql_only=True),) if summary else _committee_detail_load_options()
     )
+    stmt = select(Committee).options(*load_options).order_by(Committee.created_at.desc())
     if scope == "own":
         stmt = stmt.where(
             or_(
@@ -788,10 +895,18 @@ async def update_committee(
     صلاحية نظامية بسيطة، بلا حاجة لفحص نطاق (دائمًا 'all' للأدوار
     الممنوحة لها، راجعي 0032_committee_dates_update_grant.sql).
     """
-    result = await db.execute(select(Committee).where(Committee.committee_id == committee_id))
+    # أعمدة اللجنة فقط هنا (التواريخ) — الشكل الكامل يُحمَّل بعد commit.
+    result = await db.execute(
+        select(Committee)
+        .where(Committee.committee_id == committee_id)
+        .options(raiseload("*", sql_only=True))
+    )
     committee = result.scalar_one_or_none()
     if committee is None or committee.is_deleted:
         raise CommitteeNotFoundError("اللجنة غير موجودة")
+    # نوع اللجنة ثابت بعد الاعتماد (قرار 2026-10-29) — الدائمة بلا فترة أصلًا.
+    if committee.is_permanent:
+        raise ValueError("اللجنة دائمة وليس لها فترة زمنية قابلة للتعديل")
 
     new_start = start_date if start_date is not None else committee.start_date
     new_end = end_date if end_date is not None else committee.end_date
@@ -827,8 +942,11 @@ async def update_committee(
         select(Committee)
         .options(*_committee_detail_load_options())
         .where(Committee.committee_id == committee_id)
+        # الكائن موجود بالجلسة بأعمدته فقط (أعلاه) — populate_existing يحمّل
+        # عليه شكل CommitteeOut الكامل فعلًا.
+        .execution_options(populate_existing=True)
     )
-    return result.scalar_one()
+    return result.unique().scalar_one()
 
 
 async def get_committee_role_permission_codes(
@@ -959,7 +1077,9 @@ async def user_has_committee_role_documents_view_access(db: AsyncSession, *, use
     الأدوار ينعكس هنا فورًا بلا أي مفاجآت. مُستدعاة فقط كبديل (fallback)
     بعد فشل فحص الصلاحية النظامية أولًا (قصيرة الدارة — استعلام واحد خفيف
     فقط لمن لا يملك الصلاحية النظامية أصلًا؛ راجعي app/api/v1/documents.py
-    لمكان الاستدعاء).
+    لمكان الاستدعاء). نسخة مدمجة بنفس الاستعلام الواحد مستخدَمة أيضًا
+    داخل committee_membership_flags أدناه لمسار GET /users/me وauth.login
+    تحديدًا (بلا استعلام رابع منفصل على ذاك المسار شائع الاستدعاء).
     """
     stmt = (
         select(func.count())
@@ -973,6 +1093,51 @@ async def user_has_committee_role_documents_view_access(db: AsyncSession, *, use
     )
     result = await db.execute(stmt)
     return (result.scalar() or 0) > 0
+
+
+async def committee_membership_flags(
+    db: AsyncSession, *, user_id: uuid.UUID
+) -> tuple[bool, bool, bool]:
+    """
+    (has_committee_membership_access, has_any_committee_membership,
+    has_committee_documents_view_access) لـGET /users/me وauth.login
+    باستعلام واحد بدل 3 استعلامات متتالية (تحسين أداء 2026-10-24، وُسِّع
+    2026-11-01 ليشمل صلاحية الوثائق بنفس الاستعلام بدل استعلام رابع منفصل
+    على هذا المسار شائع الاستدعاء تحديدًا) — نفس شروط
+    user_has_committee_role_view_access وuser_has_any_committee_membership
+    وuser_has_committee_role_documents_view_access أعلاه حرفيًا، كـscalar
+    subqueries داخل SELECT واحد.
+    """
+    view_access = (
+        select(func.count())
+        .select_from(committee_members)
+        .join(RolePermission, RolePermission.role_id == committee_members.c.committee_role_id)
+        .join(Permission, Permission.permission_id == RolePermission.permission_id)
+        .where(
+            committee_members.c.user_id == user_id,
+            Permission.code == "committees.view",
+        )
+        .scalar_subquery()
+    )
+    any_membership = (
+        select(func.count())
+        .select_from(committee_members)
+        .where(committee_members.c.user_id == user_id)
+        .scalar_subquery()
+    )
+    documents_view_access = (
+        select(func.count())
+        .select_from(committee_members)
+        .join(RolePermission, RolePermission.role_id == committee_members.c.committee_role_id)
+        .join(Permission, Permission.permission_id == RolePermission.permission_id)
+        .where(
+            committee_members.c.user_id == user_id,
+            Permission.code == "committee.documents.view",
+        )
+        .scalar_subquery()
+    )
+    row = (await db.execute(select(view_access, any_membership, documents_view_access))).one()
+    return (row[0] or 0) > 0, (row[1] or 0) > 0, (row[2] or 0) > 0
 
 
 async def user_has_any_committee_membership(db: AsyncSession, *, user_id: uuid.UUID) -> bool:
@@ -1082,5 +1247,8 @@ async def reject_request(
         metadata={"to_status": request.status.value, "rejection_reason": rejection_reason},
     )
 
+    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+    await db.flush()
+    result = await _get_request_or_raise(db, request.request_id)
     await db.commit()
-    return await _get_request_or_raise(db, request.request_id)
+    return result

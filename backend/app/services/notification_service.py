@@ -47,10 +47,12 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
+from html import escape as _escape_html
 from typing import Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import raiseload
 
 from app.core.email_client import send_email
 from app.core.redis_client import redis_client
@@ -136,6 +138,74 @@ def _wrap_html(body_inner: str) -> str:
         f"{body_inner}"
         "</div>"
     )
+
+
+async def notify_password_reset_code(
+    *, email: str, first_name: str | None, otp_code: str, expires_minutes: int
+) -> None:
+    """
+    الهدف:
+    FR-UM-018: إرسال رمز استعادة كلمة المرور (OTP) لبريد المستخدم.
+
+    المدخلات:
+    - email: str — بريد المستخدم المسجّل (من قاعدة البيانات، لا من الطلب).
+    - first_name: str | None — للتحية فقط (يُهرَّب HTML).
+    - otp_code: str — الرمز الصريح (6 أرقام) — لا يُسجَّل بالسجلات أبدًا.
+    - expires_minutes: int — مدة صلاحية الرمز لعرضها بالرسالة.
+
+    المخرجات: None.
+
+    التأثيرات الجانبية: بريد واحد عبر send_email فقط — بدون إشعار داخل
+    النظام (المستخدم غير مسجّل دخول أصلًا). لا يرفع أي استثناء (send_email
+    تُمسك أخطاءها) — تُستدعى عبر run_detached من POST /auth/forgot-password.
+    """
+    greeting = f"مرحبًا {_escape_html(first_name)}،" if first_name else "مرحبًا،"
+    body = _wrap_html(
+        f"<p>{greeting}</p>"
+        "<p>وصلنا طلب لاستعادة كلمة المرور لحسابك في نظام إدارة اللجان. رمز التحقق:</p>"
+        '<p style="font-size: 28px; font-weight: bold; letter-spacing: 8px; '
+        f'direction: ltr; text-align: center;">{otp_code}</p>'
+        f"<p>الرمز صالح لمدة {expires_minutes} دقيقة ولاستخدام واحد فقط.</p>"
+        "<p>إذا لم تطلب استعادة كلمة المرور، تجاهل هذه الرسالة — كلمة مرورك الحالية لن تتغير.</p>"
+    )
+    await send_email(to=[email], subject="رمز استعادة كلمة المرور — نظام إدارة اللجان", html_body=body)
+
+
+async def notify_imported_users_credentials(
+    accounts: list[tuple[str, str | None, str, str]], *, login_url: str | None
+) -> None:
+    """
+    الهدف:
+    رفع ملف المستخدمين (users.import): إرسال بيانات الدخول لكل مستخدم أُنشئ
+    من الملف — رسالة منفصلة لكل واحد (لا يرى أحد بيانات غيره).
+
+    المدخلات:
+    - accounts: قائمة (email, first_name, username, temporary_password).
+      كلمات المرور هنا صريحة للإرسال فقط — لا تُسجَّل بالسجلات أبدًا.
+    - login_url: رابط صفحة الدخول (FRONTEND_URL) أو None لإخفاء الرابط.
+
+    التأثيرات الجانبية: بريد لكل مستخدم عبر send_email (بالتسلسل). لا يرفع
+    أي استثناء — send_email تُمسك أخطاءها. تُستدعى عبر run_detached بعد commit.
+    ملاحظة أمنية: الحساب ينشأ بـmust_change_password=True — كلمة المرور المؤقتة
+    تُستبدل إجباريًا عند أول دخول (FR-UM-016).
+    """
+    login_html = (
+        f'<p><a href="{_escape_html(login_url)}">الدخول إلى النظام</a></p>' if login_url else ""
+    )
+    for email, first_name, username, temporary_password in accounts:
+        greeting = f"مرحبًا {_escape_html(first_name)}،" if first_name else "مرحبًا،"
+        body = _wrap_html(
+            f"<p>{greeting}</p>"
+            "<p>تم إنشاء حسابك في نظام إدارة اللجان والاجتماعات — شركة وادي مكة للتقنية.</p>"
+            "<ul>"
+            f'<li><strong>اسم المستخدم:</strong> <span dir="ltr">{_escape_html(username)}</span></li>'
+            f'<li><strong>كلمة المرور المؤقتة:</strong> <span dir="ltr">{_escape_html(temporary_password)}</span></li>'
+            "</ul>"
+            "<p>سيُطلب منك تعيين كلمة مرور جديدة عند أول تسجيل دخول.</p>"
+            f"{login_html}"
+            "<p>إذا لم تكن تتوقع هذه الرسالة، تواصل مع مسؤول النظام.</p>"
+        )
+        await send_email(to=[email], subject="بيانات الدخول إلى نظام إدارة اللجان", html_body=body)
 
 
 async def notify_meeting_created(meeting: Meeting, *, actor_user_id: uuid.UUID | None = None) -> None:
@@ -587,8 +657,13 @@ async def notify_committee_created(committee: Committee) -> None:
     body = _wrap_html(
         "<p>تم اعتماد وإنشاء اللجنة التالية:</p>"
         f"<h3>{committee.name}</h3>"
-        f"<p><strong>تاريخ انتهاء عمل اللجنة:</strong> "
-        f"{committee.end_date.strftime('%Y-%m-%d')}</p>"
+        + (
+            # اللجنة الدائمة بلا تاريخ انتهاء (الهجرة 0037).
+            "<p><strong>نوع اللجنة:</strong> دائمة</p>"
+            if committee.end_date is None
+            else f"<p><strong>تاريخ انتهاء عمل اللجنة:</strong> "
+            f"{committee.end_date.strftime('%Y-%m-%d')}</p>"
+        )
     )
     await send_email(to=_committee_member_emails(committee), subject=subject, html_body=body)
 
@@ -722,6 +797,9 @@ async def list_notifications(
     result = await db.execute(
         select(Notification)
         .where(*conditions)
+        # NotificationOut أعمدة فقط — recipient (lazy="selectin") كان يجرّ
+        # المستلم ودوره وكل صلاحياته ومسماه مع كل صفحة (إعادة هيكلة 2026-10-24).
+        .options(raiseload("*", sql_only=True))
         .order_by(Notification.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -783,7 +861,13 @@ async def get_unread_count(db: AsyncSession, *, actor: User) -> int:
 
 
 async def _load_own_notification(db: AsyncSession, *, actor: User, notification_id: uuid.UUID) -> Notification:
-    notification = await db.get(Notification, notification_id)
+    notification = (
+        await db.execute(
+            select(Notification)
+            .where(Notification.notification_id == notification_id)
+            .options(raiseload("*", sql_only=True))
+        )
+    ).scalar_one_or_none()
     if notification is None:
         raise NotificationNotFoundError("الإشعار غير موجود")
     if notification.recipient_user_id != actor.user_id:
@@ -797,28 +881,28 @@ async def mark_as_read(db: AsyncSession, *, actor: User, notification_id: uuid.U
         notification.is_read = True
         notification.read_at = datetime.now(UTC)
         await db.commit()
-        await db.refresh(notification)
         await _invalidate_unread_count(actor.user_id)
     return notification
 
 
 async def mark_all_as_read(db: AsyncSession, *, actor: User) -> int:
     """يعلّم كل إشعارات المستخدم الحالي غير المقروءة كمقروءة، ويُرجع عددها."""
+    # UPDATE واحد بدل تحميل كل الإشعارات غير المقروءة (ومستلمها بشجرته)
+    # ثم تعديلها واحدًا واحدًا (إعادة هيكلة 2026-10-24) — نفس النتيجة والعدد.
     result = await db.execute(
-        select(Notification).where(
+        update(Notification)
+        .where(
             Notification.recipient_user_id == actor.user_id,
             Notification.is_read.is_(False),
         )
+        .values(is_read=True, read_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False)
     )
-    unread = list(result.scalars().all())
-    now = datetime.now(UTC)
-    for notification in unread:
-        notification.is_read = True
-        notification.read_at = now
-    if unread:
+    count = result.rowcount or 0
+    if count:
         await db.commit()
         await _invalidate_unread_count(actor.user_id)
-    return len(unread)
+    return count
 
 
 async def notify_minutes_sent_for_signature(

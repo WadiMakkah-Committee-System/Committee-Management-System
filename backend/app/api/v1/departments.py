@@ -38,6 +38,16 @@ router = APIRouter(prefix="/departments", tags=["Departments"])
 async def create_department(
     payload: DepartmentCreate, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> DepartmentOut:
+    # إضافة أعضاء وقت الإنشاء تعني نقل مستخدمين من إداراتهم — تتطلب قدرة
+    # تعديل أي مستخدم (users.update بنطاق all) وليس فقط departments.create،
+    # تفاديًا لتصعيد صلاحيات لو مُنحت departments.create لدور آخر مستقبلًا.
+    if payload.member_user_ids and not (
+        current_user.is_super_admin or current_user.scope_for("users.update") == "all"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="لا تملك صلاحية إضافة أعضاء للإدارة عند إنشائها",
+        )
     try:
         department = await department_service.create_department(
             db,
@@ -46,6 +56,7 @@ async def create_department(
             code=payload.code,
             description=payload.description,
             manager_user_id=payload.manager_user_id,
+            member_user_ids=payload.member_user_ids,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

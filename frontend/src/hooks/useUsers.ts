@@ -26,8 +26,14 @@ export function useMe() {
   return useQuery({ queryKey: usersKeys.me, queryFn: usersApi.fetchMe })
 }
 
-export function useUsers() {
-  return useQuery({ queryKey: usersKeys.all, queryFn: () => usersApi.fetchUsers() })
+/** options.enabled: لقوائم الاختيار داخل نماذج مغلقة افتراضيًا — لا تُجلب قائمة
+ * كل المستخدمين إلا عند فتح النموذج فعليًا (نفس نمط useRoles/useJobTitles). */
+export function useUsers(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: usersKeys.all,
+    queryFn: () => usersApi.fetchUsers(),
+    enabled: options?.enabled ?? true,
+  })
 }
 
 export function useUserDetail(userId: string | undefined) {
@@ -84,6 +90,35 @@ export function useReactivateUser() {
     onSuccess: (_data, userId) => {
       invalidateUserRelatedQueries(queryClient)
       queryClient.invalidateQueries({ queryKey: usersKeys.detail(userId) })
+    },
+  })
+}
+
+/**
+ * رفع ملف المستخدمين (users.import): ينشئ المستخدمين ثم يحدّث قوائم
+ * المستخدمين والإدارات (قد تُنشأ إدارات جديدة) والأدوار.
+ */
+export function useImportUsers() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => usersApi.importUsers(file),
+    onSuccess: () => invalidateUserRelatedQueries(queryClient),
+  })
+}
+
+/** تحميل نموذج رفع المستخدمين كملف .xlsx (يمر عبر axios لأن التحميل يحتاج التوكن). */
+export function useDownloadImportTemplate() {
+  return useMutation({
+    mutationFn: async () => {
+      const blob = await usersApi.fetchImportTemplate()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'نموذج_بيانات_المستخدمين.xlsx'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
     },
   })
 }

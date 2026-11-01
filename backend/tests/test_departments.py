@@ -239,3 +239,132 @@ async def test_non_super_admin_cannot_get_department_by_id(
 
     response = await client.get(f"/api/v1/departments/{dep_id}", headers=member_headers)
     assert response.status_code == 403
+
+
+# ===================== أعضاء الإدارة من نموذج الإنشاء (2026-10-29) =====================
+
+
+async def _create_plain_user(
+    client: AsyncClient, auth_headers: dict[str, str], roles_by_name: dict[str, str], username: str,
+    dep_id: str | None = None,
+) -> str:
+    """ينشئ مستخدمًا عاديًا (دور admin) ويرجع معرّفه — بلا تسجيل دخول."""
+    response = await client.post(
+        "/api/v1/users",
+        json={
+            "first_name": "أ",
+            "middle_name": "ب",
+            "last_name": "ج",
+            "username": username,
+            "email": f"{username}@example.com",
+            "password": "StrongPass1",
+            "role_id": roles_by_name["admin"],
+            "dep_id": dep_id,
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["user_id"]
+
+
+async def test_create_department_with_members_adds_and_moves_them(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """الأعضاء المحدَّدون يُضافون للإدارة الجديدة، ومن كان بإدارة أخرى يُنقَل منها."""
+    old = await client.post(
+        "/api/v1/departments",
+        json={"name": "إدارة قديمة", "code": "OLD", "description": None,
+              "manager_user_id": str(super_admin_user.user_id)},
+        headers=auth_headers,
+    )
+    old_dep_id = old.json()["dep_id"]
+    free_user = await _create_plain_user(client, auth_headers, roles_by_name, "dm_free")
+    moved_user = await _create_plain_user(client, auth_headers, roles_by_name, "dm_moved", old_dep_id)
+    manager = await _create_plain_user(client, auth_headers, roles_by_name, "dm_manager")
+
+    response = await client.post(
+        "/api/v1/departments",
+        json={
+            "name": "إدارة جديدة بأعضاء",
+            "code": "NEWM",
+            "description": None,
+            "manager_user_id": manager,
+            # المسؤول مكرر بالقائمة عمدًا — يجب ألا يسبب خطأ.
+            "member_user_ids": [free_user, moved_user, manager],
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 201, response.text
+    dep_id = response.json()["dep_id"]
+
+    detail = await client.get(f"/api/v1/departments/{dep_id}", headers=auth_headers)
+    member_ids = {m["user_id"] for m in detail.json()["members"]}
+    assert member_ids == {free_user, moved_user, manager}
+
+    old_detail = await client.get(f"/api/v1/departments/{old_dep_id}", headers=auth_headers)
+    assert moved_user not in {m["user_id"] for m in old_detail.json()["members"]}
+
+
+async def test_create_department_with_unknown_member_creates_nothing(
+    client: AsyncClient, auth_headers, super_admin_user: User
+) -> None:
+    """عضو غير موجود يرفض الطلب كاملًا — لا تُنشأ الإدارة أصلًا (معاملة واحدة)."""
+    payload = {
+        "name": "إدارة بعضو وهمي",
+        "code": "GHOST",
+        "description": None,
+        "manager_user_id": str(super_admin_user.user_id),
+        "member_user_ids": ["00000000-0000-0000-0000-000000000001"],
+    }
+    response = await client.post("/api/v1/departments", json=payload, headers=auth_headers)
+    assert response.status_code == 400, response.text
+
+    payload["member_user_ids"] = []
+    retry = await client.post("/api/v1/departments", json=payload, headers=auth_headers)
+    assert retry.status_code == 201, retry.text  # الاسم/الرمز لم يُحجزا بالمحاولة الفاشلة
+
+
+async def test_create_department_duplicate_member_ids_rejected(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    user = await _create_plain_user(client, auth_headers, roles_by_name, "dm_dup")
+    response = await client.post(
+        "/api/v1/departments",
+        json={"name": "إدارة تكرار", "code": "DUPM", "description": None,
+              "manager_user_id": str(super_admin_user.user_id), "member_user_ids": [user, user]},
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+async def test_adding_members_on_create_requires_users_update_all(
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
+) -> None:
+    """departments.create وحدها لا تكفي لنقل مستخدمين — تتطلب users.update بنطاق all."""
+    from tests.test_committees import _create_role_and_login
+
+    headers, _ = await _create_role_and_login(
+        client,
+        auth_headers,
+        username="dm_creator",
+        permission_codes=["departments.create", "departments.view"],
+        permission_scopes={"departments.create": "all", "departments.view": "all"},
+    )
+    target = await _create_plain_user(client, auth_headers, roles_by_name, "dm_target")
+
+    forbidden = await client.post(
+        "/api/v1/departments",
+        json={"name": "إدارة ممنوعة", "code": "NOPE", "description": None,
+              "manager_user_id": str(super_admin_user.user_id), "member_user_ids": [target]},
+        headers=headers,
+    )
+    assert forbidden.status_code == 403, forbidden.text
+
+    # بدون أعضاء: السلوك القديم كما هو.
+    allowed = await client.post(
+        "/api/v1/departments",
+        json={"name": "إدارة مسموحة", "code": "OKAY", "description": None,
+              "manager_user_id": str(super_admin_user.user_id)},
+        headers=headers,
+    )
+    assert allowed.status_code == 201, allowed.text

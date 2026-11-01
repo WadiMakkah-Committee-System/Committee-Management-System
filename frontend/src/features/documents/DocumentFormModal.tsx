@@ -54,9 +54,9 @@ interface DocumentFormModalProps {
   document?: Document | null
   categories: DocumentCategory[]
   /** إدارات مُتاحة للمستخدم الحالي لإتاحة الوثيقة لها فقط (مبدأ أقل صلاحية ممكنة) — راجعي useDocumentPublishTargets، وليس القائمة الكاملة لكل إدارات الشركة. */
-  departments: Department[]
+  departments: Array<Pick<Department, 'dep_id' | 'name'>>
   /** لجان مُتاحة للمستخدم الحالي فقط، لنفس سبب departments أعلاه. */
-  committees: Committee[]
+  committees: Array<Pick<Committee, 'committee_id' | 'name'>>
   users: User[]
   /**
    * عند الرفع من داخل صفحة لجنة معيّنة (قسم "وثائق اللجنة")، نطاق

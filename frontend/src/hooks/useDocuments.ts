@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as documentsApi from '@/api/documents'
-import type { DocumentUpdatePayload } from '@/types'
+import type { Document, DocumentUpdatePayload } from '@/types'
+import { seedFromLists } from '@/lib/listCache'
+import { applyOptimistic, removeFromLists, rollbackOptimistic } from '@/lib/optimistic'
+import { REFERENCE_STALE_TIME } from '@/hooks/useCommittees'
 
 export const documentsKeys = {
   all: ['documents'] as const,
@@ -20,19 +23,37 @@ export function useDocuments(params: documentsApi.ListDocumentsParams = {}) {
   })
 }
 
+/** تحميل مسبق لتفاصيل وثيقة عند مرور الماوس على رابطها (تحسين أداء 2026-10-24). */
+export function usePrefetchDocument() {
+  const queryClient = useQueryClient()
+  return (documentId: string) =>
+    queryClient.prefetchQuery({
+      queryKey: documentsKeys.detail(documentId),
+      queryFn: () => documentsApi.fetchDocument(documentId),
+      // لو العنصر بقائمة حديثة لا يُرسَل طلب (نفس seedFromLists بصفحة التفاصيل).
+      ...seedFromLists<Document>(queryClient, ['documents', 'list'], (d) => d.document_id === documentId),
+    })
+}
+
 export function useDocumentDetail(documentId: string | undefined) {
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: documentsKeys.detail(documentId ?? ''),
     queryFn: () => documentsApi.fetchDocument(documentId as string),
     enabled: !!documentId,
+  // يُعرض فورًا من القائمة إن كان فيها (نفس الشكل) — راجعي lib/listCache.ts.
+    ...seedFromLists<Document>(queryClient, ['documents', 'list'], (d) => d.document_id === documentId),
   })
 }
 
 /** راجعي fetchDocumentPublishTargets — الإدارات واللجان المتاحة للمستخدم الحالي عند رفع/تعديل وثيقة فقط (مبدأ أقل صلاحية ممكنة). */
-export function useDocumentPublishTargets() {
+/** options.enabled: تُستخدم فقط داخل نموذج رفع/تعديل الوثيقة — لا تُجلب إلا عند فتحه. */
+export function useDocumentPublishTargets(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: documentsKeys.publishTargets,
     queryFn: () => documentsApi.fetchDocumentPublishTargets(),
+    staleTime: REFERENCE_STALE_TIME, // بيانات مرجعية — راجعي useCommittees.ts
+    enabled: options?.enabled ?? true,
   })
 }
 
@@ -60,7 +81,16 @@ export function useDeleteDocument() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (documentId: string) => documentsApi.deleteDocument(documentId),
-    onSuccess: () => invalidateDocumentsList(queryClient),
+    // تحديث متفائل: الوثيقة تختفي من كل قوائم الوثائق (بكل فلاترها) فورًا.
+    onMutate: (documentId) =>
+      applyOptimistic(queryClient, [
+        {
+          queryKey: ['documents', 'list'],
+          update: removeFromLists<Document>((d) => d.document_id === documentId),
+        },
+      ]),
+    onError: (_err, _documentId, snapshot) => rollbackOptimistic(queryClient, snapshot),
+    onSettled: () => invalidateDocumentsList(queryClient),
   })
 }
 

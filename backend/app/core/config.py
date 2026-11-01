@@ -32,6 +32,10 @@ class Settings(BaseSettings):
 
     # --- Database ---
       DATABASE_URL: str
+    # مشغّل قاعدة البيانات (تحسين أداء 2026-10-28، راجعي app/db/session.py):
+    # فارغ = اختيار تلقائي (psycopg، أو asyncpg على Windows بدون --reload).
+    # "asyncpg" = الرجوع للمشغّل القديم فورًا بدون تعديل كود.
+      DB_DRIVER: str = ""
 
     # --- Auth / JWT ---
       JWT_SECRET: str
@@ -49,6 +53,13 @@ class Settings(BaseSettings):
       MAX_FAILED_LOGIN_ATTEMPTS: int = 5
       ACCOUNT_LOCKOUT_MINUTES: int = 15
 
+    # --- نسيت كلمة المرور عبر OTP (FR-UM-018 — قرارات لاما 2026-10-31) ---
+    # صلاحية الرمز، أقصى عدد محاولات خاطئة قبل إبطاله (نفس حد FR-UM-019)،
+    # وأقل مدة بين طلبين لنفس البريد (منع إغراق البريد واستهلاك حصة المزوّد).
+      PASSWORD_RESET_OTP_MINUTES: int = 15
+      PASSWORD_RESET_MAX_ATTEMPTS: int = 5
+      PASSWORD_RESET_RESEND_SECONDS: int = 60
+
     # --- Email / SMTP (لإرسال OTP واسترجاع كلمة المرور - FR-UM-018 -
     # ولإشعارات الاجتماعات إنشاء/تعديل/حذف - قرار لاما 2026-09-06) ---
       SMTP_HOST: str = ""
@@ -60,6 +71,12 @@ class Settings(BaseSettings):
       SMTP_FROM_NAME: str = "نظام إدارة اللجان"
       # True لـ Gmail/Outlook القياسي (STARTTLS على المنفذ 587).
       SMTP_USE_TLS: bool = True
+      # مزوّد الإرسال (تحديث 2026-10-31 — Render free يحجب منافذ SMTP، راجعي
+      # رأس core/email_client.py): "smtp" (الافتراضي، السلوك القديم) أو
+      # "resend" أو "brevo" (عبر HTTP API). EMAIL_API_KEY مفتاح المزوّد المختار
+      # فقط (غير مستخدم مع smtp)، والمُرسِل من SMTP_FROM_EMAIL/SMTP_FROM_NAME.
+      EMAIL_PROVIDER: str = "smtp"
+      EMAIL_API_KEY: str = ""
 
     # --- الذكاء الاصطناعي (مراحل لاحقة) ---
       CLAUDE_API_KEY: str = ""
@@ -98,6 +115,11 @@ class Settings(BaseSettings):
     # CORSMiddleware بـmain.py يمنع كل شي افتراضيًا لو ENVIRONMENT != development
     # (مثال: https://committee-app.vercel.app,https://custom-domain.com). ---
       CORS_ORIGINS: str = ""
+
+    # --- رابط الواجهة الأمامية (رفع ملف المستخدمين 2026-11-01): يظهر كرابط
+    # "الدخول إلى النظام" ببريد بيانات الدخول. اختياري — الفارغ يُخفي الرابط
+    # (مثال: https://cms.wadimakkah.sa). ---
+      FRONTEND_URL: str = ""
 
       @property
       def cors_origins_list(self) -> list[str]:

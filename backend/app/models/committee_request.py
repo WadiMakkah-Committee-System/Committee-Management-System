@@ -47,6 +47,19 @@ class CommitteeRequestStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class CommitteeDurationType(str, enum.Enum):
+    """
+    نوع مدة اللجنة (db/migrations/0037_committee_duration_type.sql) — طلب
+    صاحبة المشروع 2026-10-29:
+    - temporary (مؤقتة): بتاريخ بداية ونهاية إلزاميين.
+    - permanent (دائمة): بلا أي تاريخ، وتُعتبر جارية دائمًا بعد الاعتماد.
+    يُحدَّد بطلب التشكيل، ويُنسَخ للجنة عند الاعتماد، ولا يتغيّر بعدها.
+    """
+
+    temporary = "temporary"
+    permanent = "permanent"
+
+
 # الأعضاء المقترحون بالطلب — جدول وسيط بسيط (request_id, user_id)، بنفس
 # نمط role_permissions في role.py. قابل للتعديل فقط أثناء draft/returned
 # (تُفرض هذه القاعدة في الخدمة، Phase 2 — ليست قيدًا بقاعدة البيانات).
@@ -72,8 +85,14 @@ class CommitteeFormationRequest(Base):
     )
     committee_name: Mapped[str] = mapped_column(String(200), nullable=False)
     statement: Mapped[str | None] = mapped_column(Text, nullable=True)
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    duration_type: Mapped[CommitteeDurationType] = mapped_column(
+        SAEnum(CommitteeDurationType, name="committee_duration_type", native_enum=True),
+        nullable=False,
+        server_default=CommitteeDurationType.temporary.value,
+    )
+    # NULL فقط للجنة الدائمة (CHECK chk_committee_formation_requests_dates، الهجرة 0037).
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     status: Mapped[CommitteeRequestStatus] = mapped_column(
         SAEnum(CommitteeRequestStatus, name="committee_request_status", native_enum=True),
@@ -92,6 +111,12 @@ class CommitteeFormationRequest(Base):
     )
     return_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # آخر من رفع الطلب للرئيس التنفيذي ومتى (طلب لاما 2026-11-01 — migration
+    # 0039). يُعبَّآن بـescalate_request فقط؛ NULL = لم يُرفع بعد.
+    escalated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True
+    )
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -102,6 +127,7 @@ class CommitteeFormationRequest(Base):
 
     requester: Mapped["User"] = relationship(foreign_keys=[requested_by], lazy="selectin")  # noqa: F821
     chair: Mapped["User | None"] = relationship(foreign_keys=[chair_user_id], lazy="selectin")  # noqa: F821
+    escalator: Mapped["User | None"] = relationship(foreign_keys=[escalated_by], lazy="selectin")  # noqa: F821
     proposed_members: Mapped[list["User"]] = relationship(  # noqa: F821
         secondary=committee_formation_request_members, lazy="selectin"
     )
