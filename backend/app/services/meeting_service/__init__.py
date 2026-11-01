@@ -55,6 +55,7 @@ Role (own/department/all، من دور المستخدم العام) **أو** ص�
 
 from app.services.meeting_service.agenda import add_agenda_item, delete_agenda_item, update_agenda_item
 from app.services.meeting_service.attachments import (
+    add_agenda_item_attachments,
     add_attachment,
     delete_attachment,
     get_attachment_download,
@@ -109,6 +110,7 @@ __all__ = [
     "MeetingValidationError",
     "RecordingNotFoundError",
     "add_agenda_item",
+    "add_agenda_item_attachments",
     "add_attachment",
     "add_manual_extracted_item",
     "assign_extracted_item_as_decision",

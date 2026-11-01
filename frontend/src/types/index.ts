@@ -657,7 +657,10 @@ export type MeetingAttachmentKind = 'presentation' | 'attachment'
 
 export interface MeetingAttachment {
   document_id: string
-  kind: MeetingAttachmentKind
+  /** 'agenda' = مرفق بند جدول أعمال (2026-11-01) — يُرفع عبر مسار البند لا مسار الاجتماع. */
+  kind: MeetingAttachmentKind | 'agenda'
+  /** البند المرتبط (kind='agenda' فقط). */
+  agenda_item_id?: string | null
   title: string
   file_name: string
   mime_type: string

@@ -43,6 +43,54 @@ export async function extendMeeting(meetingId: string, newEndAt: string): Promis
   return data
 }
 
+/**
+ * POST /meetings/with-attachments (multipart) — طلب لاما 2026-11-01: إنشاء
+ * الاجتماع مع العرض التقديمي ومرفقاته ومرفقات كل بند بطلب واحد، فيُرسل بريد
+ * "اجتماع جديد" واحد فيه كل الملفات (بدل بريد ثم رفع منفصل).
+ * agendaFiles[i] = ملفات البند i بنفس ترتيب payload.agenda_items.
+ * failed_files: ملفات تعذّر رفعها بعد إنشاء الاجتماع (الاجتماع يبقى).
+ */
+export async function createMeetingWithAttachments(
+  payload: MeetingCreatePayload,
+  files: { presentation: File | null; attachments: File[]; agendaFiles: File[][] },
+): Promise<{ meeting: Meeting; failed_files: string[] }> {
+  const form = new FormData()
+  form.append('payload', JSON.stringify(payload))
+  if (files.presentation) form.append('presentation', files.presentation)
+  files.attachments.forEach((f) => form.append('attachments', f))
+  files.agendaFiles.forEach((list, index) =>
+    list.forEach((f) => {
+      form.append('agenda_files', f)
+      form.append('agenda_file_indexes', String(index))
+    }),
+  )
+  const { data } = await apiClient.post<{ meeting: Meeting; failed_files: string[] }>(
+    '/meetings/with-attachments',
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )
+  return data
+}
+
+/**
+ * POST /meetings/{id}/agenda-items/{itemId}/attachments — إرفاق ملفات ببند
+ * بعد إنشاء الاجتماع؛ يرسل بريد "مرفقات جديدة للبند" للمشاركين.
+ */
+export async function uploadAgendaItemAttachments(
+  meetingId: string,
+  agendaItemId: string,
+  files: File[],
+): Promise<MeetingAttachment[]> {
+  const form = new FormData()
+  files.forEach((f) => form.append('files', f))
+  const { data } = await apiClient.post<MeetingAttachment[]>(
+    `/meetings/${meetingId}/agenda-items/${agendaItemId}/attachments`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )
+  return data
+}
+
 export async function updateMeeting(
   meetingId: string,
   payload: MeetingUpdatePayload,

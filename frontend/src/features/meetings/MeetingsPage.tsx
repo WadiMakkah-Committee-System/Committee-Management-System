@@ -17,11 +17,10 @@ import {
 } from 'lucide-react'
 import { useCommittees } from '@/hooks/useCommittees'
 import {
-  useCreateMeeting,
+  useCreateMeetingWithAttachments,
   useDeleteMeeting,
   useMeetings,
   usePrefetchMeeting,
-  useUploadMeetingAttachment,
 } from '@/hooks/useMeetings'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
@@ -124,9 +123,8 @@ export function MeetingsPage() {
   const user = useAuthStore((s) => s.user)
   const { data: meetings, isLoading, isError, refetch } = useMeetings()
   const { data: committees } = useCommittees()
-  const createMutation = useCreateMeeting()
+  const createWithFilesMutation = useCreateMeetingWithAttachments()
   const deleteMutation = useDeleteMeeting()
-  const uploadAttachmentMutation = useUploadMeetingAttachment()
   const { showToast } = useToast()
 
   const [search, setSearch] = useState('')
@@ -258,54 +256,39 @@ export function MeetingsPage() {
   }, [visible])
 
   /**
-   * الإنشاء يحتاج خطوتين متتاليتين: 1) إنشاء الاجتماع نفسه (JSON)، ثم
-   * 2) رفع ملفات العرض التقديمي/المرفقات المؤجَّلة (multipart) — تحتاج
-   * meeting_id الفعلي الناتج من الخطوة الأولى. فشل الرفع لا يُلغي الاجتماع
-   * نفسه (أُنشئ بنجاح فعلًا) — يُعرض تحذيرًا فقط بدل استرجاع كامل.
+   * الإنشاء بطلب واحد (تحديث 2026-11-01 — طلب لاما "إيميل واحد بكل شي"):
+   * الاجتماع + العرض التقديمي + مرفقات الاجتماع + مرفقات كل بند تُرسل معًا
+   * إلى POST /meetings/with-attachments، فيطلع بريد "اجتماع جديد" واحد بعد
+   * حفظ كل الملفات (بدل بريد فوري ثم رفع منفصل كان يصل بلا مرفقات).
+   * ملف تعذّر رفعه لا يُلغي الاجتماع — يُعرض باسمه بتحذير (failed_files).
    */
   async function handleCreate(values: MeetingFormSubmitValues) {
     setFormError(null)
     try {
-      const created = await createMutation.mutateAsync({
-        ...values,
-        // scheduled_end_at اختياري بنوع MeetingFormSubmitValues (يبقى undefined فقط
-        // عند تعديل اجتماع قديم بلا وقت نهاية — راجعي MeetingFormModal.tsx)، لكنه
-        // إلزامي دائمًا هنا لأن buildSchema(isEdit=false) بالنموذج يفرضه قبل نجاح
-        // onSubmit أصلًا — الـ non-null assertion هنا مطابقة لضمان النموذج، لا تحايل عليه.
-        scheduled_end_at: values.scheduled_end_at!,
+      const { meeting: created, failed_files } = await createWithFilesMutation.mutateAsync({
+        payload: {
+          committee_id: values.committee_id,
+          title: values.title,
+          description: values.description,
+          mode: values.mode,
+          location: values.location,
+          scheduled_at: values.scheduled_at,
+          // إلزامي دائمًا هنا — buildSchema(isEdit=false) بالنموذج يفرضه قبل onSubmit.
+          scheduled_end_at: values.scheduled_end_at!,
+          agenda_items: values.agenda_items,
+        },
+        files: {
+          presentation: values.presentationFile,
+          attachments: values.attachmentFiles,
+          agendaFiles: values.agendaFiles,
+        },
       })
 
-      const uploads: Promise<unknown>[] = []
-      if (values.presentationFile) {
-        uploads.push(
-          uploadAttachmentMutation.mutateAsync({
-            meetingId: created.meeting_id,
-            file: values.presentationFile,
-            kind: 'presentation',
-          }),
-        )
-      }
-      for (const file of values.attachmentFiles) {
-        uploads.push(
-          uploadAttachmentMutation.mutateAsync({
-            meetingId: created.meeting_id,
-            file,
-            kind: 'attachment',
-          }),
-        )
-      }
-
       setFormOpen(false)
-      if (uploads.length > 0) {
-        const results = await Promise.allSettled(uploads)
-        const failed = results.filter((r) => r.status === 'rejected').length
-        if (failed > 0) {
-          showToast(`تم إنشاء الاجتماع، لكن تعذّر رفع ${failed} من المرفقات`, 'error')
-        } else {
-          showToast('تم إنشاء الاجتماع ورفع المرفقات بنجاح', 'success')
-        }
+      if (failed_files.length > 0) {
+        showToast(`تم إنشاء الاجتماع، لكن تعذّر رفع: ${failed_files.join('، ')}`, 'error')
       } else {
-        showToast('تم إنشاء الاجتماع بنجاح', 'success')
+        showToast('تم إنشاء الاجتماع وإرسال الدعوة للمشاركين', 'success')
       }
       navigate(`/meetings/${created.meeting_id}`)
     } catch (err) {
@@ -659,7 +642,7 @@ export function MeetingsPage() {
         onClose={() => setFormOpen(false)}
         committees={chairableCommittees}
         onSubmit={handleCreate}
-        loading={createMutation.isPending || uploadAttachmentMutation.isPending}
+        loading={createWithFilesMutation.isPending}
         serverError={formError}
       />
 

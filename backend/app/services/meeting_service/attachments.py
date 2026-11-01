@@ -3,7 +3,7 @@
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,13 +13,18 @@ from app.models.document import Document, DocumentLink
 from app.models.user import User
 from app.services import document_service
 from app.services.meeting_service.access import _require_access
-from app.services.meeting_service.errors import AttachmentNotFoundError
+from app.models.meeting import MeetingAgendaItem
+from app.services.meeting_service.errors import AgendaItemNotFoundError, AttachmentNotFoundError
 from app.services.meeting_service.loading import load_meeting
 
 
 _ATTACHMENT_LINK_TYPE = {
     "presentation": "meeting_presentation",
     "attachment": "meeting_attachment",
+    # مرفقات بنود جدول الأعمال (طلب لاما 2026-11-01): linked_entity_id = معرّف
+    # الاجتماع (مثل بقية الأنواع — فكل الاستعلامات بالاجتماع تبقى كما هي)،
+    # وlink_role = معرّف البند (UUID نصي، 36 حرفًا ضمن VARCHAR(50)).
+    "agenda": "meeting_agenda_attachment",
 }
 
 
@@ -92,8 +97,11 @@ async def add_attachment(
 
 async def list_attachments(
     db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, kind: str | None
-) -> list[tuple[Document, str, datetime]]:
-    """يتطلب meetings.attachments.view. يرجع (الوثيقة، kind، تاريخ الربط) لكل مرفق."""
+) -> list[tuple[Document, str, datetime, uuid.UUID | None]]:
+    """
+    يتطلب meetings.attachments.view. يرجع (الوثيقة، kind، تاريخ الربط، معرّف
+    البند) لكل مرفق — معرّف البند لمرفقات البنود فقط (kind='agenda')، وNone لغيرها.
+    """
     meeting = await load_meeting(db, meeting_id)
     committee = meeting.committee
     await _require_access(
@@ -120,7 +128,12 @@ async def list_attachments(
     result = await db.execute(stmt)
     reverse_kind = {v: k for k, v in _ATTACHMENT_LINK_TYPE.items()}
     return [
-        (document, reverse_kind[link.linked_entity_type], link.linked_at)
+        (
+            document,
+            reverse_kind[link.linked_entity_type],
+            link.linked_at,
+            uuid.UUID(link.link_role) if link.linked_entity_type == _ATTACHMENT_LINK_TYPE["agenda"] and link.link_role else None,
+        )
         for link, document in result.all()
     ]
 
@@ -188,4 +201,101 @@ async def get_attachment_download(
     return document, content
 
 
+async def add_agenda_item_attachments(
+    db: AsyncSession,
+    *,
+    actor: User,
+    meeting_id: uuid.UUID,
+    agenda_item_id: uuid.UUID,
+    files: list[tuple[str, str, bytes]],
+) -> tuple[MeetingAgendaItem, list[tuple[Document, datetime]]]:
+    """
+    الهدف:
+    إرفاق ملف أو أكثر ببند جدول أعمال (طلب لاما 2026-11-01).
 
+    المدخلات:
+    - actor: المستخدم — يتطلب meetings.attachments.add (نفس صلاحية مرفقات الاجتماع).
+    - meeting_id / agenda_item_id: البند يجب أن يتبع هذا الاجتماع نفسه.
+    - files: [(اسم الملف، نوع MIME، المحتوى)].
+
+    المخرجات: (البند، [(الوثيقة، وقت الربط)]).
+
+    التأثيرات الجانبية: كل ملف وثيقة حقيقية (مرئية لأعضاء اللجنة، مثل مرفقات
+    الاجتماع) + document_links بنوع meeting_agenda_attachment ودور = معرّف
+    البند. معاملة واحدة لكل الدفعة (commit واحد). الإشعار البريدي مسؤولية
+    طبقة الـAPI (بعد commit).
+
+    الأخطاء: AgendaItemNotFoundError (البند غير موجود ضمن الاجتماع)،
+    DocumentValidationError (ملف فارغ/أكبر من الحد) من document_service.
+    """
+    meeting = await load_meeting(db, meeting_id)
+    committee = meeting.committee
+    await _require_access(
+        db,
+        actor,
+        committee,
+        "meetings.attachments.add",
+        "ليست لديك صلاحية إضافة مرفقات لهذا الاجتماع",
+    )
+    item = (
+        await db.execute(
+            select(MeetingAgendaItem).where(
+                MeetingAgendaItem.agenda_item_id == agenda_item_id, MeetingAgendaItem.meeting_id == meeting_id
+            )
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        raise AgendaItemNotFoundError("البند غير موجود ضمن هذا الاجتماع")
+
+    created: list[tuple[Document, DocumentLink]] = []
+    for file_name, mime_type, content in files:
+        document = await document_service.create_document(
+            db,
+            actor=actor,
+            title=file_name,
+            description=None,
+            category_id=None,
+            is_public=False,
+            department_ids=[],
+            committee_ids=[committee.committee_id],
+            user_ids=[],
+            file_name=file_name,
+            mime_type=mime_type,
+            content=content,
+        )
+        link = DocumentLink(
+            document_id=document.document_id,
+            linked_entity_type=_ATTACHMENT_LINK_TYPE["agenda"],
+            linked_entity_id=meeting_id,
+            link_role=str(agenda_item_id),
+            linked_by=actor.user_id,
+        )
+        db.add(link)
+        created.append((document, link))
+    await db.flush()
+    for _, link in created:
+        await db.refresh(link)
+    await db.commit()
+    return item, [(document, link.linked_at) for document, link in created]
+
+
+async def delete_agenda_item_attachments(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, agenda_item_id: uuid.UUID) -> None:
+    """
+    حذف (Soft Delete) وثائق مرفقات بند — يُستدعى من delete_agenda_item ضمن
+    نفس معاملته قبل commit (لا commit هنا)، حتى لا تبقى مرفقات يتيمة لبند محذوف.
+    """
+    rows = (
+        await db.execute(
+            select(Document)
+            .join(DocumentLink, DocumentLink.document_id == Document.document_id)
+            .where(
+                DocumentLink.linked_entity_id == meeting_id,
+                DocumentLink.linked_entity_type == _ATTACHMENT_LINK_TYPE["agenda"],
+                DocumentLink.link_role == str(agenda_item_id),
+                Document.deleted_at.is_(None),
+            )
+        )
+    ).scalars().all()
+    now = datetime.now(UTC)
+    for document in rows:
+        document.deleted_at = now

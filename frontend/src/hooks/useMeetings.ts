@@ -117,6 +117,31 @@ export function useCreateMeeting() {
   })
 }
 
+/** إنشاء اجتماع مع كل ملفاته بطلب واحد (بريد واحد) — راجعي api/meetings.ts. */
+export function useCreateMeetingWithAttachments() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      payload,
+      files,
+    }: {
+      payload: MeetingCreatePayload
+      files: { presentation: File | null; attachments: File[]; agendaFiles: File[][] }
+    }) => meetingsApi.createMeetingWithAttachments(payload, files),
+    onSuccess: () => invalidateMeetingQueries(queryClient),
+  })
+}
+
+/** إرفاق ملفات ببند جدول أعمال — يحدّث مرفقات الاجتماع بعد النجاح. */
+export function useUploadAgendaItemAttachments() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ meetingId, agendaItemId, files }: { meetingId: string; agendaItemId: string; files: File[] }) =>
+      meetingsApi.uploadAgendaItemAttachments(meetingId, agendaItemId, files),
+    onSuccess: (_data, variables) => invalidateMeetingQueries(queryClient, variables.meetingId),
+  })
+}
+
 export function useUpdateMeeting() {
   const queryClient = useQueryClient()
   return useMutation({

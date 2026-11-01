@@ -77,6 +77,12 @@ export interface MeetingFormSubmitValues {
   /** ملفات مؤجَّلة الرفع — تُرفع بعد نجاح الإنشاء فقط (تحتاج meeting_id، راجعي MeetingsPage.tsx). فارغة عند التعديل. */
   presentationFile: File | null
   attachmentFiles: File[]
+  /**
+   * مرفقات كل بند (طلب لاما 2026-11-01) — بنفس ترتيب agenda_items (العنصر i
+   * ملفات البند i). تُرفع مع الإنشاء بطلب واحد (POST /meetings/with-attachments)
+   * فيطلع بريد "اجتماع جديد" واحد فيه كل الملفات. فارغة عند التعديل.
+   */
+  agendaFiles: File[][]
 }
 
 interface MeetingFormModalProps {
@@ -188,6 +194,9 @@ export function MeetingFormModal({
 
   const [presentationFile, setPresentationFile] = useState<File | null>(null)
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([])
+  // مرفقات البنود مفهرسة بمعرّف حقل useFieldArray (ثابت مع الحذف/الإضافة)،
+  // وتُحوَّل لترتيب البنود عند الإرسال.
+  const [agendaFiles, setAgendaFiles] = useState<Record<string, File[]>>({})
   const presentationInputRef = useRef<HTMLInputElement>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
 
@@ -212,6 +221,7 @@ export function MeetingFormModal({
       } as FormValues)
       setPresentationFile(null)
       setAttachmentFiles([])
+      setAgendaFiles({})
     }
   }, [open, meeting, committees, reset])
 
@@ -233,6 +243,7 @@ export function MeetingFormModal({
       })),
       presentationFile,
       attachmentFiles,
+      agendaFiles: agendaFieldArray.fields.map((field) => agendaFiles[field.id] ?? []),
     }
   }
 
@@ -410,22 +421,77 @@ export function MeetingFormModal({
             ) : (
               <div className="flex flex-col gap-2">
                 {agendaFieldArray.fields.map((field, index) => (
-                  <div key={field.id} className="flex items-start gap-2">
-                    <span className="mt-2.5 text-xs text-text-muted">{index + 1}.</span>
-                    <Input
-                      placeholder="عنوان بند جدول الأعمال"
-                      className="flex-1"
-                      error={errors.agenda_items?.[index]?.title?.message}
-                      {...register(`agenda_items.${index}.title` as const)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => agendaFieldArray.remove(index)}
-                      className="mt-1 rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
-                      aria-label="حذف البند"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                  <div key={field.id} className="flex flex-col gap-1">
+                    <div className="flex items-start gap-2">
+                      <span className="mt-2.5 text-xs text-text-muted">{index + 1}.</span>
+                      <div className="flex-1">
+                        <Input
+                          placeholder="عنوان بند جدول الأعمال"
+                          error={errors.agenda_items?.[index]?.title?.message}
+                          {...register(`agenda_items.${index}.title` as const)}
+                        />
+                      </div>
+                      <label
+                        className="mt-1 cursor-pointer rounded-sm p-1.5 text-text-muted transition-colors hover:bg-brand-primary/10 hover:text-brand-primary"
+                        aria-label="إرفاق ملف بالبند"
+                        title="إرفاق ملف بالبند"
+                      >
+                        <Paperclip size={14} />
+                        <input
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => {
+                            const picked = Array.from(e.target.files ?? [])
+                            setAgendaFiles((prev) => ({ ...prev, [field.id]: [...(prev[field.id] ?? []), ...picked] }))
+                            e.target.value = ''
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAgendaFiles((prev) => {
+                            const next = { ...prev }
+                            delete next[field.id]
+                            return next
+                          })
+                          agendaFieldArray.remove(index)
+                        }}
+                        className="mt-1 rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+                        aria-label="حذف البند"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    {(agendaFiles[field.id] ?? []).length > 0 && (
+                      <ul className="ms-5 flex flex-col gap-1">
+                        {(agendaFiles[field.id] ?? []).map((file, i) => (
+                          <li
+                            key={`${file.name}-${i}`}
+                            className="flex items-center justify-between gap-2 rounded-xs bg-bg-elevated px-2 py-1 text-xs text-text-secondary"
+                          >
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <Paperclip size={12} className="shrink-0 text-text-muted" />
+                              <span className="truncate">{file.name}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAgendaFiles((prev) => ({
+                                  ...prev,
+                                  [field.id]: (prev[field.id] ?? []).filter((_, idx) => idx !== i),
+                                }))
+                              }
+                              className="rounded-sm p-0.5 text-text-muted hover:text-danger"
+                              aria-label="إزالة المرفق"
+                            >
+                              <X size={13} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 ))}
               </div>
