@@ -23,6 +23,7 @@ from app.schemas.meeting import (
 from app.core.background import run_detached
 from app.services import meeting_service, notification_service
 
+from app.api.v1.documents import _content_disposition
 from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -117,7 +118,8 @@ async def download_meeting_attachment(
     return Response(
         content=content,
         media_type=document.mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{document.file_name}"'},
+        # اسم الملف العربي: نفس إصلاح RFC 5987 بـdocuments.py (كان UnicodeEncodeError → 500).
+        headers={"Content-Disposition": _content_disposition(document.file_name)},
     )
 
 

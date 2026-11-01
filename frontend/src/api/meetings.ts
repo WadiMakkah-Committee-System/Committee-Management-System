@@ -1,4 +1,5 @@
 import { apiClient } from '@/lib/apiClient'
+import { fileNameFromDisposition } from '@/lib/utils'
 import type {
   Meeting,
   MeetingAgendaItem,
@@ -205,6 +206,5 @@ export async function fetchMeetingAttachmentBlob(
     { responseType: 'blob' },
   )
   const disposition = String(response.headers['content-disposition'] ?? '')
-  const match = /filename="?([^"]+)"?/.exec(disposition)
-  return { blob: response.data as Blob, fileName: match?.[1] ?? 'attachment' }
+  return { blob: response.data as Blob, fileName: fileNameFromDisposition(disposition, 'attachment') }
 }

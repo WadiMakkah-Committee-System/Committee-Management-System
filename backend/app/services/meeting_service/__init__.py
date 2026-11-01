@@ -60,6 +60,7 @@ from app.services.meeting_service.attachments import (
     delete_attachment,
     get_attachment_download,
     list_attachments,
+    query_meeting_attachments,
 )
 from app.services.meeting_service.attendance import MeetingJoinToken, join_meeting, leave_meeting
 from app.services.meeting_service.crud import (
@@ -131,6 +132,7 @@ __all__ = [
     "join_meeting",
     "leave_meeting",
     "list_attachments",
+    "query_meeting_attachments",
     "list_extracted_items",
     "list_meetings",
     "sync_meeting_status",

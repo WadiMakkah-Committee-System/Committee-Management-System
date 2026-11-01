@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     audit_logs,
     auth,
+    committee_attachments,
     committees,
     dashboard,
     decisions,
@@ -31,6 +32,8 @@ api_router.include_router(roles.permissions_router)
 api_router.include_router(audit_logs.router)
 api_router.include_router(committees.router)
 api_router.include_router(committees.committees_router)
+# قبل documents.router: مسارات /documents/committee-attachments/* أدق من /documents/{document_id}.
+api_router.include_router(committee_attachments.router)
 api_router.include_router(documents.router)
 api_router.include_router(documents.categories_router)
 api_router.include_router(meetings.router)

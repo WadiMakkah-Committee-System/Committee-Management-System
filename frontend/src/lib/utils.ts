@@ -260,3 +260,20 @@ export function relativeDayGroupLabel(value: string): string {
   if (diffDays < 7) return 'الأسبوع الماضي'
   return 'أقدم'
 }
+
+/**
+ * اسم الملف من ترويسة Content-Disposition — يفضّل filename* (UTF-8، RFC 5987)
+ * لأن الباك-إند يرسل الاسم العربي فيه وfilename العادي بديل لاتيني عام فقط.
+ */
+export function fileNameFromDisposition(disposition: string, fallback: string): string {
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded[1].trim())
+    } catch {
+      // ترميز تالف — نكمل للبديل العادي.
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(disposition)
+  return plain?.[1] ?? fallback
+}
