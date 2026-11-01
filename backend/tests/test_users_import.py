@@ -365,3 +365,40 @@ async def test_department_scope_limited_to_own_department(
     escalate = await _upload(client, headers, _xlsx([["أ", "ب", "ج", "e@example.com", None, None, "الرئيس التنفيذي"]]))
     assert escalate.status_code == 400
     assert "لا تملك صلاحية إسناد" in escalate.json()["detail"]["errors"][0]["message"]
+
+
+async def test_template_labels_still_work_after_roles_are_renamed(client: AsyncClient, auth_headers, sent) -> None:
+    """
+    إصلاح 2026-11-01: لاما أعادت تسمية الأدوار النظامية من شاشة الأدوار
+    (executive_office_manager ← "المكتب التنفيذي"، admin ← "ادمن") — أسماء
+    النموذج تبقى تعمل، ومدير الإدارة يُحدَّد بالدور نفسه لا باسمه البرمجي.
+    """
+    from sqlalchemy import update
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(Role).where(Role.name == "executive_office_manager").values(name="المكتب التنفيذي"))
+        await db.execute(update(Role).where(Role.name == "admin").values(name="مسؤول الإدارة"))
+        await db.commit()
+    try:
+        response = await _upload(
+            client,
+            auth_headers,
+            _xlsx(
+                [
+                    ["أ", "ب", "ج", "office@example.com", None, None, "المكتب التنفيذي"],
+                    ["د", "ه", "و", "mgr@example.com", "إدارة مُعادة التسمية", None, MANAGER],
+                ]
+            ),
+        )
+        assert response.status_code == 201, response.text
+        users = {u["email"]: u for u in response.json()["users"]}
+        assert users["mgr@example.com"]["is_department_manager"] is True
+        async with AsyncSessionLocal() as db:
+            office = (await db.execute(select(User).where(User.email == "office@example.com"))).scalar_one()
+            role = await db.get(Role, office.role_id)
+        assert role.name == "المكتب التنفيذي"
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(Role).where(Role.name == "المكتب التنفيذي").values(name="executive_office_manager"))
+            await db.execute(update(Role).where(Role.name == "مسؤول الإدارة").values(name="admin"))
+            await db.commit()

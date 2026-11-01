@@ -74,12 +74,13 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 # admin النظامي (أُعيدت تسميته من الشاشة) — نقبل الاثنين.
 ROLE_ALIASES: dict[str, tuple[str, ...]] = {
     "الرئيس التنفيذي": ("executive_president",),
-    "المكتب التنفيذي": ("executive_office_manager",),
-    "مدير إدارة (أدمن)": ("ادمن", "admin"),
+    "المكتب التنفيذي": ("executive_office_manager", "مدير المكتب التنفيذي"),
+    "مدير إدارة (أدمن)": ("ادمن", "admin", "مسؤول إدارة"),
     "مستخدم نظام": ("مستخدم نظام",),
 }
-# من يُسند له أحد هذه الأدوار وله إدارة بالملف يصبح مديرها.
-DEPARTMENT_MANAGER_ROLE_NAMES = frozenset({"ادمن", "admin"})
+# من يُسند له دور "مدير إدارة (أدمن)" (أيًّا كان اسمه الحالي بالنظام — يُحدَّد
+# عبر _resolve_role نفسها، فيبقى صحيحًا لو أُعيدت تسمية الدور) وله إدارة
+# بالملف يصبح مديرها.
 MANAGER_ROLE_LABEL = "مدير إدارة (أدمن)"
 
 _NAME_MAX = 100
@@ -270,18 +271,30 @@ def _resolve_role(label: str, roles: list[Role]) -> Role | None:
     الهدف: إيجاد الدور المقصود بنص عمود "الدور في النظام".
     الترتيب: أسماء النموذج (ROLE_ALIASES) ← اسم الدور ← وصف الدور (لو
     طابق دورًا واحدًا فقط). يُرجع None لو لم يُعثر على تطابق واحد مؤكد.
+
+    إصلاح 2026-11-01 (لاما أعادت تسمية executive_office_manager إلى "المكتب
+    التنفيذي" من شاشة الأدوار): لو اسم النموذج لا يجد أسماءه البرمجية
+    المتوقعة (الدور أُعيدت تسميته)، نكمل البحث بالاسم ثم الوصف بدل الرفض —
+    فيعمل الرفع قبل إعادة التسمية وبعدها.
     """
     by_name = {_key(r.name): r for r in roles}
+
+    def by_description(text: str) -> Role | None:
+        matches = [r for r in roles if r.description and _key(r.description) == _key(text)]
+        return matches[0] if len(matches) == 1 else None
+
     for alias, names in ROLE_ALIASES.items():
         if _key(alias) == _key(label):
             for name in names:
                 if _key(name) in by_name:
                     return by_name[_key(name)]
-            return None
+            for name in names:
+                if (role := by_description(name)) is not None:
+                    return role
+            break
     if _key(label) in by_name:
         return by_name[_key(label)]
-    by_description = [r for r in roles if r.description and _key(r.description) == _key(label)]
-    return by_description[0] if len(by_description) == 1 else None
+    return by_description(label)
 
 
 def role_choices(roles: list[Role]) -> list[str]:
@@ -341,6 +354,7 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
 
     emails_in_file = {r.email.casefold() for r in rows if r.email}
     roles = _assignable_roles(list((await db.execute(select(Role))).scalars().all()))
+    manager_role = _resolve_role(MANAGER_ROLE_LABEL, roles)
     job_titles = {_key(j.name): j for j in (await db.execute(select(JobTitle))).scalars().all()}
     departments = {
         _key(d.name): d
@@ -443,7 +457,7 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
 
         if department_key is not None:
             department_first_row.setdefault(department_key, row.row)
-            if role is not None and role.name in DEPARTMENT_MANAGER_ROLE_NAMES:
+            if role is not None and manager_role is not None and role.role_id == manager_role.role_id:
                 existing = departments.get(department_key)
                 if department_key in managers:
                     row_errors.append(
