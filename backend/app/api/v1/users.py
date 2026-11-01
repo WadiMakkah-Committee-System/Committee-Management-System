@@ -263,6 +263,7 @@ async def import_users(
             for u in result.users
         ],
         departments_created=[ImportedDepartmentOut(name=n, code=c) for n, c in result.departments_created],
+        job_titles_created=result.job_titles_created,
         emails_queued=len(result.users),
     )
 

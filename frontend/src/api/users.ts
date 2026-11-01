@@ -57,6 +57,8 @@ export interface UserImportResult {
   created_count: number
   users: ImportedUser[]
   departments_created: { name: string; code: string }[]
+  /** مسميات وظيفية أُضيفت تلقائيًا لأنها لم تكن موجودة. */
+  job_titles_created: string[]
   emails_queued: number
 }
 

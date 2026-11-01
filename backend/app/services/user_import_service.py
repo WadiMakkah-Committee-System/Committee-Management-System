@@ -16,7 +16,9 @@
 - الدور: أسماء النموذج الأربعة تُقابَل بأدوار النظام (ROLE_ALIASES)، وأي
   اسم/وصف دور نظامي آخر يُقبل كما هو. الفارغ = بلا دور. دور المسؤول الأعلى
   وأدوار اللجان لا تُسند عبر الملف أبدًا.
-- المسمى الوظيفي: يجب أن يكون موجودًا مسبقًا.
+- المسمى الوظيفي: الموجود يُستخدم، وغير الموجود يُضاف تلقائيًا لقائمة
+  المسميات (طلب لاما 2026-11-01) — لمن يملك نطاق 'all' أو صلاحية
+  job_titles.create فقط، وإلا يُرفض الصف.
 - الإدارة: الموجودة يُضاف لها المستخدم؛ غير الموجودة تُنشأ تلقائيًا برمز
   DEP-001... ومديرها صاحب الصف الذي دوره "مدير إدارة (أدمن)" بنفس الإدارة
   (إلزامي للإدارة الجديدة — نفس قاعدة create_department: الإدارة لها مدير).
@@ -85,6 +87,7 @@ MANAGER_ROLE_LABEL = "مدير إدارة (أدمن)"
 
 _NAME_MAX = 100
 _DEPARTMENT_NAME_MAX = 150
+_JOB_TITLE_MAX = 150
 _USERNAME_MIN = 3
 _USERNAME_MAX = 50
 _TEMP_PASSWORD_LENGTH = 12
@@ -144,6 +147,7 @@ class CreatedUser:
 class ImportResult:
     users: list[CreatedUser]
     departments_created: list[tuple[str, str]]  # (الاسم، الرمز)
+    job_titles_created: list[str] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -375,7 +379,11 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
 
     errors: list[RowError] = []
     seen_emails: dict[str, int] = {}
-    resolved: list[tuple[ParsedRow, str, Role | None, JobTitle | None, str | None]] = []
+    # (الصف، البريد، الدور، مفتاح المسمى، مفتاح الإدارة) — المسمى والإدارة
+    # بالمفتاح لأن الجديد منهما لا يُنشأ إلا بعد نجاح التحقق من كل الصفوف.
+    resolved: list[tuple[ParsedRow, str, Role | None, str | None, str | None]] = []
+    can_create_job_titles = full_scope or "job_titles.create" in actor_permissions
+    new_job_titles: dict[str, str] = {}  # key → الاسم كما كُتب أول مرة
     new_departments: dict[str, str] = {}  # key → الاسم كما كُتب أول مرة
     managers: dict[str, int] = {}  # key الإدارة → رقم صف مديرها بالملف
     department_first_row: dict[str, int] = {}
@@ -427,13 +435,24 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
                     RowError(row.row, "الدور في النظام", f"لا تملك صلاحية إسناد الدور «{row.role}»")
                 )
 
-        job_title: JobTitle | None = None
+        job_title_key: str | None = None
         if row.job_title:
-            job_title = job_titles.get(_key(row.job_title))
-            if job_title is None:
+            job_title_key = _key(row.job_title)
+            if len(row.job_title) > _JOB_TITLE_MAX:
                 row_errors.append(
-                    RowError(row.row, "المسمى الوظيفي", f"المسمى «{row.job_title}» غير موجود — أضيفيه من صفحة المسميات أولًا")
+                    RowError(row.row, "المسمى الوظيفي", f"المسمى الوظيفي أطول من {_JOB_TITLE_MAX} حرف")
                 )
+            elif job_title_key not in job_titles:
+                if can_create_job_titles:
+                    new_job_titles.setdefault(job_title_key, row.job_title)
+                else:
+                    row_errors.append(
+                        RowError(
+                            row.row,
+                            "المسمى الوظيفي",
+                            f"المسمى «{row.job_title}» غير موجود، ولا تملك صلاحية إضافة مسميات وظيفية",
+                        )
+                    )
 
         department_key: str | None = None
         if row.department:
@@ -476,7 +495,7 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
 
         errors += row_errors
         if not row_errors:
-            resolved.append((row, email, role, job_title, department_key))
+            resolved.append((row, email, role, job_title_key, department_key))
 
     for key, name in new_departments.items():
         if key not in managers:
@@ -494,6 +513,24 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
         raise ImportValidationError(errors)
 
     # ---- الإنشاء (معاملة واحدة) ----
+    created_job_titles: list[str] = []
+    for key, name in new_job_titles.items():
+        job_title = JobTitle(name=name)
+        db.add(job_title)
+        job_titles[key] = job_title
+        created_job_titles.append(name)
+    if new_job_titles:
+        await db.flush()
+        for name in created_job_titles:
+            await audit_service.log_action(
+                db,
+                actor_user_id=actor.user_id,
+                action_type="create",
+                target_type="job_title",
+                target_id=job_titles[_key(name)].job_title_id,
+                metadata={"name": name, "source": "excel_import"},
+            )
+
     codes = await _next_department_codes(db, len(new_departments))
     created_departments: list[tuple[str, str]] = []
     for (key, name), code in zip(new_departments.items(), codes):
@@ -509,8 +546,9 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
     hashes = await asyncio.gather(*(asyncio.to_thread(hash_password, p) for p in passwords))
 
     created: list[CreatedUser] = []
-    for (row, email, role, job_title, department_key), password, password_hash in zip(resolved, passwords, hashes):
+    for (row, email, role, job_title_key, department_key), password, password_hash in zip(resolved, passwords, hashes):
         department = departments.get(department_key) if department_key else None
+        job_title = job_titles.get(job_title_key) if job_title_key else None
         username = unique_username(username_base_from_email(email), taken_usernames)
         user = User(
             first_name=row.first_name,
@@ -572,7 +610,9 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
         )
 
     await db.commit()
-    return ImportResult(users=created, departments_created=created_departments)
+    return ImportResult(
+        users=created, departments_created=created_departments, job_titles_created=created_job_titles
+    )
 
 
 # --------------------------------------------------------------------------

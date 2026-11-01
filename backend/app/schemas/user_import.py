@@ -38,6 +38,8 @@ class UserImportResult(BaseModel):
     created_count: int
     users: list[ImportedUserOut]
     departments_created: list[ImportedDepartmentOut]
+    # مسميات وظيفية لم تكن موجودة وأُضيفت تلقائيًا (2026-11-01).
+    job_titles_created: list[str] = []
     emails_queued: int
 
 
