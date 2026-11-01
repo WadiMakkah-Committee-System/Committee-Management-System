@@ -54,7 +54,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import raiseload
 
-from app.core.email_client import send_email
+from dataclasses import dataclass as _dataclass
+
+from app.core.config import settings
+from app.core.email_client import EmailAttachment, send_email
 from app.core.redis_client import redis_client
 from app.db.session import AsyncSessionLocal
 from app.models.committee import Committee
@@ -208,20 +211,155 @@ async def notify_imported_users_credentials(
         await send_email(to=[email], subject="بيانات الدخول إلى نظام إدارة اللجان", html_body=body)
 
 
-async def notify_meeting_created(meeting: Meeting, *, actor_user_id: uuid.UUID | None = None) -> None:
-    """FR-MEET-001: إشعار كل أعضاء اللجنة فور جدولة اجتماع جديد (بريد + داخل النظام)."""
+# --- مرفقات الاجتماع بالبريد (طلب لاما 2026-11-01) ---------------------------
+# الحد الإجمالي لحجم الملفات المرفقة فعليًا بالرسالة؛ ما يتجاوزه يُذكر باسمه
+# مع "حمّله من النظام" (قرار لاما) — مزوّدات/صناديق البريد ترفض الرسائل الكبيرة.
+MAX_EMAIL_ATTACHMENTS_BYTES = 10 * 1024 * 1024
+
+
+@_dataclass(frozen=True)
+class MeetingEmailFile:
+    """
+    ملف اجتماع للإرسال بالبريد. agenda_item_id=None ← مرفق عام/عرض تقديمي
+    للاجتماع؛ غير ذلك ← مرفق بند جدول أعمال.
+    """
+
+    filename: str
+    content: bytes
+    mime_type: str
+    agenda_item_id: uuid.UUID | None = None
+
+
+def _split_email_files(files: list[MeetingEmailFile]) -> tuple[list[EmailAttachment], list[MeetingEmailFile]]:
+    """
+    يقسم الملفات إلى (مرفقة فعليًا بالرسالة، أكبر من الحد المتبقي) — بالترتيب،
+    حتى MAX_EMAIL_ATTACHMENTS_BYTES إجمالًا.
+    """
+    attached: list[EmailAttachment] = []
+    too_big: list[MeetingEmailFile] = []
+    total = 0
+    for f in files:
+        if total + len(f.content) <= MAX_EMAIL_ATTACHMENTS_BYTES:
+            attached.append(EmailAttachment(filename=f.filename, content=f.content, mime_type=f.mime_type))
+            total += len(f.content)
+        else:
+            too_big.append(f)
+    return attached, too_big
+
+
+def _meeting_link(meeting: Meeting) -> str | None:
+    """رابط صفحة الاجتماع بالنظام (لو FRONTEND_URL مضبوط) — لتحميل الملفات الكبيرة."""
+    if not settings.FRONTEND_URL:
+        return None
+    return f"{settings.FRONTEND_URL.rstrip('/')}/meetings/{meeting.meeting_id}"
+
+
+def _files_html(meeting: Meeting, files: list[MeetingEmailFile], too_big: list[MeetingEmailFile]) -> str:
+    """
+    قسم الملفات بجسم البريد: جدول الأعمال مع أسماء مرفقات كل بند، ثم مرفقات
+    الاجتماع العامة، مع تمييز الملفات الكبيرة غير المرفقة ("حمّله من النظام").
+    """
+    big_names = {id(f) for f in too_big}
+
+    def name(f: MeetingEmailFile) -> str:
+        label = _escape_html(f.filename)
+        return f"{label} <em>(حجمه كبير — حمّله من النظام)</em>" if id(f) in big_names else label
+
+    parts: list[str] = []
+    agenda = sorted(meeting.agenda_items, key=lambda i: i.sort_order)
+    if agenda:
+        rows = []
+        for item in agenda:
+            item_files = [f for f in files if f.agenda_item_id == item.agenda_item_id]
+            files_list = "".join(f"<li>📎 {name(f)}</li>" for f in item_files)
+            rows.append(
+                f"<li><strong>{_escape_html(item.title)}</strong>"
+                + (f"<ul>{files_list}</ul>" if files_list else "")
+                + "</li>"
+            )
+        parts.append(f"<p><strong>جدول الأعمال:</strong></p><ol>{''.join(rows)}</ol>")
+    general = [f for f in files if f.agenda_item_id is None]
+    if general:
+        parts.append("<p><strong>مرفقات الاجتماع:</strong></p><ul>" + "".join(f"<li>📎 {name(f)}</li>" for f in general) + "</ul>")
+    link = _meeting_link(meeting)
+    if too_big and link:
+        parts.append(f'<p>الملفات الكبيرة متاحة للتحميل من <a href="{_escape_html(link)}">صفحة الاجتماع</a>.</p>')
+    return "".join(parts)
+
+
+async def notify_meeting_created(
+    meeting: Meeting,
+    *,
+    actor_user_id: uuid.UUID | None = None,
+    files: list[MeetingEmailFile] | None = None,
+) -> None:
+    """
+    FR-MEET-001: إشعار كل أعضاء اللجنة فور جدولة اجتماع جديد (بريد + داخل النظام).
+
+    تحديث 2026-11-01 (طلب لاما — "إيميل واحد بكل شي"): files اختيارية —
+    مرفقات بنود جدول الأعمال + مرفقات الاجتماع المرفوعة مع الإنشاء نفسه
+    (POST /meetings/with-attachments). تُرفق فعليًا حتى 10 ميجا إجمالًا، والباقي
+    يُذكر باسمه مع رابط صفحة الاجتماع. جدول الأعمال يظهر بالرسالة دائمًا.
+    """
+    files = files or []
+    attached, too_big = _split_email_files(files)
     subject = f"اجتماع جديد: {meeting.title}"
     body = _wrap_html(
         f"<p>تم جدولة اجتماع جديد ضمن لجنة <strong>{meeting.committee.name}</strong>:</p>"
         f"<h3>{meeting.title}</h3>"
         f"<ul>{_meeting_details_html(meeting)}</ul>"
+        f"{_files_html(meeting, files, too_big)}"
     )
-    await send_email(to=_participant_emails(meeting), subject=subject, html_body=body)
+    await send_email(to=_participant_emails(meeting), subject=subject, html_body=body, attachments=attached)
     await _notify_many(
         [p.user_id for p in meeting.participants],
         event_type="meeting_created",
         title=f"اجتماع جديد: {meeting.title}",
         body=f"ضمن لجنة {meeting.committee.name} — {_format_value('scheduled_at', meeting.scheduled_at)}.",
+        related_entity_type="meeting",
+        related_entity_id=meeting.meeting_id,
+        exclude_user_id=actor_user_id,
+    )
+
+
+async def notify_agenda_item_attachments_added(
+    meeting: Meeting,
+    agenda_item_title: str,
+    files: list[MeetingEmailFile],
+    *,
+    actor_user_id: uuid.UUID | None = None,
+) -> None:
+    """
+    الهدف: إشعار مشاركي الاجتماع بمرفقات أُضيفت لبند جدول أعمال بعد إنشاء
+    الاجتماع (طلب لاما 2026-11-01) — بريد واحد لكل دفعة رفع، بالملفات مرفقة
+    (حتى 10 ميجا، والباقي باسمه + رابط) + إشعار داخل النظام.
+    التأثيرات الجانبية: بريد + صفوف notifications. لا يرفع استثناء (send_email).
+    """
+    if not files:
+        return
+    attached, too_big = _split_email_files(files)
+    big_ids = {id(f) for f in too_big}
+    names = "".join(
+        f"<li>📎 {_escape_html(f.filename)}"
+        + (" <em>(حجمه كبير — حمّله من النظام)</em>" if id(f) in big_ids else "")
+        + "</li>"
+        for f in files
+    )
+    link = _meeting_link(meeting)
+    subject = f"مرفقات جديدة لبند «{agenda_item_title}» — {meeting.title}"
+    body = _wrap_html(
+        f"<p>أُضيفت مرفقات جديدة لبند <strong>{_escape_html(agenda_item_title)}</strong> "
+        f"في اجتماع <strong>{_escape_html(meeting.title)}</strong> (لجنة {_escape_html(meeting.committee.name)}):</p>"
+        f"<ul>{names}</ul>"
+        f"<ul>{_meeting_details_html(meeting)}</ul>"
+        + (f'<p><a href="{_escape_html(link)}">فتح صفحة الاجتماع</a></p>' if link else "")
+    )
+    await send_email(to=_participant_emails(meeting), subject=subject, html_body=body, attachments=attached)
+    await _notify_many(
+        [p.user_id for p in meeting.participants],
+        event_type="meeting_updated",
+        title=f"مرفقات جديدة لبند «{agenda_item_title}»",
+        body=f"اجتماع {meeting.title} — {len(files)} ملف.",
         related_entity_type="meeting",
         related_entity_id=meeting.meeting_id,
         exclude_user_id=actor_user_id,

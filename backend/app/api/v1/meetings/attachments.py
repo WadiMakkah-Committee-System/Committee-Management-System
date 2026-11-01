@@ -20,17 +20,19 @@ from app.schemas.meeting import (
     MeetingAttachmentKind,
     MeetingAttachmentOut,
 )
-from app.services import meeting_service
+from app.core.background import run_detached
+from app.services import meeting_service, notification_service
 
 from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 
-def _attachment_out(document, kind: str, linked_at) -> MeetingAttachmentOut:
+def _attachment_out(document, kind: str, linked_at, agenda_item_id=None) -> MeetingAttachmentOut:
     return MeetingAttachmentOut(
         document_id=document.document_id,
         kind=kind,
+        agenda_item_id=agenda_item_id,
         title=document.title,
         file_name=document.file_name,
         mime_type=document.mime_type,
@@ -89,7 +91,7 @@ async def list_meeting_attachments(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    return [_attachment_out(document, k, linked_at) for document, k, linked_at in rows]
+    return [_attachment_out(document, k, linked_at, item_id) for document, k, linked_at, item_id in rows]
 
 
 @router.get("/{meeting_id}/attachments/{document_id}/download")
@@ -134,3 +136,50 @@ async def delete_meeting_attachment(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+
+
+@router.post(
+    "/{meeting_id}/agenda-items/{agenda_item_id}/attachments",
+    response_model=list[MeetingAttachmentOut],
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_agenda_item_attachments(
+    meeting_id: uuid.UUID,
+    agenda_item_id: uuid.UUID,
+    current_user: CurrentUser,
+    files: list[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> list[MeetingAttachmentOut]:
+    """
+    POST /meetings/{meeting_id}/agenda-items/{agenda_item_id}/attachments
+    (multipart: files متعددة) — طلب لاما 2026-11-01: مرفقات لكل بند.
+
+    الصلاحية: meetings.attachments.add على لجنة الاجتماع (نفس مرفقات الاجتماع).
+    201: المرفقات المضافة (kind='agenda'). 404: البند ليس ضمن هذا الاجتماع.
+    400: ملف فارغ/أكبر من الحد. 403: بلا صلاحية.
+    التأثير الجانبي: بعد الحفظ، بريد واحد لمشاركي الاجتماع بالملفات (حتى 10
+    ميجا إجمالًا، والباقي باسمه + رابط) + إشعار داخل النظام (run_detached).
+    """
+    contents = [(f.filename or "ملف", f.content_type or "application/octet-stream", await f.read()) for f in files]
+    try:
+        item, created = await meeting_service.add_agenda_item_attachments(
+            db, actor=current_user, meeting_id=meeting_id, agenda_item_id=agenda_item_id, files=contents
+        )
+        meeting = await meeting_service.get_meeting(db, actor=current_user, meeting_id=meeting_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+
+    run_detached(
+        notification_service.notify_agenda_item_attachments_added(
+            meeting,
+            item.title,
+            [
+                notification_service.MeetingEmailFile(
+                    filename=name, content=content, mime_type=mime, agenda_item_id=agenda_item_id
+                )
+                for name, mime, content in contents
+            ],
+            actor_user_id=current_user.user_id,
+        )
+    )
+    return [_attachment_out(document, "agenda", linked_at, agenda_item_id) for document, linked_at in created]

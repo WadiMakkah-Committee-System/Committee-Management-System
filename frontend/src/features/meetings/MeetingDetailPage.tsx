@@ -50,6 +50,7 @@ import {
   useMeetingRecording,
   useUpdateAgendaItem,
   useExtendMeeting,
+  useUploadAgendaItemAttachments,
   useUpdateMeeting,
   useUploadMeetingAttachment,
 } from '@/hooks/useMeetings'
@@ -170,6 +171,9 @@ export function MeetingDetailPage() {
   const uploadAttachmentMutation = useUploadMeetingAttachment()
   const deleteAttachmentMutation = useDeleteMeetingAttachment()
   const downloadAttachmentMutation = useDownloadMeetingAttachment()
+  // إرفاق ملفات ببند بعد الإنشاء — يرسل الباك إند بريد "مرفقات جديدة للبند".
+  const uploadAgendaFilesMutation = useUploadAgendaItemAttachments()
+  const [uploadingItemId, setUploadingItemId] = useState<string | null>(null)
   const openAttachmentMutation = useOpenMeetingAttachment()
 
   const [draftTab, setDraftTab] = useState<'transcript' | 'summary'>('transcript')
@@ -527,6 +531,13 @@ export function MeetingDetailPage() {
 
   const presentationAttachments = (attachments ?? []).filter((a) => a.kind === 'presentation')
   const generalAttachments = (attachments ?? []).filter((a) => a.kind === 'attachment')
+  // مرفقات بنود جدول الأعمال (2026-11-01) — من نفس استعلام المرفقات، مجمّعة بالبند.
+  const agendaAttachmentsByItem = new Map<string, MeetingAttachment[]>()
+  for (const a of attachments ?? []) {
+    if (a.kind === 'agenda' && a.agenda_item_id) {
+      agendaAttachmentsByItem.set(a.agenda_item_id, [...(agendaAttachmentsByItem.get(a.agenda_item_id) ?? []), a])
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -728,46 +739,93 @@ export function MeetingDetailPage() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
-                className="flex items-center justify-between gap-3 border-b border-border-default px-4 py-3 last:border-0"
+                className="flex flex-col gap-2 border-b border-border-default px-4 py-3 last:border-0"
               >
-                {editingItemId === item.agenda_item_id ? (
-                  <div className="flex flex-1 items-center gap-2">
-                    <Input
-                      value={editingItemTitle}
-                      onChange={(e) => setEditingItemTitle(e.target.value)}
-                      className="h-8"
-                    />
-                    <Button size="sm" onClick={saveEditItem} loading={updateAgendaItemMutation.isPending}>
-                      حفظ
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setEditingItemId(null)}>
-                      إلغاء
-                    </Button>
-                  </div>
-                ) : (
-                  <>
-                    <span className="text-sm text-text-primary">
-                      {i + 1}. {item.title}
-                    </span>
-                    {canManage && (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => startEditItem(item.agenda_item_id, item.title)}
-                          className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
-                          aria-label="تعديل البند"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          onClick={() => setDeletingItemId(item.agenda_item_id)}
-                          className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
-                          aria-label="حذف البند"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    )}
-                  </>
+                <div className="flex items-center justify-between gap-3">
+                  {editingItemId === item.agenda_item_id ? (
+                    <div className="flex flex-1 items-center gap-2">
+                      <Input
+                        value={editingItemTitle}
+                        onChange={(e) => setEditingItemTitle(e.target.value)}
+                        className="h-8"
+                      />
+                      <Button size="sm" onClick={saveEditItem} loading={updateAgendaItemMutation.isPending}>
+                        حفظ
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingItemId(null)}>
+                        إلغاء
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-sm text-text-primary">
+                        {i + 1}. {item.title}
+                      </span>
+                      {canManage && (
+                        <div className="flex items-center gap-1">
+                          <label
+                            className={cn(
+                              'cursor-pointer rounded-sm p-1.5 text-text-muted transition-colors hover:bg-brand-primary/10 hover:text-brand-primary',
+                              uploadingItemId === item.agenda_item_id && 'pointer-events-none opacity-50',
+                            )}
+                            aria-label="إرفاق ملف بالبند"
+                            title="إرفاق ملف بالبند"
+                          >
+                            {uploadingItemId === item.agenda_item_id ? <Spinner size={14} /> : <Paperclip size={14} />}
+                            <input
+                              type="file"
+                              multiple
+                              className="hidden"
+                              onChange={(e) => {
+                                const files = Array.from(e.target.files ?? [])
+                                e.target.value = ''
+                                if (files.length === 0) return
+                                setUploadingItemId(item.agenda_item_id)
+                                uploadAgendaFilesMutation.mutate(
+                                  { meetingId: meeting.meeting_id, agendaItemId: item.agenda_item_id, files },
+                                  {
+                                    onSuccess: () => showToast('تم إرفاق الملفات وإرسالها للمشاركين', 'success'),
+                                    onError: (err) => showToast(extractErrorMessage(err), 'error'),
+                                    onSettled: () => setUploadingItemId(null),
+                                  },
+                                )
+                              }}
+                            />
+                          </label>
+                          <button
+                            onClick={() => startEditItem(item.agenda_item_id, item.title)}
+                            className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                            aria-label="تعديل البند"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => setDeletingItemId(item.agenda_item_id)}
+                            className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
+                            aria-label="حذف البند"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                {(agendaAttachmentsByItem.get(item.agenda_item_id) ?? []).length > 0 && (
+                  <ul className="ms-4 overflow-hidden rounded-sm border border-border-default">
+                    {(agendaAttachmentsByItem.get(item.agenda_item_id) ?? []).map((a) => (
+                      <AttachmentRow
+                        key={a.document_id}
+                        attachment={a}
+                        canManage={!!canManage}
+                        onOpen={() => openAttachmentMutation.mutate({ meetingId: meetingId!, documentId: a.document_id })}
+                        onDownload={() =>
+                          downloadAttachmentMutation.mutate({ meetingId: meetingId!, documentId: a.document_id })
+                        }
+                        onDeleteRequest={() => setDeletingAttachmentId(a.document_id)}
+                      />
+                    ))}
+                  </ul>
                 )}
               </motion.li>
             ))}

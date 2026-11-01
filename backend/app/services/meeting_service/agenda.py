@@ -103,6 +103,10 @@ async def delete_agenda_item(db: AsyncSession, *, actor: User, agenda_item_id: u
         "ليست لديك صلاحية حذف هذا البند",
     )
 
+    # مرفقات البند (2026-11-01) تُحذف معه بنفس المعاملة — لا مرفقات يتيمة.
+    from app.services.meeting_service.attachments import delete_agenda_item_attachments
+
+    await delete_agenda_item_attachments(db, actor=actor, meeting_id=item.meeting_id, agenda_item_id=item.agenda_item_id)
     await db.delete(item)
     await db.commit()
 

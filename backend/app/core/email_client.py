@@ -37,6 +37,9 @@
 import logging
 from email.message import EmailMessage
 
+import base64
+from dataclasses import dataclass
+
 import aiosmtplib
 import httpx
 
@@ -51,12 +54,30 @@ _PLAIN_TEXT_FALLBACK = "هذه الرسالة بصيغة HTML — افتحيها
 # فشل سريع بدل تعليق طويل يحجز جلسة DB الطلب الأصلي.
 _HTTP_TIMEOUT_SECONDS = 10
 
+# مع المرفقات (حتى ~10 ميجا) يحتاج الرفع لمزوّد البريد وقتًا أطول من 10 ثوانٍ.
+_HTTP_TIMEOUT_WITH_ATTACHMENTS_SECONDS = 60
+
 _RESEND_URL = "https://api.resend.com/emails"
 _BREVO_URL = "https://api.brevo.com/v3/smtp/email"
 _HTTP_PROVIDERS = ("resend", "brevo")
 
 
-async def send_email(*, to: list[str], subject: str, html_body: str) -> None:
+@dataclass(frozen=True)
+class EmailAttachment:
+    """
+    ملف مرفق ببريد (طلب لاما 2026-11-01 — مرفقات بنود جدول الأعمال).
+    content: bytes الملف كاملًا بالذاكرة؛ الحد الإجمالي يفرضه المستدعي
+    (notification_service — 10 ميجا) قبل الوصول هنا.
+    """
+
+    filename: str
+    content: bytes
+    mime_type: str = "application/octet-stream"
+
+
+async def send_email(
+    *, to: list[str], subject: str, html_body: str, attachments: list[EmailAttachment] | None = None
+) -> None:
     """
     الهدف:
     نقطة الدخول الوحيدة لإرسال البريد بالنظام (كل notify_* تستدعيها).
@@ -70,6 +91,7 @@ async def send_email(*, to: list[str], subject: str, html_body: str) -> None:
     - to: list[str] — عناوين المستلمين (القيم الفارغة تُتجاهل).
     - subject: str — عنوان الرسالة.
     - html_body: str — محتوى الرسالة بصيغة HTML.
+    - attachments: ملفات مرفقة اختيارية (نفس الملفات لكل مستلم).
 
     المخرجات: None.
 
@@ -86,17 +108,31 @@ async def send_email(*, to: list[str], subject: str, html_body: str) -> None:
 
     provider = (settings.EMAIL_PROVIDER or "smtp").strip().lower()
     if provider in _HTTP_PROVIDERS:
-        await _send_via_http_api(provider=provider, recipients=recipients, subject=subject, html_body=html_body)
+        await _send_via_http_api(
+            provider=provider, recipients=recipients, subject=subject, html_body=html_body, attachments=attachments
+        )
         return
     if provider != "smtp":
         logger.error("EMAIL_PROVIDER غير معروف (%s) — تم تجاوز إرسال البريد: %s", provider, subject)
         return
 
-    await _send_via_smtp(recipients=recipients, subject=subject, html_body=html_body)
+    await _send_via_smtp(recipients=recipients, subject=subject, html_body=html_body, attachments=attachments)
+
+
+def _encode_attachments(attachments: list[EmailAttachment] | None) -> list[tuple[str, str]]:
+    """(اسم الملف، المحتوى base64) — يُحسب مرة واحدة ويُعاد استخدامه لكل مستلم."""
+    return [(a.filename, base64.b64encode(a.content).decode("ascii")) for a in attachments or []]
 
 
 def _build_http_request(
-    *, provider: str, recipient: str, subject: str, html_body: str, from_email: str, from_name: str
+    *,
+    provider: str,
+    recipient: str,
+    subject: str,
+    html_body: str,
+    from_email: str,
+    from_name: str,
+    encoded_attachments: list[tuple[str, str]] | None = None,
 ) -> tuple[str, dict[str, str], dict]:
     """
     الهدف:
@@ -107,6 +143,8 @@ def _build_http_request(
     - recipient: str — مستلم واحد فقط (عزل الخصوصية، نفس مسار SMTP).
     - subject/html_body: محتوى الرسالة.
     - from_email/from_name: هوية المُرسِل الظاهرة.
+    - encoded_attachments: [(اسم الملف، base64)] — Resend: attachments[{filename, content}]،
+      Brevo: attachment[{name, content}].
 
     المخرجات:
     tuple(url, headers, json_payload).
@@ -117,35 +155,40 @@ def _build_http_request(
     """
     if provider == "resend":
         sender = f"{from_name} <{from_email}>" if from_name else from_email
-        return (
-            _RESEND_URL,
-            {"Authorization": f"Bearer {settings.EMAIL_API_KEY}"},
-            {
-                "from": sender,
-                "to": [recipient],
-                "subject": subject,
-                "html": html_body,
-                "text": _PLAIN_TEXT_FALLBACK,
-            },
-        )
+        payload = {
+            "from": sender,
+            "to": [recipient],
+            "subject": subject,
+            "html": html_body,
+            "text": _PLAIN_TEXT_FALLBACK,
+        }
+        if encoded_attachments:
+            payload["attachments"] = [{"filename": n, "content": c} for n, c in encoded_attachments]
+        return (_RESEND_URL, {"Authorization": f"Bearer {settings.EMAIL_API_KEY}"}, payload)
     # brevo
     sender_obj = {"email": from_email}
     if from_name:
         sender_obj["name"] = from_name
-    return (
-        _BREVO_URL,
-        {"api-key": settings.EMAIL_API_KEY, "accept": "application/json"},
-        {
-            "sender": sender_obj,
-            "to": [{"email": recipient}],
-            "subject": subject,
-            "htmlContent": html_body,
-            "textContent": _PLAIN_TEXT_FALLBACK,
-        },
-    )
+    payload = {
+        "sender": sender_obj,
+        "to": [{"email": recipient}],
+        "subject": subject,
+        "htmlContent": html_body,
+        "textContent": _PLAIN_TEXT_FALLBACK,
+    }
+    if encoded_attachments:
+        payload["attachment"] = [{"name": n, "content": c} for n, c in encoded_attachments]
+    return (_BREVO_URL, {"api-key": settings.EMAIL_API_KEY, "accept": "application/json"}, payload)
 
 
-async def _send_via_http_api(*, provider: str, recipients: list[str], subject: str, html_body: str) -> None:
+async def _send_via_http_api(
+    *,
+    provider: str,
+    recipients: list[str],
+    subject: str,
+    html_body: str,
+    attachments: list[EmailAttachment] | None = None,
+) -> None:
     """
     الهدف:
     إرسال البريد عبر HTTP API لمزوّد (Resend/Brevo) بدل SMTP — لأن منافذ SMTP
@@ -171,7 +214,9 @@ async def _send_via_http_api(*, provider: str, recipients: list[str], subject: s
         logger.warning("SMTP_FROM_EMAIL مطلوب مع EMAIL_PROVIDER=%s — تم تجاوز إرسال البريد: %s", provider, subject)
         return
 
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+    encoded = _encode_attachments(attachments)
+    timeout = _HTTP_TIMEOUT_WITH_ATTACHMENTS_SECONDS if encoded else _HTTP_TIMEOUT_SECONDS
+    async with httpx.AsyncClient(timeout=timeout) as client:
         for recipient in recipients:
             url, headers, payload = _build_http_request(
                 provider=provider,
@@ -180,6 +225,7 @@ async def _send_via_http_api(*, provider: str, recipients: list[str], subject: s
                 html_body=html_body,
                 from_email=from_email,
                 from_name=settings.SMTP_FROM_NAME,
+                encoded_attachments=encoded,
             )
             for attempt in (1, 2):
                 try:
@@ -208,7 +254,9 @@ async def _send_via_http_api(*, provider: str, recipients: list[str], subject: s
                     break
 
 
-async def _send_via_smtp(*, recipients: list[str], subject: str, html_body: str) -> None:
+async def _send_via_smtp(
+    *, recipients: list[str], subject: str, html_body: str, attachments: list[EmailAttachment] | None = None
+) -> None:
     """
     الهدف:
     مسار الإرسال الأصلي عبر SMTP (منقول كما هو من send_email قبل تحديث
@@ -256,6 +304,14 @@ async def _send_via_smtp(*, recipients: list[str], subject: str, html_body: str)
         message["Subject"] = subject
         message.set_content(_PLAIN_TEXT_FALLBACK)
         message.add_alternative(html_body, subtype="html")
+        for attachment in attachments or []:
+            maintype, _, subtype = (attachment.mime_type or "application/octet-stream").partition("/")
+            message.add_attachment(
+                attachment.content,
+                maintype=maintype or "application",
+                subtype=subtype or "octet-stream",
+                filename=attachment.filename,
+            )
         return message
 
     async def _connect() -> aiosmtplib.SMTP:

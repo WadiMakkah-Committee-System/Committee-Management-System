@@ -39,6 +39,9 @@ from app.schemas.committee import CommitteeMemberUserOut
 # المستخدمتين بجدول document_links (راجعي meeting_service.py):
 # 'meeting_presentation' و'meeting_attachment'.
 MeetingAttachmentKind = Literal["presentation", "attachment"]
+# نوع المرفق بالاستجابة — يضم مرفقات بنود جدول الأعمال (2026-11-01) التي
+# تُرفع عبر مسار البند نفسه لا عبر POST /meetings/{id}/attachments.
+MeetingAttachmentOutKind = Literal["presentation", "attachment", "agenda"]
 
 
 class MeetingAgendaItemCreate(BaseModel):
@@ -222,7 +225,9 @@ class MeetingAttachmentOut(BaseModel):
     """
 
     document_id: uuid.UUID
-    kind: MeetingAttachmentKind
+    kind: MeetingAttachmentOutKind
+    # البند المرتبط (kind='agenda' فقط) — None لمرفقات الاجتماع العامة/العرض.
+    agenda_item_id: uuid.UUID | None = None
     title: str
     file_name: str
     mime_type: str
@@ -244,3 +249,14 @@ class MeetingJoinOut(BaseModel):
     token: str
     uid: int
     expires_at: int
+
+
+class MeetingCreateWithAttachmentsOut(BaseModel):
+    """
+    استجابة POST /meetings/with-attachments (2026-11-01): الاجتماع المنشأ +
+    أسماء الملفات التي تعذّر رفعها (الاجتماع وبقية الملفات تبقى، والإيميل
+    يُرسل بما نجح فقط).
+    """
+
+    meeting: MeetingOut
+    failed_files: list[str] = Field(default_factory=list)
