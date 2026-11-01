@@ -112,6 +112,17 @@ async def list_attachments(
         "ليست لديك صلاحية عرض مرفقات هذا الاجتماع",
     )
 
+    return await query_meeting_attachments(db, meeting_id=meeting_id, kind=kind)
+
+
+async def query_meeting_attachments(
+    db: AsyncSession, *, meeting_id: uuid.UUID, kind: str | None = None
+) -> list[tuple[Document, str, datetime, uuid.UUID | None]]:
+    """
+    استعلام مرفقات اجتماع واحد **بدون فحص صلاحية** — على المستدعي فحصها
+    قبلها (list_attachments أعلاه، وcommittee_attachments_service). استعلام
+    واحد (روابط + وثائقها بـJOIN).
+    """
     link_types = (
         [_ATTACHMENT_LINK_TYPE[kind]] if kind else list(_ATTACHMENT_LINK_TYPE.values())
     )

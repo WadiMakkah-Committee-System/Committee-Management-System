@@ -7,6 +7,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Response,
     status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +32,7 @@ from app.schemas.meeting_minutes import (
 )
 from app.services import meeting_minutes_service, notification_service
 
+from app.api.v1.documents import _content_disposition
 from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
 from app.api.v1.meetings.ai import _extracted_item_out
 
@@ -117,6 +119,29 @@ async def get_meeting_minutes_detail(
         templates=[MinutesTemplateOut(**t) for t in detail["templates"]],
         extracted_items=[_extracted_item_out(item) for item in detail["extracted_items"]],
         can_edit=detail["can_edit"],
+    )
+
+
+@router.get("/{meeting_id}/minutes/pdf")
+async def download_meeting_minutes_pdf(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> Response:
+    """
+    تحميل المحضر PDF (تصنيف "مرفقات اللجنة" بالوثائق — طلب لاما 2026-11-01).
+    يتطلب minutes.view. يُولَّد لحظيًا من آخر نسخة مخزَّنة (راجعي
+    meeting_minutes_service.get_minutes_pdf). 404 لو لم يُنشأ محضر بعد.
+    """
+    try:
+        filename, content = await meeting_minutes_service.get_minutes_pdf(
+            db, meeting_id=meeting_id, actor=current_user
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    # الاسم عربي — _content_disposition (RFC 5987) من documents.py.
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition(filename)},
     )
 
 

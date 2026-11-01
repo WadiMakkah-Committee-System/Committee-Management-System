@@ -1145,3 +1145,34 @@ export interface DashboardSummary {
   documents_count: number
   recent_documents_preview: DashboardDocumentItem[]
 }
+
+// ============================== مرفقات اللجنة (الوثائق) ==============================
+// تصنيف "مرفقات اللجنة" بصفحة الوثائق (2026-11-01) — كل مستوى نوعه الخفيف الخاص
+// (راجعي backend/app/schemas/committee_attachments.py).
+
+export interface CommitteeAttachmentsCommittee {
+  committee_id: string
+  name: string
+  end_date: string | null
+  is_ended: boolean
+}
+
+export interface CommitteeAttachmentsMeeting {
+  meeting_id: string
+  title: string
+  scheduled_at: string
+}
+
+export interface CommitteeAttachmentsBundleFile extends MeetingAttachment {
+  agenda_item_title: string | null
+}
+
+export interface CommitteeAttachmentsMeetingBundle {
+  meeting_id: string
+  title: string
+  can_view_attachments: boolean
+  attachments: CommitteeAttachmentsBundleFile[]
+  can_view_minutes: boolean
+  minutes_available: boolean
+  minutes_stage: MeetingMinutesStage | null
+}

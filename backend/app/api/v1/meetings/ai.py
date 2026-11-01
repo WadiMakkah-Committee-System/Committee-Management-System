@@ -26,6 +26,7 @@ from app.schemas.meeting_extracted_item import (
 )
 from app.services import meeting_service, notification_service
 
+from app.api.v1.documents import _content_disposition
 from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -165,7 +166,7 @@ async def download_meeting_recording(
     return Response(
         content=content,
         media_type=recording.mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{recording.file_name}"'},
+        headers={"Content-Disposition": _content_disposition(recording.file_name)},
     )
 
 
