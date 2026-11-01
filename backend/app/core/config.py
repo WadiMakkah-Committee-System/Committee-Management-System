@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     # (مثال: https://committee-app.vercel.app,https://custom-domain.com). ---
       CORS_ORIGINS: str = ""
 
+    # --- رابط الواجهة الأمامية (رفع ملف المستخدمين 2026-11-01): يظهر كرابط
+    # "الدخول إلى النظام" ببريد بيانات الدخول. اختياري — الفارغ يُخفي الرابط
+    # (مثال: https://cms.wadimakkah.sa). ---
+      FRONTEND_URL: str = ""
+
       @property
       def cors_origins_list(self) -> list[str]:
           return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]

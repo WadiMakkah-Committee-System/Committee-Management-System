@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Mail,
   Layers,
+  FileSpreadsheet,
 } from 'lucide-react'
 import {
   useCreateUser,
@@ -36,8 +37,9 @@ import { Avatar } from '@/components/ui/Avatar'
 import { UserStatusBadge, RoleBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { UserFormModal } from './UserFormModal'
+import { UserImportModal } from './UserImportModal'
 import { MemberDetailModal } from './MemberDetailModal'
-import { extractErrorMessage, roleLabel } from '@/lib/utils'
+import { extractErrorMessage, roleLabel, scopeFor } from '@/lib/utils'
 import type { User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
 const PAGE_SIZE = 10
@@ -65,6 +67,8 @@ export function UsersPage() {
   // بـscopeFor لأنها فحص هوية دور محدد لا صلاحية/نطاق.
   const user = useAuthStore((s) => s.user)
   const isSuperAdmin = !!user?.role?.is_super_admin
+  const canImport = scopeFor(user, 'users.import') !== null
+  const [importOpen, setImportOpen] = useState(false)
 
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('')
@@ -207,10 +211,20 @@ export function UsersPage() {
           <h2 className="text-base font-bold text-text-primary">المستخدمون</h2>
           <p className="mt-1 text-sm text-text-muted">إدارة حسابات المستخدمين وأدوارهم في النظام</p>
         </div>
-        {isSuperAdmin && (
-          <Button icon={<Plus size={16} />} onClick={openCreateForm}>
-            إضافة مستخدم
-          </Button>
+        {(canImport || isSuperAdmin) && (
+          <div className="flex flex-wrap gap-2">
+            {/* users.import (2026-11-01): يظهر لمن يملك الصلاحية — الفرض الحقيقي بالباك إند */}
+            {canImport && (
+              <Button variant="secondary" icon={<FileSpreadsheet size={16} />} onClick={() => setImportOpen(true)}>
+                رفع ملف
+              </Button>
+            )}
+            {isSuperAdmin && (
+              <Button icon={<Plus size={16} />} onClick={openCreateForm}>
+                إضافة مستخدم
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -395,6 +409,8 @@ export function UsersPage() {
           )}
         </div>
       )}
+
+      <UserImportModal open={importOpen} onClose={() => setImportOpen(false)} />
 
       <UserFormModal
         open={formOpen}
