@@ -6,6 +6,7 @@ import {
   ArrowRight,
   CalendarClock,
   ClipboardList,
+  Clock,
   Download,
   FileAudio,
   FileText,
@@ -48,6 +49,7 @@ import {
   useMeetingExtractedItems,
   useMeetingRecording,
   useUpdateAgendaItem,
+  useExtendMeeting,
   useUpdateMeeting,
   useUploadMeetingAttachment,
 } from '@/hooks/useMeetings'
@@ -66,6 +68,7 @@ import { ActionMenu } from '@/components/ui/ActionMenu'
 import { MeetingStatusBadge, DecisionStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingFormModal, type MeetingFormSubmitValues } from './MeetingFormModal'
+import { ExtendMeetingModal } from './ExtendMeetingModal'
 import { AssignExtractedItemModal } from './AssignExtractedItemModal'
 import { MeetingRoom } from './MeetingRoom'
 import { cn, extractErrorMessage, formatDateTime, formatFileSize, scopeFor } from '@/lib/utils'
@@ -156,6 +159,10 @@ export function MeetingDetailPage() {
   const { data: meetingDecisions, isLoading: decisionsLoading } = useMeetingDecisions(meetingId)
 
   const updateMeetingMutation = useUpdateMeeting()
+  // تمديد الاجتماع قبله أو أثناءه (طلب لاما 2026-11-01).
+  const extendMeetingMutation = useExtendMeeting()
+  const [extendOpen, setExtendOpen] = useState(false)
+  const [extendError, setExtendError] = useState<string | null>(null)
   const deleteMeetingMutation = useDeleteMeeting()
   const addAgendaItemMutation = useAddAgendaItem()
   const updateAgendaItemMutation = useUpdateAgendaItem()
@@ -565,6 +572,15 @@ export function MeetingDetailPage() {
                   onClick: () => {
                     setEditError(null)
                     setEditOpen(true)
+                  },
+                },
+                {
+                  label: 'تمديد الاجتماع',
+                  icon: <Clock size={14} />,
+                  disabled: meeting.status === 'finished' || !meeting.scheduled_end_at,
+                  onClick: () => {
+                    setExtendError(null)
+                    setExtendOpen(true)
                   },
                 },
                 {
@@ -1296,6 +1312,27 @@ export function MeetingDetailPage() {
 
       {canManage && (
         <>
+          {extendOpen && meeting.scheduled_end_at && (
+            <ExtendMeetingModal
+              open={extendOpen}
+              onClose={() => setExtendOpen(false)}
+              currentEndAt={meeting.scheduled_end_at}
+              loading={extendMeetingMutation.isPending}
+              serverError={extendError}
+              onSubmit={(newEndAt) =>
+                extendMeetingMutation.mutate(
+                  { meetingId: meeting.meeting_id, newEndAt },
+                  {
+                    onSuccess: () => {
+                      setExtendOpen(false)
+                      showToast('تم تمديد الاجتماع وإشعار المشاركين', 'success')
+                    },
+                    onError: (err) => setExtendError(extractErrorMessage(err)),
+                  },
+                )
+              }
+            />
+          )}
           <MeetingFormModal
             open={editOpen}
             onClose={() => setEditOpen(false)}

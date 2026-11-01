@@ -64,6 +64,7 @@ from app.services.meeting_service.attendance import MeetingJoinToken, join_meeti
 from app.services.meeting_service.crud import (
     create_meeting,
     delete_meeting,
+    extend_meeting,
     get_meeting,
     list_meetings,
     update_meeting,
@@ -122,6 +123,7 @@ __all__ = [
     "generate_draft",
     "get_attachment_download",
     "get_draft",
+    "extend_meeting",
     "get_latest_recording",
     "get_meeting",
     "join_meeting",

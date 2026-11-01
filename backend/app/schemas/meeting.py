@@ -124,6 +124,16 @@ class MeetingCreate(BaseModel):
         return self
 
 
+class MeetingExtend(BaseModel):
+    """
+    جسم POST /meetings/{id}/extend — تمديد وقت نهاية الاجتماع قبل انعقاده أو
+    أثناءه (طلب لاما 2026-11-01). new_end_at وقت كامل بالمنطقة الزمنية (ISO)؛
+    قواعد "تمديد فقط/ضمن فترة اللجنة" مفروضة بطبقة الخدمة (extend_meeting).
+    """
+
+    new_end_at: datetime
+
+
 class MeetingUpdate(BaseModel):
     """
     تعديل بيانات اجتماع قائم (FR-MEET-003) — قبل انعقاده فقط (يُفرض بطبقة

@@ -18,6 +18,7 @@ from app.schemas.meeting import (
     MeetingAgendaItemOut,
     MeetingAgendaItemUpdate,
     MeetingCreate,
+    MeetingExtend,
     MeetingJoinOut,
     MeetingListItem,
     MeetingOut,
@@ -123,6 +124,35 @@ async def update_meeting(
                 meeting, changes, actor_user_id=current_user.user_id
             )
         )
+    return MeetingOut.model_validate(meeting)
+
+
+@router.post("/{meeting_id}/extend", response_model=MeetingOut)
+async def extend_meeting(
+    meeting_id: uuid.UUID,
+    payload: MeetingExtend,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingOut:
+    """
+    POST /meetings/{id}/extend — تمديد وقت نهاية الاجتماع قبله أو أثناءه
+    (طلب لاما 2026-11-01). نفس صلاحية التعديل (meetings.update) ونطاقها.
+
+    200: الاجتماع بعد التمديد. 400: وقت غير صالح (ليس بعد النهاية الحالية،
+    في الماضي، أو خارج فترة عمل اللجنة). 403: بلا صلاحية. 404: غير موجود.
+    409: الاجتماع انتهى.
+    التأثير الجانبي: إشعار المشاركين بتغيّر موعد النهاية — نفس إشعار التعديل
+    (notify_meeting_updated) عبر run_detached.
+    """
+    try:
+        meeting, changes = await meeting_service.extend_meeting(
+            db, actor=current_user, meeting_id=meeting_id, new_end_at=payload.new_end_at
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    run_detached(
+        notification_service.notify_meeting_updated(meeting, changes, actor_user_id=current_user.user_id)
+    )
     return MeetingOut.model_validate(meeting)
 
 

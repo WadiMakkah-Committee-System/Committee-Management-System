@@ -126,6 +126,16 @@ export function useUpdateMeeting() {
   })
 }
 
+/** تمديد الاجتماع — يحدّث بيانات الاجتماع والقوائم بعد النجاح. */
+export function useExtendMeeting() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ meetingId, newEndAt }: { meetingId: string; newEndAt: string }) =>
+      meetingsApi.extendMeeting(meetingId, newEndAt),
+    onSuccess: (_data, variables) => invalidateMeetingQueries(queryClient, variables.meetingId),
+  })
+}
+
 export function useDeleteMeeting() {
   const queryClient = useQueryClient()
   return useMutation({

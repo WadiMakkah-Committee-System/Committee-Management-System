@@ -264,6 +264,68 @@ async def update_meeting(
     return meeting, changes
 
 
+async def extend_meeting(
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, new_end_at: datetime
+) -> tuple[Meeting, dict[str, tuple[object, object]]]:
+    """
+    الهدف:
+    تمديد وقت نهاية الاجتماع قبل انعقاده أو أثناءه (طلب لاما 2026-11-01).
+    مختلف عن update_meeting المقصور على ما قبل الانعقاد (status upcoming).
+
+    المدخلات:
+    - actor: المستخدم — نفس صلاحية التعديل (meetings.update) ونطاقها.
+    - meeting_id: الاجتماع.
+    - new_end_at: وقت النهاية الجديد (timezone-aware).
+
+    قواعد العمل:
+    - الاجتماع قادم أو منعقد الآن (الحالة الزمنية محسوبة لحظيًا) — لا تمديد
+      لاجتماع انتهى.
+    - تمديد فقط: الوقت الجديد بعد وقت النهاية الحالي، وبعد اللحظة الحالية.
+    - ضمن فترة عمل اللجنة (نفس قاعدة الإنشاء/التعديل).
+
+    المخرجات: (meeting, changes) — changes بنفس شكل update_meeting
+    ({"scheduled_end_at": (old, new)}) لإشعار المشاركين بنفس دالة التعديل.
+    التأثيرات الجانبية: يكتب meetings + audit_logs (action update، event extend).
+    الأخطاء: MeetingInvalidStateError (انتهى)، MeetingValidationError (وقت غير صالح).
+    """
+    meeting = await load_meeting(db, meeting_id)
+    committee = meeting.committee
+    await _require_access(
+        db, actor, committee, "meetings.update", "ليست لديك صلاحية تمديد هذا الاجتماع"
+    )
+
+    if meeting.status not in (MeetingStatus.upcoming, MeetingStatus.ongoing):
+        raise MeetingInvalidStateError("لا يمكن تمديد اجتماع انتهى")
+
+    old_end = meeting.scheduled_end_at
+    if old_end is not None and new_end_at <= old_end:
+        raise MeetingValidationError("وقت النهاية الجديد يجب أن يكون بعد وقت النهاية الحالي")
+    if new_end_at <= datetime.now(UTC):
+        raise MeetingValidationError("وقت النهاية الجديد يجب أن يكون في المستقبل")
+    if new_end_at <= meeting.scheduled_at:
+        raise MeetingValidationError("وقت نهاية الاجتماع يجب أن يكون بعد وقت البداية")
+    assert_within_committee_period(committee, field_label="تاريخ نهاية الاجتماع", value=new_end_at.date())
+
+    meeting.scheduled_end_at = new_end_at
+
+    await audit_service.log_action(
+        db,
+        actor_user_id=actor.user_id,
+        action_type="update",
+        target_type="meeting",
+        target_id=meeting.meeting_id,
+        metadata={
+            "event": "extend",
+            "from": old_end.isoformat() if old_end else None,
+            "to": new_end_at.isoformat(),
+        },
+    )
+    await db.flush()
+    meeting = await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
+    await db.commit()
+    return meeting, {"scheduled_end_at": (old_end, new_end_at)}
+
+
 async def delete_meeting(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> Meeting:
     """
     FR-MEET-004: حذف الاجتماع — يتطلب meetings.delete (Soft Delete). قرار
