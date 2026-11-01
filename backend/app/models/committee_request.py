@@ -111,6 +111,12 @@ class CommitteeFormationRequest(Base):
     )
     return_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # آخر من رفع الطلب للرئيس التنفيذي ومتى (طلب لاما 2026-11-01 — migration
+    # 0039). يُعبَّآن بـescalate_request فقط؛ NULL = لم يُرفع بعد.
+    escalated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True
+    )
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -121,6 +127,7 @@ class CommitteeFormationRequest(Base):
 
     requester: Mapped["User"] = relationship(foreign_keys=[requested_by], lazy="selectin")  # noqa: F821
     chair: Mapped["User | None"] = relationship(foreign_keys=[chair_user_id], lazy="selectin")  # noqa: F821
+    escalator: Mapped["User | None"] = relationship(foreign_keys=[escalated_by], lazy="selectin")  # noqa: F821
     proposed_members: Mapped[list["User"]] = relationship(  # noqa: F821
         secondary=committee_formation_request_members, lazy="selectin"
     )
