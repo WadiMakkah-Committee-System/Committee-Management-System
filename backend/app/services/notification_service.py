@@ -171,6 +171,43 @@ async def notify_password_reset_code(
     await send_email(to=[email], subject="رمز استعادة كلمة المرور — نظام إدارة اللجان", html_body=body)
 
 
+async def notify_imported_users_credentials(
+    accounts: list[tuple[str, str | None, str, str]], *, login_url: str | None
+) -> None:
+    """
+    الهدف:
+    رفع ملف المستخدمين (users.import): إرسال بيانات الدخول لكل مستخدم أُنشئ
+    من الملف — رسالة منفصلة لكل واحد (لا يرى أحد بيانات غيره).
+
+    المدخلات:
+    - accounts: قائمة (email, first_name, username, temporary_password).
+      كلمات المرور هنا صريحة للإرسال فقط — لا تُسجَّل بالسجلات أبدًا.
+    - login_url: رابط صفحة الدخول (FRONTEND_URL) أو None لإخفاء الرابط.
+
+    التأثيرات الجانبية: بريد لكل مستخدم عبر send_email (بالتسلسل). لا يرفع
+    أي استثناء — send_email تُمسك أخطاءها. تُستدعى عبر run_detached بعد commit.
+    ملاحظة أمنية: الحساب ينشأ بـmust_change_password=True — كلمة المرور المؤقتة
+    تُستبدل إجباريًا عند أول دخول (FR-UM-016).
+    """
+    login_html = (
+        f'<p><a href="{_escape_html(login_url)}">الدخول إلى النظام</a></p>' if login_url else ""
+    )
+    for email, first_name, username, temporary_password in accounts:
+        greeting = f"مرحبًا {_escape_html(first_name)}،" if first_name else "مرحبًا،"
+        body = _wrap_html(
+            f"<p>{greeting}</p>"
+            "<p>تم إنشاء حسابك في نظام إدارة اللجان والاجتماعات — شركة وادي مكة للتقنية.</p>"
+            "<ul>"
+            f'<li><strong>اسم المستخدم:</strong> <span dir="ltr">{_escape_html(username)}</span></li>'
+            f'<li><strong>كلمة المرور المؤقتة:</strong> <span dir="ltr">{_escape_html(temporary_password)}</span></li>'
+            "</ul>"
+            "<p>سيُطلب منك تعيين كلمة مرور جديدة عند أول تسجيل دخول.</p>"
+            f"{login_html}"
+            "<p>إذا لم تكن تتوقع هذه الرسالة، تواصل مع مسؤول النظام.</p>"
+        )
+        await send_email(to=[email], subject="بيانات الدخول إلى نظام إدارة اللجان", html_body=body)
+
+
 async def notify_meeting_created(meeting: Meeting, *, actor_user_id: uuid.UUID | None = None) -> None:
     """FR-MEET-001: إشعار كل أعضاء اللجنة فور جدولة اجتماع جديد (بريد + داخل النظام)."""
     subject = f"اجتماع جديد: {meeting.title}"

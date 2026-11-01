@@ -20,17 +20,29 @@ core/dependencies.py لشرح الفصل بين الاثنين).
 """
 
 import uuid
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import run_detached
+from app.core.config import settings
 from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
 from app.models.user import User, UserStatus
 from app.schemas.user import UserCreate, UserDetailOut, UserOut, UserUpdate
-from app.services import committee_service, user_service
+from app.schemas.user_import import (
+    ImportedDepartmentOut,
+    ImportedUserOut,
+    ImportRowErrorOut,
+    UserImportResult,
+)
+from app.services import committee_service, notification_service, user_import_service, user_service
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+_XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _check_user_scope_access(current_user: User, target: User, *permission_codes: str) -> None:
@@ -153,6 +165,105 @@ async def list_users(
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="ليست لديك صلاحية للقيام بهذا الإجراء",
+    )
+
+
+@router.get(
+    "/import/template",
+    dependencies=[Depends(require_permission("users.import"))],
+)
+async def download_import_template(db: AsyncSession = Depends(get_db)) -> Response:
+    """
+    GET /users/import/template — يتطلب users.import.
+
+    نموذج Excel فارغ بأعمدة رفع الملف، بقوائم منسدلة محدثة من النظام
+    (الأدوار، المسميات الوظيفية) وشيت مرجعي بالإدارات الحالية.
+    مُعرَّف قبل /{user_id} عمدًا حتى لا يُفسَّر "import" كمعرّف مستخدم.
+    """
+    content = await user_import_service.build_template(db)
+    return Response(
+        content=content,
+        media_type=_XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote("نموذج_بيانات_المستخدمين.xlsx")},
+    )
+
+
+@router.post(
+    "/import",
+    response_model=UserImportResult,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("users.import"))],
+)
+async def import_users(
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> UserImportResult:
+    """
+    POST /users/import (multipart: file) — يتطلب users.import.
+
+    ينشئ المستخدمين من ملف Excel (الكل أو لا شيء)، ويولّد لكل واحد اسم
+    مستخدم وكلمة مرور مؤقتة، ثم يرسل بيانات الدخول لبريد كل مستخدم برسالة
+    منفصلة (run_detached بعد الـcommit — الاستجابة لا تنتظر المزوّد).
+    نطاق الصلاحية (all/غيره) يُطبَّق داخل user_import_service.import_users.
+
+    الاستجابات:
+    - 201: UserImportResult (بدون كلمات المرور).
+    - 400: خطأ بالملف ككل — detail نص.
+    - 400: أخطاء بالصفوف — detail = {"message": ..., "errors": [ImportRowErrorOut]}.
+    - 409: تعارض متزامن (أُنشئ نفس البريد/الاسم أثناء الرفع) — أعيدي المحاولة.
+    - 413: الملف أكبر من الحد.
+    """
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="الملف يجب أن يكون بصيغة Excel ‏(.xlsx)")
+    content = await file.read(user_import_service.MAX_FILE_BYTES + 1)
+    if len(content) > user_import_service.MAX_FILE_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="حجم الملف أكبر من 2 ميجابايت")
+
+    try:
+        rows = user_import_service.parse_workbook(content)
+        result = await user_import_service.import_users(db, actor=current_user, rows=rows)
+    except user_import_service.ImportFileError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except user_import_service.ImportValidationError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": f"لم يُضف أي مستخدم — الملف يحتوي {len(exc.errors)} خطأ، صحّحيها وأعيدي الرفع",
+                "errors": [ImportRowErrorOut(**vars(e)).model_dump() for e in exc.errors],
+            },
+        ) from exc
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="تعارض مع بيانات أُضيفت للتو (بريد أو اسم مستخدم) — لم يُضف أحد، أعيدي رفع الملف",
+        ) from exc
+
+    run_detached(
+        notification_service.notify_imported_users_credentials(
+            [(u.email, u.first_name, u.username, u.temporary_password) for u in result.users],
+            login_url=settings.FRONTEND_URL.rstrip("/") + "/login" if settings.FRONTEND_URL else None,
+        )
+    )
+
+    return UserImportResult(
+        created_count=len(result.users),
+        users=[
+            ImportedUserOut(
+                row=u.row,
+                user_id=u.user_id,
+                full_name=u.full_name,
+                email=u.email,
+                username=u.username,
+                department=u.department,
+                role=u.role,
+                is_department_manager=u.is_department_manager,
+            )
+            for u in result.users
+        ],
+        departments_created=[ImportedDepartmentOut(name=n, code=c) for n, c in result.departments_created],
+        emails_queued=len(result.users),
     )
 
 

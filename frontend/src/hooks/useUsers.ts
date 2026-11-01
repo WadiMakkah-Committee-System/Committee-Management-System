@@ -93,3 +93,32 @@ export function useReactivateUser() {
     },
   })
 }
+
+/**
+ * رفع ملف المستخدمين (users.import): ينشئ المستخدمين ثم يحدّث قوائم
+ * المستخدمين والإدارات (قد تُنشأ إدارات جديدة) والأدوار.
+ */
+export function useImportUsers() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => usersApi.importUsers(file),
+    onSuccess: () => invalidateUserRelatedQueries(queryClient),
+  })
+}
+
+/** تحميل نموذج رفع المستخدمين كملف .xlsx (يمر عبر axios لأن التحميل يحتاج التوكن). */
+export function useDownloadImportTemplate() {
+  return useMutation({
+    mutationFn: async () => {
+      const blob = await usersApi.fetchImportTemplate()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'نموذج_بيانات_المستخدمين.xlsx'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    },
+  })
+}
