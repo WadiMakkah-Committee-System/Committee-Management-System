@@ -60,7 +60,7 @@ update_grant.sql). التعديل يُرفض إن وُجد اجتماع/مهمة
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -125,6 +125,7 @@ def _request_load_options(*, with_committee: bool) -> tuple:
     options: list = [
         *_user_columns(joinedload(CommitteeFormationRequest.requester)),
         *_user_columns(joinedload(CommitteeFormationRequest.chair)),
+        *_user_columns(joinedload(CommitteeFormationRequest.escalator)),
         members,
         members.joinedload(User.department).raiseload("*", sql_only=True),
         members.joinedload(User.job_title).raiseload("*", sql_only=True),
@@ -618,6 +619,10 @@ async def escalate_request(
 
     request.status = CommitteeRequestStatus.pending_approval
     request.return_reason = None  # لو كان راجعًا من الرئيس التنفيذي سابقًا، السبب لم يعد ساريًا
+    # طلب لاما 2026-11-01: يظهر بصفحة الطلب مَن رفعه من المكتب التنفيذي ومتى
+    # (آخر رفع — يُستبدل لو أُرجع الطلب ثم رُفع مرة ثانية).
+    request.escalated_by = actor.user_id
+    request.escalated_at = datetime.now(timezone.utc)
 
     await audit_service.log_action(
         db,

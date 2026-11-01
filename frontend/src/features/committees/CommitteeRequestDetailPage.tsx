@@ -337,6 +337,20 @@ export function CommitteeRequestDetailPage() {
             <p className="mt-1 text-sm text-text-muted">
               مقدّم الطلب: {request.requester.first_name} {request.requester.last_name}
             </p>
+            {/* طلب لاما 2026-11-01: المكتب التنفيذي فيه أكثر من شخص — يظهر مَن رفع
+                الطلب للرئيس التنفيذي ومتى (فقط بعد الرفع، لا لو أُرجع للمكتب أو لمقدّمه). */}
+            {request.escalator &&
+              request.escalated_at &&
+              ['pending_approval', 'approved', 'rejected'].includes(request.status) && (
+                <p className="mt-1 flex items-center gap-1.5 text-sm text-text-secondary">
+                  <Send size={14} className="text-brand-primary" />
+                  رُفع للرئيس التنفيذي بواسطة{' '}
+                  <span className="font-medium text-text-primary">
+                    {request.escalator.first_name} {request.escalator.last_name}
+                  </span>
+                  <span className="text-text-muted">— {formatDateTime(request.escalated_at)}</span>
+                </p>
+              )}
           </div>
         </div>
         <div className="flex flex-wrap justify-end gap-2">

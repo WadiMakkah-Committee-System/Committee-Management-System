@@ -212,6 +212,9 @@ class CommitteeFormationRequestOut(BaseModel):
     committee_id: uuid.UUID | None
     rejection_reason: str | None
     return_reason: str | None
+    # آخر من رفع الطلب للرئيس التنفيذي ومتى (None = لم يُرفع بعد) — 2026-11-01.
+    escalator: CommitteeMemberUserOut | None = None
+    escalated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -302,6 +302,9 @@ export interface CommitteeFormationRequest {
   committee_id: string | null
   rejection_reason: string | null
   return_reason: string | null
+  /** آخر من رفع الطلب للرئيس التنفيذي من المكتب التنفيذي — null لو لم يُرفع بعد (2026-11-01). */
+  escalator: CommitteeMemberUser | null
+  escalated_at: string | null
   created_at: string
   updated_at: string
 }
