@@ -33,6 +33,16 @@ export async function createMeeting(payload: MeetingCreatePayload): Promise<Meet
   return data
 }
 
+/**
+ * POST /meetings/{id}/extend — تمديد وقت نهاية الاجتماع قبله أو أثناءه
+ * (طلب لاما 2026-11-01). new_end_at بصيغة ISO. يرمي 400 لوقت غير صالح
+ * (ليس بعد النهاية الحالية/خارج فترة اللجنة)، 403 بلا صلاحية، 409 لو انتهى.
+ */
+export async function extendMeeting(meetingId: string, newEndAt: string): Promise<Meeting> {
+  const { data } = await apiClient.post<Meeting>(`/meetings/${meetingId}/extend`, { new_end_at: newEndAt })
+  return data
+}
+
 export async function updateMeeting(
   meetingId: string,
   payload: MeetingUpdatePayload,
