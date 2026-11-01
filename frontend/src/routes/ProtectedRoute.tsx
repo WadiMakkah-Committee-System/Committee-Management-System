@@ -51,6 +51,13 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     // المستقل بالقائمة الجانبية) — راجعي نفس الملاحظة أعلاه وSidebar.tsx.
     const hasMinutesMembershipBypass =
       !!anyPermission?.includes('minutes.view') && user.has_any_committee_membership
+    // بلاغ لجين 2026-11-01: على عكس الالتفافات أعلاه (عضوية مجردة بأي
+    // لجنة)، هذي دقيقة — تتحقق فعليًا من committee.documents.view ضمن دور
+    // اللجنة (راجعي has_committee_documents_view_access بـtypes/index.ts
+    // وcommittee_service.user_has_committee_role_documents_view_access
+    // بالباك-إند للتفصيل الكامل وسبب اختيار الفحص الدقيق هنا تحديدًا).
+    const hasDocumentsMembershipBypass =
+      !!anyPermission?.includes('documents.view') && user.has_committee_documents_view_access
     if (
       anyPermission &&
       !anyPermission.some((code) => user.permissions.includes(code)) &&
@@ -58,7 +65,8 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
       !hasMeetingsMembershipBypass &&
       !hasDecisionsMembershipBypass &&
       !hasTasksMembershipBypass &&
-      !hasMinutesMembershipBypass
+      !hasMinutesMembershipBypass &&
+      !hasDocumentsMembershipBypass
     ) {
       return <Navigate to="/profile" replace />
     }

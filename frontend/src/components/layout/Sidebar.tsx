@@ -158,6 +158,13 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
     if (user?.has_any_committee_membership && !base.includes('minutes.view')) {
       base = [...base, 'minutes.view']
     }
+    // بلاغ لجين 2026-11-01: على عكس البنود أعلاه (عضوية مجردة بأي لجنة)،
+    // هذا الحقل دقيق (يتحقق فعليًا من committee.documents.view ضمن دور
+    // اللجنة) — راجعي has_committee_documents_view_access بـtypes/index.ts
+    // وProtectedRoute.tsx لنفس المنطق على مستوى المسار.
+    if (user?.has_committee_documents_view_access && !base.includes('documents.view')) {
+      base = [...base, 'documents.view']
+    }
     return base
   }, [user])
   const location = useLocation()

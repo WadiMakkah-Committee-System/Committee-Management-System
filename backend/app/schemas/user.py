@@ -125,6 +125,14 @@ class UserDetailOut(UserOut):
     # بيانات فعلية — فهذا الحقل هنا لإظهار رابط/مسار "الاجتماعات" بالواجهة
     # فقط، وليس ضمانًا بأن القائمة لن تكون فارغة.
     has_any_committee_membership: bool = False
+    # بلاغ لجين 2026-11-01: نفس فكرة has_committee_membership_access أعلاه
+    # بالضبط، لكن بكود صلاحية "اللجنة" committee.documents.view بدل
+    # committees.view — تستخدمه الواجهة الأمامية حصرًا لإظهار رابط
+    # "الوثائق" بالقائمة الجانبية والسماح بالوصول لمساره/عناصره لرئيس أو
+    # عضو لجنة بدون documents.view/documents.search على مستوى System Role
+    # (راجعي committee_service.user_has_committee_role_documents_view_access
+    # وapp/api/v1/documents.py::_require_documents_view_access).
+    has_committee_documents_view_access: bool = False
 
 
 # app.schemas.department.DepartmentDetailOut يشير إلى "UserOut" كـ Forward

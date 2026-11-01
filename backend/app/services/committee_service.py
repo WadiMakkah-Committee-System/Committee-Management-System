@@ -942,6 +942,39 @@ async def user_has_committee_role_view_access(db: AsyncSession, *, user_id: uuid
     return (result.scalar() or 0) > 0
 
 
+async def user_has_committee_role_documents_view_access(db: AsyncSession, *, user_id: uuid.UUID) -> bool:
+    """
+    نفس فكرة user_has_committee_role_view_access أعلاه بالضبط (بلاغ لجين
+    2026-11-01: رئيس/عضو لجنة بدون صلاحية documents.view/documents.search
+    على مستوى System Role لا يرى رابط "الوثائق" بالقائمة الجانبية، ولا
+    يقدر يستدعي GET /documents إطلاقًا — رغم أن دور لجنته (رئيس/عضو) يملك
+    فعليًا committee.documents.view افتراضيًا منذ migration 0016)، لكن
+    بكود صلاحية مختلف (committee.documents.view بدل committees.view).
+
+    تُستخدم بنمط "دقيق" مقصود هنا (تتحقق من كود الصلاحية الفعلي ضمن دور
+    اللجنة، وليس فقط "هل هو عضو بأي لجنة" كما بـuser_has_any_committee_
+    membership أدناه المستخدمة للاجتماعات/القرارات/المهام/المحاضر) — لأن
+    الوثائق أكثر حساسية (راجعي docstring can_view_document بـ
+    document_service.py)، فتعديل صلاحيات "عضو اللجنة" لاحقًا من شاشة
+    الأدوار ينعكس هنا فورًا بلا أي مفاجآت. مُستدعاة فقط كبديل (fallback)
+    بعد فشل فحص الصلاحية النظامية أولًا (قصيرة الدارة — استعلام واحد خفيف
+    فقط لمن لا يملك الصلاحية النظامية أصلًا؛ راجعي app/api/v1/documents.py
+    لمكان الاستدعاء).
+    """
+    stmt = (
+        select(func.count())
+        .select_from(committee_members)
+        .join(RolePermission, RolePermission.role_id == committee_members.c.committee_role_id)
+        .join(Permission, Permission.permission_id == RolePermission.permission_id)
+        .where(
+            committee_members.c.user_id == user_id,
+            Permission.code == "committee.documents.view",
+        )
+    )
+    result = await db.execute(stmt)
+    return (result.scalar() or 0) > 0
+
+
 async def user_has_any_committee_membership(db: AsyncSession, *, user_id: uuid.UUID) -> bool:
     """
     قرار توحيد سلوك القائمة الجانبية بين "اللجان" و"الاجتماعات" (2026-09-01):
