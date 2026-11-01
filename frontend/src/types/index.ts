@@ -160,6 +160,15 @@ export interface UserDetail extends User {
    * فارغة رغم true هنا، إن لم تُمنح meetings.view بعد لدور اللجنة.
    */
   has_any_committee_membership: boolean
+  /**
+   * بلاغ لجين 2026-11-01: نفس فكرة has_committee_membership_access أعلاه
+   * بالضبط (فحص دقيق لكود الصلاحية داخل دور اللجنة، وليس مجرد عضوية) —
+   * لكن بكود "اللجنة" committee.documents.view بدل committees.view.
+   * استخدميه لإظهار رابط "الوثائق" بالقائمة الجانبية والسماح بالوصول
+   * لمساره لرئيس/عضو لجنة بدون documents.view/documents.search على
+   * مستوى System Role.
+   */
+  has_committee_documents_view_access: boolean
 }
 
 export interface DepartmentDetail extends Department {

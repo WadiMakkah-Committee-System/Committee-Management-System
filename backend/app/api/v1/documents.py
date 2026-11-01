@@ -13,10 +13,17 @@
   التصنيف الفعلي (المُرسَل بالإنشاء أو المخزَّن بالتعديل/الحذف)، لذلك لا
   يمكن فرضه عبر dependencies=[require_permission(...)] الثابت في الديكور
   كبقية الراوترات، ويُفحص يدويًا داخل كل Route.
-- صلاحيات documents.view / documents.search أيّهما كافٍ لعرض/البحث في
-  القائمة (require_permission تقبل أكثر من كود وتكتفي بواحد)؛
+- صلاحيات documents.view / documents.search أيّهما كافٍ لعرض/البحث/تحميل
+  الوثيقة (list_documents/get_document/download_document)؛
   documents.search_content تتحكم فقط في هل يشمل البحث محتوى الوثيقة
   (content_text) أو العنوان/الوصف فقط.
+- هذه الثلاثة (list_documents/get_document/download_document) لا تستخدم
+  dependencies=[require_permission(...)] الثابت بالديكور كبقية الراوترات
+  (بلاغ لجين 2026-11-01): رئيس/عضو لجنة بدون الصلاحية النظامية أعلاه، لكن
+  دوره داخل لجنته يملك committee.documents.view، يُسمح له أيضًا — فحص بديل
+  يحتاج عضوية اللجنة فلا يمكن فرضه بمعزل كالمعتاد. راجعي
+  _require_documents_view_access أدناه وdocstring
+  committee_service.user_has_committee_role_documents_view_access.
 """
 
 import os
@@ -46,7 +53,7 @@ from app.schemas.document import (
     DocumentVisibleCommitteeOut,
     DocumentVisibleDepartmentOut,
 )
-from app.services import document_chat_service, document_search_service, document_service
+from app.services import committee_service, document_chat_service, document_search_service, document_service
 from app.services.document_embedding_service import generate_embedding_for_document
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -212,10 +219,31 @@ async def delete_document_category(
 # ---------------------------------------------------------------------------
 
 
+async def _require_documents_view_access(db: AsyncSession, current_user: User) -> None:
+    """
+    بوابة عرض/بحث/تحميل الوثائق — بديل عن dependencies=[require_permission(...)]
+    الثابت بالديكور (بخلاف بقية هذا الملف) لأنها تحتاج فحص بديل عبر عضوية
+    اللجنة (بلاغ لجين 2026-11-01: رئيس/عضو لجنة بدون documents.view/search
+    على مستوى System Role كان يُرفض بالكامل، رغم أن دور لجنته يملك فعليًا
+    committee.documents.view افتراضيًا — راجعي docstring
+    committee_service.user_has_committee_role_documents_view_access للتفصيل
+    الكامل وسبب اختيار الفحص الدقيق هنا تحديدًا). قصيرة الدارة عمدًا: من
+    يملك الصلاحية النظامية أصلًا (الغالبية) لا يُنفَّذ له أي استعلام إضافي.
+    """
+    if any(code in current_user.permission_codes for code in ("documents.view", "documents.search")):
+        return
+    if await committee_service.user_has_committee_role_documents_view_access(
+        db, user_id=current_user.user_id
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN, detail="ليست لديك صلاحية للقيام بهذا الإجراء"
+    )
+
+
 @router.get(
     "",
     response_model=list[DocumentOut],
-    dependencies=[Depends(require_permission("documents.view", "documents.search"))],
 )
 async def list_documents(
     current_user: CurrentUser,
@@ -225,6 +253,7 @@ async def list_documents(
     committee_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> list[DocumentOut]:
+    await _require_documents_view_access(db, current_user)
     can_search_content = current_user.role.is_super_admin or (
         "documents.search_content" in current_user.role.permission_codes
     )
@@ -459,11 +488,11 @@ async def get_document_chat_conversation(
 @router.get(
     "/{document_id}",
     response_model=DocumentOut,
-    dependencies=[Depends(require_permission("documents.view"))],
 )
 async def get_document(
     document_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> DocumentOut:
+    await _require_documents_view_access(db, current_user)
     document = await document_service.get_document(
         db, current_user=current_user, document_id=document_id
     )
@@ -521,13 +550,13 @@ async def delete_document(
 
 @router.get(
     "/{document_id}/download",
-    dependencies=[Depends(require_permission("documents.download"))],
 )
 # يكتب أثناء القراءة (راجعي writes_on_read بـapp/db/session.py)
 @writes_on_read
 async def download_document(
     document_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> Response:
+    await _require_documents_view_access(db, current_user)
     try:
         result = await document_service.download_document(
             db, current_user=current_user, document_id=document_id
