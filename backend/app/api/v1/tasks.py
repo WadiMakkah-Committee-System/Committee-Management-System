@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.documents import _content_disposition
 from app.core.background import run_detached
 from app.core.committee_period import CommitteePeriodError
 from app.core.dependencies import CurrentUser
@@ -255,7 +256,10 @@ async def download_task_attachment(
     return Response(
         content=content,
         media_type=document.mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{document.file_name}"'},
+        # الاسم عربي غالبًا — _content_disposition (RFC 5987) من documents.py
+        # (إصلاح 2026-11-02: نفس خلل الأحرف العربية بـContent-Disposition
+        # المُصلَح سابقًا لمرفقات الاجتماعات، لكنه فات هذا المسار).
+        headers={"Content-Disposition": _content_disposition(document.file_name)},
     )
 
 
