@@ -36,6 +36,7 @@ import { Skeleton, TableSkeleton } from '@/components/ui/Skeleton'
 import { Avatar } from '@/components/ui/Avatar'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ActionMenu } from '@/components/ui/ActionMenu'
+import { Textarea } from '@/components/ui/Textarea'
 import { DecisionStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { DecisionFormModal, type DecisionFormSubmitValues } from './DecisionFormModal'
@@ -68,6 +69,8 @@ export function DecisionDetailPage() {
   const openVotingMutation = useOpenVoting()
   const castVoteMutation = useCastVote()
   const approveMutation = useApproveDecision()
+  const { data: attachments } = useDecisionAttachments(decisionId)
+  const uploadAttachmentMutation = useUploadDecisionAttachment()
 
   const [editOpen, setEditOpen] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
