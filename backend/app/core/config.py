@@ -102,6 +102,14 @@ class Settings(BaseSettings):
       TEAMS_CLIENT_SECRET: str = ""
       TEAMS_ORGANIZER_EMAIL: str = ""
 
+    # --- الدخول بحساب Microsoft 365 (migration 0042، قرار لاما 2026-11-02) ---
+    # يستخدم نفس تطبيق Entra أعلاه (TEAMS_TENANT_ID/TEAMS_CLIENT_ID) — مفعّل
+    # تلقائيًا متى ما عُبّئا. MICROSOFT_LOGIN_DOMAINS: نطاقات بريد الشركة
+    # مفصولة بفواصل (مثل "wadimakkah.sa") — من يكتب بريدًا منها بصفحة الدخول
+    # يُحوَّل لنافذة Microsoft تلقائيًا بدل خانة كلمة المرور. ليست أسرارًا
+    # (تُرجَع للواجهة عبر GET /auth/login-options).
+      MICROSOFT_LOGIN_DOMAINS: str = ""
+
     # --- Azure Communication Services (تجربة: فيديو اجتماع Teams داخل واجهة
     # المنصة نفسها — 2026-11-02، فرع poc/acs-teams-embed) ---
     # Connection string لمورد ACS (Azure Portal → Communication Services →

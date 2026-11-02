@@ -10,6 +10,8 @@
 - تجديد Access Token عبر Refresh Token صالح.
 - تسجيل الخروج (إبطال الجلسة في Redis).
 - تدفق نسيت كلمة المرور عبر OTP (FR-UM-018).
+- تسجيل الدخول بحساب Microsoft 365 حق الشركة (migration 0042) — إضافة على
+  الدخول بكلمة المرور، لمستخدمين أنشأهم السوبر أدمن مسبقًا.
 
 ملاحظات أمنية:
 - لا تُكشف تفاصيل عن سبب فشل الدخول (مستخدم غير موجود VS كلمة مرور خاطئة)
@@ -20,6 +22,7 @@
 
 import asyncio
 import secrets
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import TypeVar
@@ -27,6 +30,7 @@ from typing import TypeVar
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import microsoft_identity
 from app.core.config import settings
 from app.core.redis_client import (
     create_session,
@@ -126,13 +130,98 @@ async def authenticate(
     # - إنشاء الجلسة في Redis يتم بالتوازي مع commit بدل بعده. لو فشل commit
     #   يُرفع الخطأ كالسابق ولا تُصدَر أي توكنات؛ مفتاح الجلسة اليتيم ينتهي
     #   وحده بعد مدة الخمول (لا يمكن استخدامه بلا توكن موقَّع يحمل معرّفه).
+    access_token, refresh_token, extra = await _issue_session(db, user, before_commit)
+    return user, access_token, refresh_token, extra
+
+
+async def _issue_session(
+    db: AsyncSession, user: User, before_commit: Callable[[User], Awaitable[T]] | None
+) -> tuple[str, str, T | None]:
+    """
+    الجزء المشترك بين الدخول بكلمة المرور وبحساب Microsoft: بناء ناتج
+    before_commit داخل المعاملة، ثم commit + إنشاء الجلسة بـRedis بالتوازي،
+    ثم إصدار التوكنات (راجعي تعليق تحسين الأداء بـauthenticate).
+    """
     extra = await before_commit(user) if before_commit is not None else None
     session_id, _ = await asyncio.gather(create_session(user.user_id), db.commit())
-    access_token = create_access_token(
-        user.user_id, user.role.name if user.role else None, session_id
-    )
+    access_token = create_access_token(user.user_id, user.role.name if user.role else None, session_id)
     refresh_token = create_refresh_token(user.user_id, session_id)
+    return access_token, refresh_token, extra
 
+
+async def authenticate_microsoft(
+    db: AsyncSession,
+    *,
+    id_token: str,
+    before_commit: Callable[[User], Awaitable[T]] | None = None,
+) -> tuple[User, str, str, T | None]:
+    """
+    الهدف: تسجيل الدخول بحساب Microsoft 365 حق الشركة (migration 0042).
+
+    المدخلات: id_token من Microsoft (بعد نافذة تسجيل الدخول بالواجهة).
+
+    قواعد العمل (قرار لاما 2026-11-02):
+    1) التوكن يُتحقق منه بالكامل هنا (التوقيع/المستأجر/الجمهور) — microsoft_identity.
+    2) لا تسجيل ذاتي: لازم مستخدم موجود مسبقًا (أنشأه السوبر أدمن) بنفس البريد.
+    3) أول دخول يحفظ microsoft_object_id، وكل دخول بعده لازم يطابقه — لو
+       المستخدم مرتبط بحساب Microsoft آخر، أو حساب Microsoft هذا مرتبط
+       بمستخدم آخر، يُرفض الدخول.
+    4) الموقوف لا يدخل. قفل محاولات كلمة المرور (FR-UM-019) لا يمنع الدخول
+       بـMicrosoft لأنه حماية من تخمين كلمة المرور، وMicrosoft لها حمايتها
+       (التحقق بخطوتين) — ولا يُصفَّر العداد هنا.
+    5) كلمة المرور المؤقتة (FR-UM-016): لو المستخدم ما غيّرها بعد
+       (must_change_password=True) تُبطَل عند دخوله بـMicrosoft — تُستبدل
+       بقيمة عشوائية لا يعرفها أحد، ويُلغى إجبار التغيير. السبب: هذي الكلمة
+       وصلت بالإيميل كنص صريح، وما عاد لها حاجة. لو احتاج كلمة مرور لاحقًا
+       يستخدم "نسيت كلمة المرور" (FR-UM-018). ولو كان غيّرها بنفسه تبقى كما هي.
+
+    المخرجات: (المستخدم، access_token، refresh_token، ناتج before_commit).
+    الأخطاء: AuthError (رسائل واضحة للموظف — الهوية موثّقة من Microsoft، فلا
+    خطر تعداد مستخدمين هنا)، MicrosoftIdentityError (توكن مرفوض).
+    """
+    identity = await microsoft_identity.verify_id_token(id_token)
+    object_id = uuid.UUID(identity.object_id)
+
+    candidates = await user_service.find_users_for_microsoft_login(db, identity.email, object_id)
+    linked = [u for u in candidates if u.microsoft_object_id == object_id]
+    by_email = [u for u in candidates if u.email.lower() == identity.email.lower()]
+
+    if linked:
+        user = linked[0]
+    elif len(by_email) == 1:
+        user = by_email[0]
+    elif len(by_email) > 1:
+        raise AuthError("يوجد أكثر من حساب بنفس البريد بالمنصة — تواصل مع مسؤول النظام")
+    else:
+        raise AuthError("حسابك غير مسجل في المنصة — تواصل مع مسؤول النظام لإضافتك")
+
+    if user.microsoft_object_id is not None and user.microsoft_object_id != object_id:
+        raise AuthError("هذا الحساب بالمنصة مربوط بحساب Microsoft آخر — تواصل مع مسؤول النظام")
+
+    if user.status == UserStatus.suspended:
+        raise AuthError("الحساب موقوف — تواصل مع مسؤول النظام")
+
+    first_link = user.microsoft_object_id is None
+    temp_password_revoked = user.must_change_password
+    if temp_password_revoked:
+        user.password_hash = await asyncio.to_thread(hash_password, secrets.token_urlsafe(32))
+        user.must_change_password = False
+    user.microsoft_object_id = object_id
+    user.last_login_at = datetime.now(timezone.utc)
+    await audit_service.log_action(
+        db,
+        actor_user_id=user.user_id,
+        action_type="update",
+        target_type="user",
+        target_id=user.user_id,
+        metadata={
+            "event": "login_success",
+            "method": "microsoft",
+            "first_link": first_link,
+            "temp_password_revoked": temp_password_revoked,
+        },
+    )
+    access_token, refresh_token, extra = await _issue_session(db, user, before_commit)
     return user, access_token, refresh_token, extra
 
 
