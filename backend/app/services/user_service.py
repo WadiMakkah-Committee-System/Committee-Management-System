@@ -243,6 +243,25 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     return result.unique().scalar_one_or_none()
 
 
+async def find_users_for_microsoft_login(db: AsyncSession, email: str, object_id: uuid.UUID) -> list[User]:
+    """
+    الهدف: المرشحون للدخول بحساب Microsoft (migration 0042) — المستخدمون غير
+    المحذوفين اللي بريدهم يطابق بريد Microsoft (بدون حساسية لحالة الأحرف) أو
+    المرتبطون مسبقًا بنفس Object ID.
+    المخرجات: قائمة بالشكل الكامل (نفس get_user_by_username) — المنطق
+    (تعارض/تكرار/ربط) بـauth_service.authenticate_microsoft.
+    """
+    result = await db.execute(
+        select(User)
+        .options(*_profile_options())
+        .where(
+            User.deleted_at.is_(None),
+            or_(func.lower(User.email) == email.lower(), User.microsoft_object_id == object_id),
+        )
+    )
+    return list(result.unique().scalars().all())
+
+
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     """جلب مستخدم عبر البريد الإلكتروني — يُستخدم في نسيت كلمة المرور."""
     result = await db.execute(

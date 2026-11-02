@@ -1,7 +1,8 @@
 """
 الهدف:
 راوتات المصادقة — تسجيل الدخول/الخروج، تجديد التوكن، تغيير كلمة المرور،
-ونسيت كلمة المرور (FR-UM-011 → FR-UM-020).
+ونسيت كلمة المرور (FR-UM-011 → FR-UM-020)، والدخول بحساب Microsoft 365
+حق الشركة (migration 0042).
 
 المسؤولية:
 تحويل طلبات HTTP إلى استدعاءات لـ auth_service، وترجمة أخطاء العمل
@@ -16,9 +17,12 @@ from app.core.config import settings
 from app.core.dependencies import CurrentUser, oauth2_scheme
 from app.core.security import InvalidTokenError, create_access_token, decode_token
 from app.db.session import get_db
+from app.core import microsoft_identity
 from app.schemas.auth import (
     ForgotPasswordRequest,
+    LoginOptionsResponse,
     LoginRequest,
+    MicrosoftLoginRequest,
     RefreshRequest,
     ResetPasswordRequest,
     TokenResponse,
@@ -50,6 +54,51 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> To
         access_token=access_token,
         refresh_token=refresh_token,
         must_change_password=user.must_change_password,
+        user=profile,
+    )
+
+
+@router.get("/login-options", response_model=LoginOptionsResponse)
+async def login_options() -> LoginOptionsResponse:
+    """
+    إعدادات صفحة الدخول (عامة — قبل تسجيل الدخول): هل الدخول بـMicrosoft
+    مفعّل، ومعرّفا تطبيق Entra لـMSAL بالواجهة، ونطاقات بريد الشركة.
+    لا يكشف أي معلومة عن المستخدمين.
+    """
+    if not microsoft_identity.is_enabled():
+        return LoginOptionsResponse(microsoft_enabled=False)
+    return LoginOptionsResponse(
+        microsoft_enabled=True,
+        microsoft_client_id=settings.TEAMS_CLIENT_ID.strip(),
+        microsoft_tenant_id=settings.TEAMS_TENANT_ID.strip(),
+        microsoft_domains=microsoft_identity.company_domains(),
+    )
+
+
+@router.post("/microsoft", response_model=TokenResponse)
+async def login_with_microsoft(payload: MicrosoftLoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+    """
+    تسجيل الدخول بحساب Microsoft 365 حق الشركة.
+
+    - Authentication: لا (هذا هو الدخول). الهوية من ID Token يتحقق منه الباك-إند.
+    - 200: نفس رد /auth/login (must_change_password=False — كلمة المرور المؤقتة
+      تُبطَل عند أول دخول بـMicrosoft، راجعي auth_service.authenticate_microsoft).
+    - 401: توكن غير صالح، أو حساب غير مسجل بالمنصة، أو موقوف، أو مربوط بحساب آخر.
+    - 503: الدخول بـMicrosoft غير مفعّل بهذه البيئة.
+    """
+    try:
+        user, access_token, refresh_token, profile = await auth_service.authenticate_microsoft(
+            db, id_token=payload.id_token, before_commit=lambda u: build_my_profile(db, u)
+        )
+    except microsoft_identity.MicrosoftNotConfiguredError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except (AuthError, microsoft_identity.MicrosoftIdentityError) as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        must_change_password=False,
         user=profile,
     )
 

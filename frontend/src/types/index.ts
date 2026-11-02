@@ -221,6 +221,19 @@ export interface LoginPayload {
   password: string
 }
 
+/** استجابة GET /auth/login-options — إعدادات الدخول بحساب Microsoft (عامة، ليست أسرارًا). */
+export interface LoginOptions {
+  microsoft_enabled: boolean
+  microsoft_client_id: string | null
+  microsoft_tenant_id: string | null
+  /** نطاقات بريد الشركة: من يكتب بريدًا منها يُحوَّل لـMicrosoft تلقائيًا. */
+  microsoft_domains: string[]
+}
+
+/** طريقة دخول الجلسة الحالية — microsoft تعني إن المتصفح فيه حساب Microsoft
+ *  حق نفس المستخدم، فالاجتماعات تفتح بهويته بدون نافذة. */
+export type AuthMethod = 'password' | 'microsoft'
+
 export interface TokenResponse {
   access_token: string
   refresh_token: string

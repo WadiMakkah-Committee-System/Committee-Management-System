@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { LogIn, ShieldCheck } from 'lucide-react'
+import { Building2, LogIn, ShieldCheck } from 'lucide-react'
 import * as authApi from '@/api/auth'
 import * as usersApi from '@/api/users'
 import { usersKeys } from '@/hooks/useUsers'
@@ -13,45 +13,127 @@ import { useAuthStore } from '@/store/authStore'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { extractErrorMessage } from '@/lib/utils'
+import {
+  isCompanyEmail,
+  isMicrosoftCancel,
+  loadLoginOptions,
+  loadMicrosoftClient,
+  signInWithMicrosoft,
+  signOutMicrosoft,
+} from '@/lib/microsoftSignIn'
+import type { AuthMethod, LoginOptions, TokenResponse } from '@/types'
 import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
 import { BrandWave } from '@/components/brand/BrandWave'
 import { EASE_OUT_EXPO, SplitWords } from '@/components/motion/primitives'
 
+// كلمة المرور اختيارية بالمخطط لأن موظف الشركة (بريد من نطاقها) يكمل من نافذة
+// Microsoft بدونها — وتُفرض يدويًا بمسار كلمة المرور (handleLogin أدناه).
 const schema = z.object({
-  username: z.string().min(1, 'اسم المستخدم مطلوب'),
-  password: z.string().min(1, 'كلمة المرور مطلوبة'),
+  username: z.string().trim().min(1, 'اسم المستخدم أو الإيميل مطلوب'),
+  password: z.string().optional(),
 })
 
 type FormValues = z.infer<typeof schema>
 
+/**
+ * صفحة تسجيل الدخول — خانة واحدة تقرر الطريق (قرار لاما 2026-11-02):
+ * - بريد من نطاق الشركة (مثل name@wadimakkah.sa) ⇒ تختفي كلمة المرور ويكمل
+ *   من نافذة Microsoft (POST /auth/microsoft) — ونفس الدخول يفتح الاجتماعات
+ *   بهويته بدون نافذة ثانية.
+ * - غير ذلك (اسم مستخدم، أو عضو من خارج الشركة) ⇒ كلمة المرور كالمعتاد
+ *   بكل متطلبات FR-UM-015..019.
+ * إعدادات Microsoft تُجلب من الباك-إند، ولو الميزة غير مفعّلة تبقى الصفحة كما كانت.
+ */
 export function LoginPage() {
   const navigate = useNavigate()
   const setTokens = useAuthStore((s) => s.setTokens)
   const setUser = useAuthStore((s) => s.setUser)
+  const setAuthMethod = useAuthStore((s) => s.setAuthMethod)
   const queryClient = useQueryClient()
   const [serverError, setServerError] = useState<string | null>(null)
+  const [loginOptions, setLoginOptions] = useState<LoginOptions | null>(null)
 
   const {
     register,
     handleSubmit,
+    watch,
+    setError,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
 
+  // تهيئة إعدادات Microsoft ومكتبة MSAL أول ما تفتح الصفحة (مو عند الضغط)،
+  // حتى تفتح نافذة Microsoft مباشرة من ضغطة الزر بدون ما يحجبها المتصفح.
+  useEffect(() => {
+    let active = true
+    loadLoginOptions()
+      .then((options) => {
+        if (!active) return
+        setLoginOptions(options)
+        if (options.microsoft_enabled) void loadMicrosoftClient().catch(() => {})
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const microsoftEnabled = Boolean(loginOptions?.microsoft_enabled)
+  const usesMicrosoft = isCompanyEmail(watch('username') ?? '', loginOptions)
+
+  /** المشترك بين طريقتي الدخول: حفظ التوكنات والمستخدم وطريقة الدخول. */
+  async function finishLogin(tokens: TokenResponse, method: AuthMethod) {
+    setTokens(tokens.access_token, tokens.refresh_token)
+    setAuthMethod(method)
+    // تحسين أداء 2026-10-25: الباك-إند يرجّع بيانات المستخدم مع رد الدخول
+    // نفسه (نفس شكل /users/me) — فلا ننتظر طلبًا ثانيًا متتابعًا. لو رجع
+    // بدونها (نسخة باك-إند أقدم) نرجع للسلوك السابق.
+    const me = tokens.user ?? (await usersApi.fetchMe())
+    queryClient.setQueryData(usersKeys.me, me)
+    setUser(me)
+    return me
+  }
+
   const mutation = useMutation({
-    mutationFn: async (values: FormValues) => {
+    mutationFn: async (values: { username: string; password: string }) => {
       const tokens = await authApi.login(values)
-      setTokens(tokens.access_token, tokens.refresh_token)
-      // تحسين أداء 2026-10-25: الباك-إند يرجّع بيانات المستخدم مع رد الدخول
-      // نفسه (نفس شكل /users/me) — فلا ننتظر طلبًا ثانيًا متتابعًا. لو رجع
-      // بدونها (نسخة باك-إند أقدم) نرجع للسلوك السابق.
-      const me = tokens.user ?? (await usersApi.fetchMe())
-      queryClient.setQueryData(usersKeys.me, me)
-      setUser(me)
-      return me
+      // دخول بكلمة المرور ⇒ أي حساب Microsoft محفوظ بالمتصفح (لشخص آخر مثلًا)
+      // لازم يُنسى، حتى ما يدخل الاجتماعات بهوية غيره.
+      void signOutMicrosoft().catch(() => {})
+      return finishLogin(tokens, 'password')
     },
     onSuccess: () => navigate('/users', { replace: true }),
     onError: (error) => setServerError(extractErrorMessage(error)),
   })
+
+  const microsoftMutation = useMutation({
+    mutationFn: async (loginHint?: string) => {
+      const { idToken } = await signInWithMicrosoft(loginHint)
+      try {
+        return await finishLogin(await authApi.loginWithMicrosoft(idToken), 'microsoft')
+      } catch (err) {
+        // المنصة رفضت الحساب (غير مسجل/موقوف...) ⇒ ننسى حساب Microsoft من المتصفح.
+        await signOutMicrosoft().catch(() => {})
+        throw err
+      }
+    },
+    onSuccess: () => navigate('/users', { replace: true }),
+    onError: (error) => {
+      if (!isMicrosoftCancel(error)) setServerError(extractErrorMessage(error))
+    },
+  })
+
+  function handleLogin(values: FormValues) {
+    setServerError(null)
+    if (isCompanyEmail(values.username, loginOptions)) {
+      microsoftMutation.mutate(values.username)
+      return
+    }
+    if (!values.password) {
+      setError('password', { message: 'كلمة المرور مطلوبة' })
+      return
+    }
+    mutation.mutate({ username: values.username, password: values.password })
+  }
 
   return (
     <div className="relative flex min-h-svh bg-bg-app">
@@ -120,10 +202,7 @@ export function LoginPage() {
           </div>
 
           <form
-            onSubmit={handleSubmit((values) => {
-              setServerError(null)
-              mutation.mutate(values)
-            })}
+            onSubmit={handleSubmit(handleLogin)}
             className="relative flex flex-col gap-4 overflow-hidden rounded-lg border border-border-default bg-bg-surface p-6 shadow-xl sm:p-8"
           >
             <div aria-hidden className="brand-stripe absolute inset-x-0 top-0 h-[3px]" />
@@ -138,27 +217,50 @@ export function LoginPage() {
             </div>
 
             <Input
-              label="اسم المستخدم"
-              placeholder="أدخل اسم المستخدم"
+              label={microsoftEnabled ? 'اسم المستخدم أو إيميل الشركة' : 'اسم المستخدم'}
+              placeholder={microsoftEnabled ? 'name@wadimakkah.sa أو اسم المستخدم' : 'أدخل اسم المستخدم'}
               autoComplete="username"
               error={errors.username?.message}
               {...register('username')}
             />
-            <Input
-              label="كلمة المرور"
-              type="password"
-              placeholder="أدخل كلمة المرور"
-              autoComplete="current-password"
-              error={errors.password?.message}
-              {...register('password')}
-            />
-            {/* FR-UM-018: الدخول لتدفق استعادة كلمة المرور (صفحة عامة) */}
-            <Link
-              to="/forgot-password"
-              className="-mt-2 self-start text-sm font-medium text-brand-primary hover:underline"
-            >
-              نسيت كلمة المرور؟
-            </Link>
+            <AnimatePresence initial={false} mode="wait">
+              {usesMicrosoft ? (
+                <motion.p
+                  key="microsoft-hint"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="flex items-start gap-2 rounded-sm border border-brand-primary/20 bg-brand-primary/5 px-3 py-2 text-xs text-text-secondary"
+                >
+                  <Building2 size={14} className="mt-0.5 shrink-0 text-brand-primary" />
+                  هذا إيميل الشركة — بتكمل الدخول من نافذة Microsoft بدون كلمة مرور المنصة.
+                </motion.p>
+              ) : (
+                <motion.div
+                  key="password-fields"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="flex flex-col gap-4"
+                >
+                  <Input
+                    label="كلمة المرور"
+                    type="password"
+                    placeholder="أدخل كلمة المرور"
+                    autoComplete="current-password"
+                    error={errors.password?.message}
+                    {...register('password')}
+                  />
+                  {/* FR-UM-018: الدخول لتدفق استعادة كلمة المرور (صفحة عامة) */}
+                  <Link
+                    to="/forgot-password"
+                    className="-mt-2 self-start text-sm font-medium text-brand-primary hover:underline"
+                  >
+                    نسيت كلمة المرور؟
+                  </Link>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <AnimatePresence>
               {serverError && (
@@ -174,9 +276,29 @@ export function LoginPage() {
               )}
             </AnimatePresence>
 
-            <Button type="submit" size="lg" loading={mutation.isPending} icon={<LogIn size={16} />} className="mt-1">
-              تسجيل الدخول
+            <Button
+              type="submit"
+              size="lg"
+              loading={mutation.isPending || microsoftMutation.isPending}
+              icon={usesMicrosoft ? <Building2 size={16} /> : <LogIn size={16} />}
+              className="mt-1"
+            >
+              {usesMicrosoft ? 'المتابعة بحساب Microsoft' : 'تسجيل الدخول'}
             </Button>
+            {microsoftEnabled && !usesMicrosoft && (
+              <button
+                type="button"
+                disabled={microsoftMutation.isPending}
+                onClick={() => {
+                  setServerError(null)
+                  microsoftMutation.mutate(undefined)
+                }}
+                className="flex items-center justify-center gap-2 text-sm font-medium text-text-secondary transition-colors hover:text-brand-primary disabled:opacity-60"
+              >
+                <Building2 size={15} />
+                موظف بالشركة؟ الدخول بحساب Microsoft
+              </button>
+            )}
           </form>
         </motion.div>
       </main>

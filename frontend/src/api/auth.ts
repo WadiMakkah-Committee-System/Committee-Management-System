@@ -1,8 +1,28 @@
 import { apiClient } from '@/lib/apiClient'
-import type { LoginPayload, TokenResponse } from '@/types'
+import type { LoginOptions, LoginPayload, TokenResponse } from '@/types'
 
 export async function login(payload: LoginPayload): Promise<TokenResponse> {
   const { data } = await apiClient.post<TokenResponse>('/auth/login', payload)
+  return data
+}
+
+/**
+ * GET /auth/login-options (عام): هل الدخول بحساب Microsoft مفعّل، ومعرّفا
+ * تطبيق Entra لـMSAL، ونطاقات بريد الشركة. الإعداد كله من الباك-إند (Render)
+ * فما نحتاج متغيرات بيئة بالواجهة.
+ */
+export async function getLoginOptions(): Promise<LoginOptions> {
+  const { data } = await apiClient.get<LoginOptions>('/auth/login-options')
+  return data
+}
+
+/**
+ * POST /auth/microsoft (عام): تسجيل الدخول بـID Token من Microsoft. الباك-إند
+ * يتحقق من التوكن بنفسه ويربطه بمستخدم أنشأه السوبر أدمن. 401 برسالة واضحة
+ * (غير مسجل/موقوف/مربوط بحساب آخر)، و503 لو الميزة غير مفعّلة.
+ */
+export async function loginWithMicrosoft(idToken: string): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>('/auth/microsoft', { id_token: idToken })
   return data
 }
 

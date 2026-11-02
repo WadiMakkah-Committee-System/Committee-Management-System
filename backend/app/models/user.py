@@ -46,6 +46,9 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(50), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Object ID لحساب Microsoft 365 المرتبط (migration 0042) — يُحفظ عند أول
+    # دخول بـMicrosoft، وكل دخول بعده لازم يطابقه. NULL = لم يُربط بعد.
+    microsoft_object_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     # اختياري (migration 0014 — مراجعة لاما 2026-08-30): "عدم وجود دور لا
     # يعني أن المستخدم لا يستطيع تسجيل الدخول" — مستخدم بدون دور يصل

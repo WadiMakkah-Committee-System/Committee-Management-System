@@ -27,6 +27,26 @@ class TokenResponse(BaseModel):
     user: UserDetailOut | None = None
 
 
+class MicrosoftLoginRequest(BaseModel):
+    """جسم POST /auth/microsoft — ID Token من Microsoft بعد تسجيل الدخول بالواجهة."""
+
+    id_token: str = Field(min_length=20, max_length=20000)
+
+
+class LoginOptionsResponse(BaseModel):
+    """
+    استجابة GET /auth/login-options (عامة، بدون تسجيل دخول) — إعدادات الدخول
+    بحساب Microsoft اللي تحتاجها الواجهة. ليست أسرارًا: معرّف التطبيق
+    والمستأجر يظهران أصلًا بنافذة تسجيل الدخول نفسها.
+    """
+
+    microsoft_enabled: bool
+    microsoft_client_id: str | None = None
+    microsoft_tenant_id: str | None = None
+    # نطاقات بريد الشركة: من يكتب بريدًا منها يُحوَّل لـMicrosoft تلقائيًا.
+    microsoft_domains: list[str] = []
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
