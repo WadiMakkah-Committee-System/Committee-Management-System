@@ -1,16 +1,4 @@
-import {
-  Circle,
-  Hand,
-  LogOut,
-  Maximize,
-  Mic,
-  MicOff,
-  MonitorUp,
-  MoreHorizontal,
-  ScreenShareOff,
-  Video,
-  VideoOff,
-} from 'lucide-react'
+import { Hand, LogOut, Maximize } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 function ControlButton({
@@ -47,45 +35,20 @@ function ControlButton({
 }
 
 /**
- * شريط التحكم السفلي — تعديل لاما 2026-09-06 لمطابقة ترتيب الواجهة
- * المرجعية بالضبط (يمين→يسار RTL): رفع اليد (بفاصل)، الميكروفون،
- * الكاميرا، [مغادرة — بارز أحمر بالمنتصف]، مشاركة الشاشة، تسجيل، المزيد،
- * ملء الشاشة. "تسجيل" هنا يتحكم بنفس حالة التسجيل الحقيقية المستخدَمة
- * بلوحة الذكاء الاصطناعي وبشارة الفيديو (useAudioRecorder بمستوى
- * MeetingRoom.tsx) — وليس مجرد أيقونة شكلية. "المزيد" يفتح لوحة
- * "التسجيل + الذكاء الاصطناعي" الجانبية (بديل مكان تبويبها القديم).
+ * شريط التحكم السفلي لغرفة الاجتماع — مبسّط 2026-11-02 بعد الانتقال لـ
+ * Microsoft Teams: الميكروفون/الكاميرا/مشاركة الشاشة/التسجيل كلها داخل تيمز
+ * نفسه الآن، فيبقى هنا ما يخص الجلسة بنظامنا فقط: رفع اليد (يظهر للرئيس
+ * بلوحة المشاركين لحظيًا)، مغادرة الغرفة، وملء الشاشة.
+ *
+ * المدخلات: handRaised (حالة يدي الحالية)، onToggleHand، onLeave.
  */
 export function MeetingControls({
-  micEnabled,
-  camEnabled,
-  sharingScreen,
   handRaised,
-  isRecording,
-  canRecord,
-  onToggleMic,
-  onToggleCamera,
-  onToggleScreenShare,
   onToggleHand,
-  onToggleRecording,
-  onOpenMore,
   onLeave,
 }: {
-  micEnabled: boolean
-  camEnabled: boolean
-  sharingScreen: boolean
   handRaised: boolean
-  isRecording: boolean
-  /** إصلاح 2026-09-14 (بلاغ لاما) — بس رئيس اللجنة (أو صاحب صلاحية
-   * meetings.record_audio بنطاق عام) يشوف زر التسجيل أصلًا؛ التحقق
-   * الفعلي مكرَّر بالباك-إند (meeting_service.py::upload_recording) لأن
-   * هذا مجرد إخفاء واجهة، نفس نمط canManage بـAgendaPanel. */
-  canRecord: boolean
-  onToggleMic: () => void
-  onToggleCamera: () => void
-  onToggleScreenShare: () => void
   onToggleHand: () => void
-  onToggleRecording: () => void
-  onOpenMore: () => void
   onLeave: () => void
 }) {
   function toggleFullscreen() {
@@ -102,15 +65,6 @@ export function MeetingControls({
         <Hand size={18} />
       </ControlButton>
 
-      <span className="mx-1 h-7 w-px bg-white/10" />
-
-      <ControlButton onClick={onToggleMic} active={micEnabled} label={micEnabled ? 'كتم الصوت' : 'تشغيل الصوت'}>
-        {micEnabled ? <Mic size={18} /> : <MicOff size={18} />}
-      </ControlButton>
-      <ControlButton onClick={onToggleCamera} active={camEnabled} label={camEnabled ? 'إيقاف الكاميرا' : 'تشغيل الكاميرا'}>
-        {camEnabled ? <Video size={18} /> : <VideoOff size={18} />}
-      </ControlButton>
-
       <button
         type="button"
         onClick={onLeave}
@@ -122,21 +76,6 @@ export function MeetingControls({
         مغادرة
       </button>
 
-      <ControlButton
-        onClick={onToggleScreenShare}
-        active={sharingScreen}
-        label={sharingScreen ? 'إيقاف مشاركة الشاشة' : 'مشاركة الشاشة'}
-      >
-        {sharingScreen ? <ScreenShareOff size={18} /> : <MonitorUp size={18} />}
-      </ControlButton>
-      {canRecord && (
-        <ControlButton onClick={onToggleRecording} active={isRecording} danger={isRecording} label={isRecording ? 'إيقاف التسجيل' : 'بدء التسجيل'}>
-          <Circle size={18} className={isRecording ? 'fill-current' : undefined} />
-        </ControlButton>
-      )}
-      <ControlButton onClick={onOpenMore} label="المزيد">
-        <MoreHorizontal size={18} />
-      </ControlButton>
       <ControlButton onClick={toggleFullscreen} label="ملء الشاشة">
         <Maximize size={18} />
       </ControlButton>

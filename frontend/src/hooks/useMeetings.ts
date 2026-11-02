@@ -180,25 +180,15 @@ export function useDeleteMeeting() {
 }
 
 /**
- * الانضمام لغرفة الفيديو — بلا onSuccess عام هنا (الاستدعاء داخل
- * MeetingRoom.tsx نفسه، فور فتح الغرفة)؛ نعيد تحديث تفاصيل الاجتماع بعد
- * أول انضمام لأن الباك-إند يضبط started_at (معلوماتي فقط، راجعي
- * migration 0022) — يفيد بتحديث واجهات أخرى تعرض نفس الاجتماع.
+ * رابط الانضمام لاجتماع Microsoft Teams — Mutation (وليس Query) عمدًا: يُطلب
+ * لحظة الضغط على "الانضمام عبر تيمز" فقط، ولا يُخزَّن بالكاش. الباك-إند يضبط
+ * started_at أول مرة، فنحدّث تفاصيل الاجتماع بعدها.
  */
-export function useJoinMeeting() {
+export function useTeamsJoinUrl() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (meetingId: string) => meetingsApi.joinMeeting(meetingId),
+    mutationFn: (meetingId: string) => meetingsApi.getTeamsJoinUrl(meetingId),
     onSuccess: (_data, meetingId) => invalidateMeetingQueries(queryClient, meetingId),
-  })
-}
-
-export function useLeaveMeeting() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ meetingId, agoraUid }: { meetingId: string; agoraUid?: number }) =>
-      meetingsApi.leaveMeeting(meetingId, agoraUid),
-    onSuccess: (_data, variables) => invalidateMeetingQueries(queryClient, variables.meetingId),
   })
 }
 
@@ -345,7 +335,7 @@ export function useOpenMeetingAttachment() {
 // راجعي رأس app/api/v1/meetings.py (قسم "التسجيل الصوتي + المسودة")
 // وapi/meetingRecording.ts. 403 (لا صلاحية meetings.record_audio/
 // draft.summarize/draft.view) و404 (لا تسجيل/مسودة بعد) حالتان طبيعيتان
-// هنا — RecordingPanel.tsx يعاملهما كحالة عرض عادية، لا خطأ يوقف الواجهة.
+// هنا — MeetingDetailPage.tsx يعاملهما كحالة عرض عادية، لا خطأ يوقف الواجهة.
 
 export function useMeetingRecording(meetingId: string | undefined) {
   return useQuery({
@@ -410,6 +400,50 @@ export function usePlayMeetingRecording() {
     mutationFn: async (meetingId: string) => {
       const { blob } = await meetingRecordingApi.fetchMeetingRecordingBlob(meetingId)
       return URL.createObjectURL(blob)
+    },
+  })
+}
+
+/**
+ * تسجيلات Microsoft Teams للاجتماع (meetings.record_audio) — retry: false
+ * لأن 403 (بلا صلاحية) و409 (غير مربوط بتيمز) حالات نهائية تعرضها الواجهة.
+ */
+export function useTeamsRecordings(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: ['meetings', meetingId ?? '', 'teams-recordings'] as const,
+    queryFn: () => meetingsApi.listTeamsRecordings(meetingId as string),
+    enabled: !!meetingId,
+    retry: false,
+  })
+}
+
+/**
+ * تشغيل تسجيل Teams بالصفحة — يُرجع blob URL لعنصر <video>؛ المكوّن مسؤول عن
+ * URL.revokeObjectURL. ملاحظة: يُحمَّل الملف كاملًا أولًا (قد يكون كبيرًا
+ * لاجتماع طويل) لأن <video src> لا يرسل ترويسة Authorization.
+ */
+export function usePlayTeamsRecording() {
+  return useMutation({
+    mutationFn: async ({ meetingId, recordingId }: { meetingId: string; recordingId: string }) => {
+      const { blob } = await meetingsApi.fetchTeamsRecordingBlob(meetingId, recordingId)
+      return URL.createObjectURL(blob)
+    },
+  })
+}
+
+/** تنزيل تسجيل Teams كملف — نفس نمط useDownloadMeetingRecording. */
+export function useDownloadTeamsRecording() {
+  return useMutation({
+    mutationFn: async ({ meetingId, recordingId }: { meetingId: string; recordingId: string }) => {
+      const { blob, fileName } = await meetingsApi.fetchTeamsRecordingBlob(meetingId, recordingId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
     },
   })
 }

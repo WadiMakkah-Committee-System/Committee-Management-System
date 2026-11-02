@@ -16,9 +16,8 @@ add/update/delete_agenda_item، add/delete_attachment) تُنفّذ commit/rollb
 ضروري لأن add_attachment يستدعي document_service.create_document الذي
 يُنهي معاملته (transaction) الخاصة به بالكامل قبل أن يعود، فلا يمكن تأجيل
 الـcommit لهذا الجزء إلى الراوت. طُبِّق نفس النمط على بقية دوال الوحدة
-هنا للاتساق، بدل خلط الأسلوبين داخل نفس الملف. الاستثناء الوحيد:
-join_meeting/leave_meeting (تكامل Agora) — تُبقي الـcommit/rollback على
-مستوى الراوت عمدًا (راجعي تعليق القسم أدناه).
+هنا للاتساق، بدل خلط الأسلوبين داخل نفس الملف (كان الاستثناء الوحيد
+join/leave الخاصين بـAgora — أُزيلا 2026-11-02 مع الانتقال لـTeams).
 
 بنية الحزمة (إعادة هيكلة 2026-10-24 — كانت ملفًا واحدًا بـ1123 سطرًا):
 - _errors.py      ترجمة استثناءات الخدمة إلى HTTP (مشتركة).
@@ -27,16 +26,17 @@ join_meeting/leave_meeting (تكامل Agora) — تُبقي الـcommit/rollba
 - ai.py           التسجيل الصوتي + المسودة + البنود المستخرجة.
 - minutes.py      المحاضر.
 - chat.py         رسائل القناة اللحظية.
+- teams.py        تكامل Microsoft Teams: رابط الانضمام + التسجيلات (migration 0041).
 
 المسارات وترتيب تسجيلها مطابقان تمامًا للملف السابق (نفس البادئة /meetings).
 """
 
 from fastapi import APIRouter
 
-from app.api.v1.meetings import ai, attachments, chat, core, minutes
+from app.api.v1.meetings import ai, attachments, chat, core, minutes, teams
 
 # كل راوتر فرعي يحمل البادئة /meetings بنفسه (FastAPI لا يسمح بمسار
 # فارغ "" تحت راوتر بلا بادئة)، وهذا الراوتر يجمعها بنفس الترتيب الأصلي.
 router = APIRouter()
-for _sub in (core, attachments, ai, minutes, chat):
+for _sub in (core, attachments, ai, minutes, chat, teams):
     router.include_router(_sub.router)

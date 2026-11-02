@@ -3,10 +3,8 @@
 منطق العمل (Business Logic) لوحدة "إدارة الاجتماعات" — FR-MEET-001 →
 FR-MEET-005 (SRS §3.1.1/3.1.2) + إدارة جدول الأعمال (§3.1.3) + مرفقات
 الاجتماع (عرض تقديمي + مرفقات عامة، عبر document_links الموجود أصلًا).
-بدون أي تكامل فعلي مع Microsoft Teams/Graph API — mode='remote' يمهّد
-لتلك المرحلة فقط (راجعي app/models/meeting.py). الانضمام الفعلي
-للاجتماعات عن بعد يتم عبر Agora (راجعي قسم join_meeting/leave_meeting
-أدناه) — منفصل تمامًا عن تكامل Teams المؤجَّل.
+الاجتماعات عن بعد (mode='remote') تُعقد عبر Microsoft Teams (migration
+0041، راجعي teams.py) — أُزيل تكامل Agora السابق بالكامل 2026-11-02 بقرار لاما.
 
 التفويض (بعد "أدوار اللجان" — راجعي committee_service.py::
 get_committee_role_permission_codes): الوصول = صلاحية على مستوى System
@@ -43,11 +41,13 @@ Role (own/department/all، من دور المستخدم العام) **أو** ص�
 - access.py           فحص الصلاحيات (System Role أو Committee Role).
 - loading.py          تحميل الاجتماع/اللجنة بخيارات صريحة + sync_meeting_status.
 - crud.py             إنشاء/عرض/قائمة/تعديل/حذف.
-- attendance.py       الانضمام/المغادرة (Agora).
 - agenda.py           جدول الأعمال.
 - attachments.py      المرفقات.
 - recordings.py       التسجيل الصوتي + مسودة الذكاء الاصطناعي.
 - extracted_items.py  البنود المستخرجة → مهام/قرارات.
+- teams.py            تكامل Microsoft Teams (migration 0041): مزامنة اجتماع
+                      Teams مع الإنشاء/التعديل/الحذف، رابط الانضمام، التسجيلات،
+                      والمسودة من التفريغ الرسمي.
 
 مسار الاستيراد لم يتغيّر: app.services.meeting_service.<الدالة> يعمل كما
 كان لكل الدوال والاستثناءات العامة (هذا الملف يعيد تصديرها).
@@ -62,7 +62,6 @@ from app.services.meeting_service.attachments import (
     list_attachments,
     query_meeting_attachments,
 )
-from app.services.meeting_service.attendance import MeetingJoinToken, join_meeting, leave_meeting
 from app.services.meeting_service.crud import (
     create_meeting,
     delete_meeting,
@@ -91,6 +90,9 @@ from app.services.meeting_service.extracted_items import (
     list_extracted_items,
 )
 from app.services.meeting_service.loading import sync_meeting_status
+from app.services.meeting_service.teams import get_join_url as get_teams_join_url
+from app.services.meeting_service.teams import list_recordings as list_teams_recordings
+from app.services.meeting_service.teams import open_recording as open_teams_recording
 from app.services.meeting_service.recordings import (
     download_recording,
     generate_draft,
@@ -106,7 +108,6 @@ __all__ = [
     "ExtractedItemNotFoundError",
     "MeetingForbiddenError",
     "MeetingInvalidStateError",
-    "MeetingJoinToken",
     "MeetingNotFoundError",
     "MeetingValidationError",
     "RecordingNotFoundError",
@@ -128,9 +129,10 @@ __all__ = [
     "get_draft",
     "extend_meeting",
     "get_latest_recording",
+    "get_teams_join_url",
+    "list_teams_recordings",
+    "open_teams_recording",
     "get_meeting",
-    "join_meeting",
-    "leave_meeting",
     "list_attachments",
     "query_meeting_attachments",
     "list_extracted_items",

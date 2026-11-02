@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Download, FileText, MonitorUp, Paperclip, Trash2, Upload } from 'lucide-react'
+import { Download, FileText, Paperclip, Trash2, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Spinner } from '@/components/ui/Spinner'
@@ -23,16 +23,12 @@ interface UploadingFile {
   size: number
 }
 
-export function AttachmentsPanel({
-  meetingId,
-  sharingScreen,
-  onToggleScreenShare,
-}: {
-  meetingId: string
-  /** حالة مشاركة الشاشة الحالية (Agora) — راجعي useAgoraConnection.ts. */
-  sharingScreen: boolean
-  onToggleScreenShare: () => void
-}) {
+/**
+ * مرفقات الاجتماع داخل غرفة الاجتماع (رفع/فتح/تنزيل/حذف).
+ * أُزيل زر "مشاركة الشاشة" 2026-11-02 مع إزالة Agora — مشاركة الشاشة تتم
+ * الآن من داخل Microsoft Teams نفسه (افتحي المرفق ثم شاركيه من تيمز).
+ */
+export function AttachmentsPanel({ meetingId }: { meetingId: string }) {
   const { showToast } = useToast()
   const attachmentsQuery = useMeetingAttachments(meetingId)
   const uploadMutation = useUploadMeetingAttachment()
@@ -69,23 +65,6 @@ export function AttachmentsPanel({
       await openMutation.mutateAsync({ meetingId, documentId })
     } catch (err) {
       showToast(extractErrorMessage(err), 'error')
-    }
-  }
-
-  /** بلاغ لاما 2026-09-13: "زر مشاركة" بجانب كل مرفق — يفتح المرفق بتبويب
-   * جديد (نفس handleOpen)، ثم يبدأ مشاركة الشاشة مباشرة (Agora) لو ما
-   * كانت مفعّلة أصلًا. المتصفح نفسه (getDisplayMedia) يتطلب دائمًا اختيار
-   * صريح من المستخدم لأي تبويب/نافذة يشاركها (قيد أمان لا يمكن تجاوزه
-   * برمجيًا) — هذا الزر يجهّز الخطوتين (فتح الملف + فتح منتقي المشاركة)
-   * بضغطة واحدة بدل الحاجة للبحث عن أدوات التحكم بمنفصل ثم اختيار
-   * التبويب يدويًا من الصفر.
-   */
-  async function handleShare(documentId: string) {
-    await handleOpen(documentId)
-    if (!sharingScreen) {
-      onToggleScreenShare()
-    } else {
-      showToast('مشاركة الشاشة مفعّلة بالفعل — اختاري تبويب المرفق من منتقي المشاركة إن لزم')
     }
   }
 
@@ -179,14 +158,6 @@ export function AttachmentsPanel({
                   </p>
                 </button>
                 <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    onClick={() => handleShare(attachment.document_id)}
-                    className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-brand-primary/10 hover:text-brand-primary"
-                    aria-label="مشاركة"
-                    title="مشاركة الشاشة لهذا المرفق"
-                  >
-                    <MonitorUp size={13} />
-                  </button>
                   <button
                     onClick={() => handleDownload(attachment.document_id)}
                     className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"

@@ -108,12 +108,21 @@ class Meeting(Base):
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False
     )
 
-    # محجوزان لمرحلة تكامل Microsoft Teams القادمة (mode == remote) — غير مستخدَمين بعد.
+    # تكامل Microsoft Teams (db/migrations/0041_meetings_teams_integration.sql):
+    # تُعبَّأ الثلاثة معًا لاجتماع remote فقط، أو تبقى فارغة معًا (CHECK
+    # chk_meetings_teams_fields_together + chk_meetings_teams_only_remote).
+    # teams_meeting_id: معرّف onlineMeeting بـGraph (فريد — uq_meetings_teams_meeting_id).
+    # teams_join_url: رابط الانضمام — يُعرض للمشاركين فقط (فحص بالباك-إند).
+    # teams_organizer_id: Object ID بـEntra لحساب المنظِّم وقت الإنشاء — كل
+    # استدعاءات Graph اللاحقة لهذا الاجتماع تمر عبره، حتى لو تغيّر
+    # TEAMS_ORGANIZER_EMAIL بالبيئة لاحقًا.
     teams_meeting_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     teams_join_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teams_organizer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
-    # وقت أول/آخر حضور فعلي بغرفة Agora (db/migrations/0022) — معلوماتي بحت،
-    # منفصل تمامًا عن status (راجعي ملاحظة النطاق برأس الـmigration نفسه).
+    # started_at: أول طلب لرابط الانضمام لـTeams (teams.get_join_url)؛ ended_at:
+    # كان يُضبط عند مغادرة آخر مشارك بغرفة Agora (0022) — لم يعد يُحدَّث بعد
+    # إزالة Agora 2026-11-02 (يبقى للبيانات القديمة). معلوماتيان، منفصلان عن status.
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -141,6 +150,11 @@ class Meeting(Base):
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
 
+    @property
+    def has_teams_meeting(self) -> bool:
+        """هل للاجتماع اجتماع Microsoft Teams مرتبط (migration 0041)."""
+        return self.teams_meeting_id is not None
+
 
 class MeetingAgendaItem(Base):
     __tablename__ = "meeting_agenda_items"
@@ -163,31 +177,3 @@ class MeetingAgendaItem(Base):
     )
 
     meeting: Mapped["Meeting"] = relationship(back_populates="agenda_items")
-
-
-class MeetingAttendance(Base):
-    """
-    سطر تدقيق حضور فعلي لجلسة Agora واحدة (انضمام إلى مغادرة) — منفصل عن
-    meeting_participants (المدعوّون المخطّط لهم عند الجدولة). راجعي رأس
-    db/migrations/0022_meetings_agora_video.sql للتفصيل الكامل. لا Soft
-    Delete هنا (سجل تدقيقي بحت، بنفس فلسفة audit_logs).
-    """
-
-    __tablename__ = "meeting_attendance"
-
-    attendance_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
-    )
-    meeting_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("meetings.meeting_id", ondelete="CASCADE"), nullable=False
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
-    )
-    # uid عشوائي (32-bit آمن) يولّده meeting_service.join_meeting لكل جلسة
-    # انضمام — وليس من العميل (يمنع انتحال uid شخص آخر داخل غرفة Agora).
-    agora_uid: Mapped[int] = mapped_column(Integer, nullable=False)
-    joined_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -63,6 +63,8 @@ class ComplianceNoteDraftItem(BaseModel):
 
 
 MeetingDraftStatusOut = Literal["pending", "processing", "completed", "failed"]
+#: مصدر المسودة (migration 0041): تسجيل صوتي مرفوع، أو تفريغ Microsoft Teams.
+MeetingDraftSourceOut = Literal["audio_upload", "teams_transcript"]
 
 
 class MeetingDraftOut(BaseModel):
@@ -71,6 +73,7 @@ class MeetingDraftOut(BaseModel):
     draft_id: uuid.UUID
     meeting_id: uuid.UUID
     status: MeetingDraftStatusOut
+    source: MeetingDraftSourceOut
     error_message: str | None
 
     full_transcript: list[TranscriptSegment] | None

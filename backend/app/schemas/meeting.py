@@ -180,6 +180,10 @@ class MeetingOut(BaseModel):
     agenda_items: list[MeetingAgendaItemOut]
     started_at: datetime | None
     ended_at: datetime | None
+    #: تكامل Teams (migration 0041): هل للاجتماع اجتماع Teams مرتبط — الواجهة
+    #: تعرض زر "انضمام عبر تيمز" بناءً عليه. الرابط نفسه لا يُعاد هنا عمدًا
+    #: (يُطلب من GET /meetings/{id}/teams/join بعد فحص meetings.join).
+    has_teams_meeting: bool
     created_at: datetime
     updated_at: datetime
 
@@ -236,19 +240,19 @@ class MeetingAttachmentOut(BaseModel):
     linked_at: datetime
 
 
-class MeetingJoinOut(BaseModel):
-    """
-    استجابة POST /meetings/{id}/join — معلومات الانضمام الجاهزة لتمريرها
-    مباشرة لـAgora Web SDK (client.join(app_id, channel, token, uid)). تُبنى يدويًا
-    بطبقة الـAPI من meeting_service.MeetingJoinToken (ليس من attributes نموذج ORM،
-    فلا from_attributes هنا).
-    """
+class TeamsJoinOut(BaseModel):
+    """استجابة GET /meetings/{id}/teams/join — رابط الانضمام لاجتماع Teams
+    (للمشاركين أصحاب meetings.join فقط — يُفحص بطبقة الخدمة)."""
 
-    app_id: str
-    channel: str
-    token: str
-    uid: int
-    expires_at: int
+    join_url: str
+
+
+class TeamsRecordingOut(BaseModel):
+    """عنصر قائمة GET /meetings/{id}/teams/recordings — تسجيل Teams واحد.
+    المحتوى يُطلب من .../teams/recordings/{recording_id}/content."""
+
+    recording_id: str
+    created_at: datetime | None
 
 
 class MeetingCreateWithAttachmentsOut(BaseModel):

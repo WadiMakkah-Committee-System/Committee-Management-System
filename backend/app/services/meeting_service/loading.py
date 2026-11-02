@@ -143,7 +143,7 @@ def sync_meeting_status(meeting: Meeting) -> None:
     scheduled_end_at (اجتماعات جديدة بعد migration 0023) — الاجتماعات
     القديمة بلا هذا الحقل تبقى بسلوكها التاريخي (بلا تحويل تلقائي، القرار
     المؤجَّل الأصلي لمرحلة تكامل Teams ما زال ساريًا عليها فقط، راجعي رأس
-    db/migrations/0018). لا يمس started_at/ended_at (حضور Agora فعلي، مفهوم
+    db/migrations/0018). لا يمس started_at/ended_at (حضور فعلي، مفهوم
     منفصل تمامًا) ولا يمس status == recorded أبدًا (محجوزة لمرحلة تسجيل
     Teams مستقبلية).
 

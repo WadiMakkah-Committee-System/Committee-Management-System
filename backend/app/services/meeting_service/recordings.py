@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import gemini_client, storage_client
-from app.models.meeting_draft import MeetingDraft, MeetingDraftStatus, MeetingRecording
+from app.models.meeting import MeetingMode
+from app.models.meeting_draft import MeetingDraft, MeetingDraftSource, MeetingDraftStatus, MeetingRecording
 from app.models.user import User
 from app.services.meeting_service.access import (
     _access_flags,
@@ -169,6 +170,14 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
         "ليست لديك صلاحية تحويل تسجيل هذا الاجتماع إلى مسودة",
     )
 
+    # تكامل Teams (migration 0041): الاجتماع عن بعد المربوط بـTeams تُولَّد
+    # مسودته من تفريغ Teams الرسمي. الاجتماع الحضوري، وأي اجتماع عن بعد قديم
+    # غير مربوط (قبل التكامل)، يبقيان على مسار التسجيل الصوتي أدناه كما هو.
+    if meeting.mode == MeetingMode.remote and meeting.teams_meeting_id:
+        from app.services.meeting_service.teams import generate_draft_from_transcript
+
+        return await generate_draft_from_transcript(db, actor=actor, meeting=meeting)
+
     try:
         recordings = await _all_recordings(db, actor=actor, meeting_id=meeting_id)
     except RecordingNotFoundError as exc:
@@ -180,22 +189,13 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
     # (أحدث مقطع) — التوليد الفعلي أدناه يستخدم كل مقاطع recordings معًا
     # بغض النظر عن هذا المرجع (راجعي gemini_client.generate_meeting_draft).
     latest_recording = recordings[-1]
-    result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
-    draft = result.scalar_one_or_none()
-    if draft is None:
-        draft = MeetingDraft(
-            meeting_id=meeting_id,
-            recording_id=latest_recording.recording_id,
-            generated_by=actor.user_id,
-        )
-        db.add(draft)
-    else:
-        draft.recording_id = latest_recording.recording_id
-        draft.generated_by = actor.user_id
-    draft.status = MeetingDraftStatus.processing
-    draft.error_message = None
-    await db.commit()
-    await db.refresh(draft)
+    draft = await _begin_draft(
+        db,
+        meeting_id=meeting_id,
+        actor=actor,
+        source=MeetingDraftSource.audio_upload,
+        recording_id=latest_recording.recording_id,
+    )
 
     # أعضاء اللجنة يُحمَّلون هنا صراحةً (وليس مع الاجتماع) — هذا المسار
     # الوحيد بالملف الذي يحتاجهم.
@@ -223,6 +223,53 @@ async def generate_draft(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
         await db.refresh(draft)
         return draft
 
+    return await _fill_draft(db, draft, generated)
+
+
+async def _begin_draft(
+    db: AsyncSession,
+    *,
+    meeting_id: uuid.UUID,
+    actor: User,
+    source: MeetingDraftSource,
+    recording_id: uuid.UUID | None,
+) -> MeetingDraft:
+    """
+    الهدف: تهيئة صف المسودة الوحيد للاجتماع بحالة processing قبل استدعاء
+    الذكاء الاصطناعي — مشتركة بين مسار التسجيل الصوتي ومسار تفريغ Teams
+    (teams.generate_draft_from_transcript)، كانت سابقًا مكتوبة داخل
+    generate_draft مباشرة.
+
+    المدخلات: meeting_id، actor (طالب التوليد)، source (مصدر المسودة)،
+    recording_id (إلزامي لـaudio_upload، None لـteams_transcript — القيد
+    chk_meeting_drafts_source_recording بقاعدة البيانات يفرض ذلك).
+
+    المخرجات: المسودة (جديدة أو القائمة نفسها — صف واحد لكل اجتماع) بعد commit.
+    التأثيرات الجانبية: كتابة meeting_drafts + commit.
+    """
+    result = await db.execute(select(MeetingDraft).where(MeetingDraft.meeting_id == meeting_id))
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        draft = MeetingDraft(meeting_id=meeting_id, generated_by=actor.user_id)
+        db.add(draft)
+    draft.source = source
+    draft.recording_id = recording_id
+    draft.generated_by = actor.user_id
+    draft.status = MeetingDraftStatus.processing
+    draft.error_message = None
+    await db.commit()
+    await db.refresh(draft)
+    return draft
+
+
+async def _fill_draft(db: AsyncSession, draft: MeetingDraft, generated: dict) -> MeetingDraft:
+    """
+    الهدف: حفظ محتوى المسودة الناجح (كل حقول _RESPONSE_SCHEMA) وتحويلها
+    لحالة completed — مشتركة بين المسارين (صوت/Teams).
+    المدخلات: draft (بحالة processing)، generated (dict بكل الحقول بما فيها
+    full_transcript).
+    المخرجات: المسودة بعد commit.
+    """
     draft.full_transcript = generated["full_transcript"]
     draft.summary = generated["summary"]
     draft.decisions = generated["decisions"]

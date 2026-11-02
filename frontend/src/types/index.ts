@@ -547,9 +547,9 @@ export interface DepartmentMemberElsewhere {
 /**
  * أنواع وحدة "إدارة الاجتماعات" — مطابقة تمامًا لـ
  * backend/app/schemas/meeting.py وbackend/app/models/meeting.py.
- * بدون تكامل Teams فعلي بعد — mode='remote' يمهّد لتلك المرحلة فقط
- * (الانضمام الفعلي للاجتماعات عن بعد يتم عبر Agora — راجعي
- * MeetingJoinResponse أدناه، منفصل تمامًا عن تكامل Teams المؤجَّل).
+ * الاجتماعات عن بعد (mode='remote') تُعقد عبر Microsoft Teams (migration
+ * 0041) — الواجهة لا تعرض فيديو بنفسها: تطلب رابط الانضمام (TeamsJoinResponse)
+ * وتفتحه بتيمز. أُزيل تكامل Agora السابق بالكامل 2026-11-02.
  *
  * تحديث 2026-09-01 (قرارات صاحبة المشروع):
  * - meeting_type (نص حر) → mode (عن بعد/حضوري، ENUM حقيقي) + location.
@@ -598,10 +598,13 @@ export interface Meeting {
   /** وقت النهاية المخطَّط عند الجدولة — null فقط للاجتماعات القديمة قبل هذا الحقل (migration 0023). */
   scheduled_end_at: string | null
   status: MeetingStatus
-  /** أول وقت انضم فيه أحد فعليًا (Agora) — null لو ما بدأ الاجتماع بعد. معلوماتي فقط، لا يغيّر status. */
+  /** أول وقت طُلب فيه رابط الانضمام لتيمز — null لو ما بدأ الاجتماع بعد. معلوماتي فقط، لا يغيّر status. */
   started_at: string | null
-  /** آخر وقت غادر فيه الجميع (Agora) — null لو ما انتهى بعد أو ما بدأ أصلًا. */
+  /** للبيانات القديمة فقط (آخر مغادرة بغرفة Agora السابقة) — لم يعد يُحدَّث. */
   ended_at: string | null
+  /** هل للاجتماع اجتماع Microsoft Teams مرتبط (migration 0041) — يحدد ظهور زر "الانضمام عبر تيمز".
+   * الرابط نفسه لا يأتي هنا: يُطلب من getTeamsJoinUrl بعد فحص الصلاحية بالباك-إند. */
+  has_teams_meeting: boolean
   creator: CommitteeMemberUser
   participants: CommitteeMemberUser[]
   agenda_items: MeetingAgendaItem[]
@@ -616,7 +619,7 @@ export interface Meeting {
  * رغم أن القائمة لا تعرض منها إلا عدد المشاركين — صار participant_count.
  * التفاصيل الكاملة تبقى من GET /meetings/{id} (Meeting).
  */
-export type MeetingListItem = Omit<Meeting, 'creator' | 'participants' | 'agenda_items'> & {
+export type MeetingListItem = Omit<Meeting, 'creator' | 'participants' | 'agenda_items' | 'has_teams_meeting'> & {
   participant_count: number
 }
 
@@ -633,14 +636,15 @@ export interface MeetingCreatePayload {
   agenda_items?: MeetingAgendaItemCreatePayload[]
 }
 
-/** استجابة POST /meetings/{id}/join — بيانات الدخول لغرفة الفيديو عبر Agora. */
-export interface MeetingJoinResponse {
-  app_id: string
-  channel: string
-  token: string
-  uid: number
-  /** Unix timestamp (ثواني) — وقت انتهاء صلاحية الـtoken. */
-  expires_at: number
+/** استجابة GET /meetings/{id}/teams/join — رابط الانضمام لاجتماع Teams (للمشاركين فقط). */
+export interface TeamsJoinResponse {
+  join_url: string
+}
+
+/** عنصر GET /meetings/{id}/teams/recordings — تسجيل Teams واحد (المحتوى يُجلب بـfetchTeamsRecordingBlob). */
+export interface TeamsRecording {
+  recording_id: string
+  created_at: string | null
 }
 
 export interface MeetingUpdatePayload {
@@ -698,8 +702,8 @@ export type MeetingRealtimeEvent =
  * التسجيل الصوتي + المسودة بالذكاء الاصطناعي (Gemini) — راجعي رأس
  * db/migrations/0025_meeting_recordings_and_drafts.sql وapp/schemas/
  * meeting_draft.py بالباك-إند. يتطلبان meetings.record_audio /
- * meetings.draft.summarize / meetings.draft.view — لذلك RecordingPanel.tsx
- * يتعامل مع 403 كحالة "لا صلاحية" عادية، لا كخطأ.
+ * meetings.draft.summarize / meetings.draft.view — لذلك MeetingDetailPage.tsx
+ * (قسم "التسجيل والمسودة") يتعامل مع 403 كحالة "لا صلاحية" عادية، لا كخطأ.
  */
 export type MeetingDraftStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
@@ -886,10 +890,14 @@ export interface MeetingMinutesDetail {
   can_edit: boolean
 }
 
+/** مصدر المسودة (migration 0041): تسجيل صوتي مرفوع، أو تفريغ Microsoft Teams الرسمي. */
+export type MeetingDraftSource = 'audio_upload' | 'teams_transcript'
+
 export interface MeetingDraft {
   draft_id: string
   meeting_id: string
   status: MeetingDraftStatus
+  source: MeetingDraftSource
   error_message: string | null
   full_transcript: MeetingDraftTranscriptSegment[] | null
   summary: string | null

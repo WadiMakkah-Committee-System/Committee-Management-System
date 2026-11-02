@@ -1,12 +1,13 @@
 """ترجمة استثناءات طبقة الخدمة إلى استجابات HTTP — مشتركة بين كل راوترات الاجتماعات."""
 
+import logging
 
 from fastapi import (
     HTTPException,
     status,
 )
 
-from app.core import agora_client, storage_client
+from app.core import storage_client, teams_client
 from app.services.meeting_minutes_service import (
     MinutesForbiddenError,
     MinutesInvalidStateError,
@@ -70,7 +71,11 @@ _SERVICE_ERRORS = (
     # معالَج — نفس الخلل بالضبط بـdecisions.py وtasks.py (CommitteePeriodError
     # تُستخدَم بالثلاثة، أضفتها هناك كمان).
     CommitteePeriodError,
+    # تكامل Microsoft Teams (migration 0041) — راجعي app/core/teams_client.py.
+    teams_client.TeamsError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _handle_errors(exc: Exception) -> Exception:
@@ -83,6 +88,8 @@ def _handle_errors(exc: Exception) -> Exception:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     if isinstance(exc, (MeetingValidationError, DocumentValidationError, TaskValidationError, DecisionValidationError, MinutesValidationError, ValueError)):
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if isinstance(exc, teams_client.TeamsError):
+        return _teams_error_to_http(exc)
     if isinstance(exc, storage_client.StorageError):
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="تعذّر رفع الملف، حاول مرة أخرى"
@@ -90,10 +97,26 @@ def _handle_errors(exc: Exception) -> Exception:
     raise exc
 
 
-def _agora_error_to_http(exc: agora_client.AgoraError) -> HTTPException:
-    if isinstance(exc, agora_client.AgoraNotConfiguredError):
+def _teams_error_to_http(exc: teams_client.TeamsError) -> HTTPException:
+    """
+    ترجمة أخطاء Microsoft Graph: التفاصيل الفنية (رموز Graph) تُسجَّل
+    بالسجلات فقط، والمستخدم يرى رسالة عامة واضحة — بلا تسريب تفاصيل داخلية.
+    - غير مهيّأ ⇒ 503 (إعداد ناقص بالبيئة، ليس خطأ المستخدم).
+    - غير موجود بـTeams ⇒ 404 (مثلًا تسجيل انتهت مدة احتفاظه).
+    - أي فشل آخر ⇒ 502 (خدمة خارجية).
+    """
+    logger.warning("Microsoft Teams error: %s", exc)
+    if isinstance(exc, teams_client.TeamsNotConfiguredError):
         return HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="خدمة الاجتماعات المرئية غير مُهيّأة بعد (راجع إعدادات AGORA_* بالبيئة)",
+            detail="تكامل Microsoft Teams غير مُهيّأ بعد (راجع إعدادات TEAMS_* بالبيئة)",
         )
-    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    if isinstance(exc, teams_client.TeamsNotFoundError):
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="العنصر المطلوب غير موجود في Microsoft Teams (ربما حُذف أو انتهت مدة الاحتفاظ به)",
+        )
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="تعذّر إتمام العملية مع Microsoft Teams، حاول مرة أخرى بعد قليل",
+    )

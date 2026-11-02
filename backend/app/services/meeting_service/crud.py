@@ -20,6 +20,7 @@ from app.services.meeting_service.access import (
     _committee_ids_with_committee_role_code,
     _require_access,
 )
+from app.services.meeting_service import teams
 from app.services.meeting_service.errors import MeetingInvalidStateError, MeetingValidationError
 from app.services.meeting_service.loading import (
     _all_committee_members,
@@ -87,20 +88,30 @@ async def create_meeting(
             for index, item in enumerate(agenda_items)
         ],
     )
-    db.add(meeting)
-    await db.flush()
+    # تكامل Teams (migration 0041): اجتماع remote ⇒ اجتماع Teams يُنشأ قبل
+    # الحفظ، بعد كل فحوص الصلاحيات والتحقق أعلاه. فشل Teams ⇒ TeamsError
+    # ترفض الإنشاء كاملًا (قرار لاما 2026-11-02). لو فشل الحفظ بعدها
+    # يُحذف اجتماع Teams حتى لا يبقى يتيمًا.
+    await teams.attach_to_new_meeting(meeting, committee)
+    teams_link = teams.teams_link_of(meeting)
+    try:
+        db.add(meeting)
+        await db.flush()
 
-    await audit_service.log_action(
-        db,
-        actor_user_id=actor.user_id,
-        action_type="create",
-        target_type="meeting",
-        target_id=meeting.meeting_id,
-    )
-    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
-    await db.flush()
-    result = await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
-    await db.commit()
+        await audit_service.log_action(
+            db,
+            actor_user_id=actor.user_id,
+            action_type="create",
+            target_type="meeting",
+            target_id=meeting.meeting_id,
+        )
+        # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+        await db.flush()
+        result = await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
+        await db.commit()
+    except BaseException:
+        await teams.rollback_new_meeting(teams_link)
+        raise
     return result
 
 
@@ -230,6 +241,8 @@ async def update_meeting(
 
     _important_fields = ("scheduled_at", "scheduled_end_at", "mode", "location")
     _before = {field: getattr(meeting, field) for field in _important_fields}
+    _before_title = meeting.title
+    _before_teams_link = teams.teams_link_of(meeting)
 
     if title is not None:
         meeting.title = title
@@ -250,17 +263,31 @@ async def update_meeting(
         if _before[field] != getattr(meeting, field)
     }
 
-    await audit_service.log_action(
-        db,
-        actor_user_id=actor.user_id,
-        action_type="update",
-        target_type="meeting",
-        target_id=meeting.meeting_id,
+    # تكامل Teams (migration 0041): مزامنة قبل الحفظ — فشلها يرفض التعديل.
+    # لو أُنشئ اجتماع Teams جديد هنا ثم فشل الحفظ، يُحذف حتى لا يبقى يتيمًا.
+    details_changed = (
+        meeting.title != _before_title
+        or "scheduled_at" in changes
+        or "scheduled_end_at" in changes
     )
-    # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
-    await db.flush()
-    meeting = await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
-    await db.commit()
+    teams_created = await teams.sync_after_update(db, meeting, details_changed=details_changed)
+    new_teams_link = teams.teams_link_of(meeting) if teams_created else None
+    try:
+        await audit_service.log_action(
+            db,
+            actor_user_id=actor.user_id,
+            action_type="update",
+            target_type="meeting",
+            target_id=meeting.meeting_id,
+        )
+        # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
+        await db.flush()
+        meeting = await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
+        await db.commit()
+    except BaseException:
+        if new_teams_link != _before_teams_link:
+            await teams.rollback_new_meeting(new_teams_link)
+        raise
     return meeting, changes
 
 
@@ -322,6 +349,8 @@ async def extend_meeting(
     )
     await db.flush()
     meeting = await load_meeting(db, meeting.meeting_id, detail=True, reload=True)
+    # تكامل Teams: تحديث وقت النهاية بأفضل جهد (لا يمنع التمديد لو فشل).
+    await teams.sync_after_extend(meeting)
     await db.commit()
     return meeting, {"scheduled_end_at": (old_end, new_end_at)}
 
@@ -357,5 +386,7 @@ async def delete_meeting(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
         target_type="meeting",
         target_id=meeting.meeting_id,
     )
+    # تكامل Teams: حذف اجتماع Teams بأفضل جهد (لا يمنع الحذف لو فشل).
+    await teams.sync_after_delete(meeting)
     await db.commit()
     return meeting
