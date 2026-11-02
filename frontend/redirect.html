@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+  صفحة جسر تسجيل الدخول بحساب Microsoft (MSAL v5).
+  بعد ما يسجّل المستخدم دخوله بالنافذة المنبثقة، Microsoft ترجعه لهذي الصفحة،
+  وهي تمرّر النتيجة للصفحة الأصلية (غرفة الاجتماع) ثم تُغلق النافذة.
+  لازم تبقى صفحة مستقلة خفيفة (بدون تطبيق React) — راجعي src/lib/microsoftSignIn.ts.
+  رابطها لازم يكون مسجّلًا بـEntra (Authentication ← Single-page application).
+-->
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <title>تسجيل الدخول</title>
+  </head>
+  <body>
+    <p>جاري إكمال تسجيل الدخول...</p>
+    <script type="module">
+      import { broadcastResponseToMainFrame } from '@azure/msal-browser/redirect-bridge'
+
+      broadcastResponseToMainFrame().catch((error) => {
+        console.error('MSAL redirect bridge error:', error)
+      })
+    </script>
+  </body>
+</html>

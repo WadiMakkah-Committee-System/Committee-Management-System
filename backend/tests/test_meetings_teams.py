@@ -389,8 +389,69 @@ async def test_call_token_for_embedded_join(
     assert body["token"] == "acs-token"
     assert body["join_url"] == "https://teams.example/join/MSO-1"
     assert body["display_name"]
+    assert body["identity"] == "guest"
 
     outsider = await client.post(f"/api/v1/meetings/{meeting_id}/teams/call-token", headers=ctx["outsider_headers"])
+    assert outsider.status_code == 403, outsider.text
+
+
+def _fake_aad_token(claims: dict) -> str:
+    """JWT شكلي (بدون توقيع حقيقي) — التوقيع يتحقق منه ACS، وهنا نختبر منطقنا فقط."""
+    import base64
+    import json
+
+    def enc(obj: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    return f"{enc({'alg': 'RS256'})}.{enc(claims)}.sig"
+
+
+async def test_call_token_with_microsoft_account(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user: User, fake_teams: FakeTeams, monkeypatch
+) -> None:
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+    await _grant_committee_role_permissions(["meetings.join"], slug="chair")
+    meeting_id = (await _create(client, ctx)).json()["meeting_id"]
+    monkeypatch.setattr(settings, "ACS_CONNECTION_STRING", "endpoint=https://x/;accesskey=y")
+    monkeypatch.setattr(settings, "TEAMS_TENANT_ID", "tenant-1")
+    monkeypatch.setattr(settings, "TEAMS_CLIENT_ID", "client-1")
+
+    exchanged: dict = {}
+
+    def fake_exchange(aad_token: str, object_id: str):
+        exchanged["oid"] = object_id
+        return acs_client.AcsToken(token="teams-user-token", user_id=object_id, expires_on=datetime.now(UTC) + timedelta(hours=1))
+
+    monkeypatch.setattr(acs_client, "_exchange_sync", fake_exchange)
+    url = f"/api/v1/meetings/{meeting_id}/teams/call-token"
+
+    ok = await client.post(
+        url,
+        headers=ctx["chair_headers"],
+        json={"microsoft_token": _fake_aad_token({"tid": "tenant-1", "oid": "oid-1", "preferred_username": "a@co"})},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["identity"] == "teams_user"
+    assert ok.json()["token"] == "teams-user-token"
+    assert exchanged["oid"] == "oid-1"
+
+    # حساب من مستأجر آخر ⇒ يُرفض قبل الاتصال بـACS.
+    exchanged.clear()
+    other = await client.post(
+        url, headers=ctx["chair_headers"], json={"microsoft_token": _fake_aad_token({"tid": "other", "oid": "oid-2"})}
+    )
+    assert other.status_code == 403, other.text
+    assert exchanged == {}
+
+    garbage = await client.post(url, headers=ctx["chair_headers"], json={"microsoft_token": "not-a-jwt"})
+    assert garbage.status_code == 403, garbage.text
+
+    # غير عضو باللجنة ⇒ 403 حتى مع توكن Microsoft صالح الشكل.
+    outsider = await client.post(
+        url,
+        headers=ctx["outsider_headers"],
+        json={"microsoft_token": _fake_aad_token({"tid": "tenant-1", "oid": "oid-1"})},
+    )
     assert outsider.status_code == 403, outsider.text
 
 
@@ -601,6 +662,7 @@ async def test_client_create_meeting_sends_expected_graph_request(monkeypatch) -
         "identity": {"user": {"id": "u1"}},
     }
     assert body["lobbyBypassSettings"]["scope"] == "organization"
+    assert body["recordAutomatically"] is True
 
 
 async def test_client_token_is_cached_and_update_without_participants_omits_field(monkeypatch) -> None:

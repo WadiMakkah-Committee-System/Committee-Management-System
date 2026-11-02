@@ -256,6 +256,15 @@ class TeamsCallTokenOut(BaseModel):
     expires_on: datetime
     join_url: str
     display_name: str
+    # "teams_user": دخل بحساب Microsoft حق الشركة، "guest": ضيف بهوية ACS مؤقتة.
+    identity: Literal["teams_user", "guest"]
+
+
+class TeamsCallTokenIn(BaseModel):
+    """جسم اختياري لـPOST /meetings/{id}/teams/call-token: microsoft_token توكن
+    Microsoft Entra (بعد تسجيل الدخول بحساب الشركة) — غيابه يعني الدخول كضيف."""
+
+    microsoft_token: str | None = Field(default=None, max_length=20000)
 
 
 class TeamsRecordingOut(BaseModel):
