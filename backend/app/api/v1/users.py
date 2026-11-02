@@ -116,6 +116,20 @@ async def build_my_profile(db: AsyncSession, user: User) -> UserDetailOut:
 async def create_user(
     payload: UserCreate, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> UserOut:
+    """
+    إنشاء مستخدم يدويًا (users.create).
+
+    - 201: المستخدم المُنشأ.
+    - 400: اسم مستخدم/بريد مكرر، أو دور/مسمى وظيفي غير صالح.
+    - 403: بلا صلاحية users.create.
+
+    التأثير الجانبي (طلب لاما 2026-11-02): بعد الإنشاء بنجاح تُرسَل بيانات
+    الدخول (اسم المستخدم + كلمة المرور التي أدخلها المسؤول) لبريد المستخدم
+    تلقائيًا — نفس رسالة رفع ملف المستخدمين بالضبط. كلمة المرور مؤقتة فعليًا:
+    الحساب ينشأ بـmust_change_password=True فيُجبَر على تغييرها عند أول دخول
+    (FR-UM-016). الإرسال عبر run_detached بعد commit، ففشل البريد لا يُفشل
+    الإنشاء، ولا تُسجَّل كلمة المرور بأي سجل.
+    """
     try:
         user = await user_service.create_user(
             db,
@@ -133,6 +147,12 @@ async def create_user(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    run_detached(
+        notification_service.notify_imported_users_credentials(
+            [(user.email, user.first_name, user.username, payload.password)],
+            login_url=settings.FRONTEND_URL.rstrip("/") + "/login" if settings.FRONTEND_URL else None,
+        )
+    )
     return UserOut.model_validate(user)
 
 
