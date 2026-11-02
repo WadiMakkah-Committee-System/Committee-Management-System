@@ -194,14 +194,30 @@ async def update_task(
     assert_within_committee_period(committee, field_label="تاريخ استحقاق المهمة", value=effective_end)
 
     old_priority = task.priority
-    other_field_changed = False
+    old_title = task.title
+    old_start_date = task.start_date
+    old_end_date = task.end_date
+    old_reminder_offset_days = task.reminder_offset_days
+
+    # ميتاداتا مفصّلة لمسار المهمة الموحَّد (راجعي get_task_activity) —
+    # تصحيح 2026-11-02 (طلب لجين): كل حقل فعليًا تغيّر قيمته يُسجَّل
+    # بقيمته القديمة والجديدة (بدل علم عام واحد "تغيّر شيء ما") حتى
+    # يقدر مسار المهمة يوضّح بالضبط وش انعدّل — مثلًا تمديد/تقديم فترة
+    # التنفيذ بدل عبارة عامة. المقارنة بالقيمة القديمة (وليس فقط "!=
+    # None") مهمة لأن نماذج التعديل بالواجهة ترسل الحقول الثلاثة
+    # (عنوان/بداية/نهاية) دائمًا حتى لو المستخدم ما غيّر إلا واحدًا منها.
+    audit_metadata: dict[str, object] = {"action": "task_updated"}
 
     if title is not None:
         task.title = title
-        other_field_changed = True
+        if title != old_title:
+            audit_metadata["title_from"] = old_title
+            audit_metadata["title_to"] = title
     if start_date is not None:
         task.start_date = start_date
-        other_field_changed = True
+        if start_date != old_start_date:
+            audit_metadata["start_date_from"] = old_start_date.isoformat()
+            audit_metadata["start_date_to"] = start_date.isoformat()
     if end_date is not None:
         # تمديد/تقديم الموعد يعيد ضبط "ساعة" التذكير والتأخر — تُرسَل
         # التذكيرات من جديد على الموعد الجديد، ولو كانت متأخرة فعليًا
@@ -210,23 +226,19 @@ async def update_task(
         task.end_date = end_date
         task.reminder_sent_at = None
         task.overdue_notified_at = None
-        other_field_changed = True
+        if end_date != old_end_date:
+            audit_metadata["end_date_from"] = old_end_date.isoformat()
+            audit_metadata["end_date_to"] = end_date.isoformat()
     if reminder_offset_days is not None:
         task.reminder_offset_days = reminder_offset_days
-        other_field_changed = True
+        if reminder_offset_days != old_reminder_offset_days:
+            audit_metadata["reminder_offset_days_from"] = old_reminder_offset_days
+            audit_metadata["reminder_offset_days_to"] = reminder_offset_days
     if priority is not None:
         task.priority = priority
-
-    # ميتاداتا مفصّلة لمسار المهمة الموحَّد (راجعي get_task_activity) —
-    # الأولوية بحقل مخصَّص لأنها الحقل اللي طلبت صاحبة المشروع تتبّعه
-    # بمسار المهمة تحديدًا (2026-09-11)، وباقي الحقول (عنوان/تواريخ/
-    # تذكير) تُجمَّع بعلم عام واحد بدل تفصيل كل حقل — كفاية لحجم النظام.
-    audit_metadata: dict[str, object] = {"action": "task_updated"}
-    if priority is not None and priority != old_priority:
-        audit_metadata["priority_from"] = old_priority.value
-        audit_metadata["priority_to"] = priority.value
-    if other_field_changed:
-        audit_metadata["other_fields_changed"] = True
+        if priority != old_priority:
+            audit_metadata["priority_from"] = old_priority.value
+            audit_metadata["priority_to"] = priority.value
 
     await audit_service.log_action(
         db,

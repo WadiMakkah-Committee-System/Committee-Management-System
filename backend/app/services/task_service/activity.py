@@ -15,6 +15,24 @@ from app.services.task_service.codes import _PRIORITY_LABELS_AR, _STATUS_LABELS_
 from app.services.task_service.crud import get_task
 
 
+def _reminder_days_label_ar(days: object) -> str:
+    """صيغة عدد أيام التذكير بالعربية الفصحى (مطابقة التمييز العددي):
+    0 حالة خاصة (يوم الاستحقاق نفسه)، 1 مفرد، 2 مثنى، 3-10 جمع، 11+ تمييز مفرد منصوب."""
+    try:
+        n = int(days)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return f"{days} يوم"
+    if n == 0:
+        return "يوم الاستحقاق نفسه"
+    if n == 1:
+        return "يوم واحد قبل الاستحقاق"
+    if n == 2:
+        return "يومين قبل الاستحقاق"
+    if 3 <= n <= 10:
+        return f"{n} أيام قبل الاستحقاق"
+    return f"{n} يومًا قبل الاستحقاق"
+
+
 async def get_task_activity(
     db: AsyncSession, *, actor: User, task_id: uuid.UUID
 ) -> list[TaskActivityEntry]:
@@ -81,7 +99,37 @@ async def get_task_activity(
                         occurred_at=log.created_at,
                     )
                 )
-            if meta.get("other_fields_changed"):
+
+            # تصحيح 2026-11-02 (طلب لجين): بدل عبارة عامة واحدة "تعديل
+            # بيانات المهمة"، نبني جملة لكل حقل فعليًا تغيّر من ميتاداتا
+            # update_task المفصّلة (X_from/X_to) — وبالأخص فترة التنفيذ:
+            # تمديد لو الموعد الجديد أبعد، تقديم لو أقرب، مو عبارة محايدة.
+            clauses: list[str] = []
+            if "title_to" in meta:
+                clauses.append(f'تحديث العنوان إلى "{meta["title_to"]}"')
+            if "start_date_to" in meta:
+                clauses.append(f'تحديث تاريخ بداية التنفيذ إلى {meta["start_date_to"]}')
+            if "end_date_to" in meta:
+                old_end = str(meta.get("end_date_from", ""))
+                new_end = str(meta["end_date_to"])
+                verb = "تمديد" if (old_end and new_end > old_end) else "تقديم"
+                clauses.append(f"{verb} فترة التنفيذ من {old_end} إلى {new_end}")
+            if "reminder_offset_days_to" in meta:
+                clauses.append(f'تحديث التذكير إلى {_reminder_days_label_ar(meta["reminder_offset_days_to"])}')
+
+            if clauses:
+                entries.append(
+                    TaskActivityEntry(
+                        entry_type="details_updated",
+                        label="، ".join(clauses),
+                        actor=actor_out,
+                        occurred_at=log.created_at,
+                    )
+                )
+            elif meta.get("other_fields_changed"):
+                # توافق خلفي: صفوف audit_logs قديمة (قبل تصحيح 2026-11-02)
+                # ما فيها إلا العلم العام القديم بلا قيم from/to — تُعرض
+                # بنفس العبارة العامة السابقة بدل ما تختفي من المسار.
                 entries.append(
                     TaskActivityEntry(
                         entry_type="details_updated",
