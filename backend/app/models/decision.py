@@ -76,6 +76,10 @@ class DecisionVoteOption(Base):
     )
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     is_approving: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # خيار "ممتنع" ثابت يضيفه الكود تلقائيًا عند فتح أي تصويت (وليس من
+    # إدخال رئيسة اللجنة مثل بقية الخيارات) — راجعي رأس migration 0040
+    # وdecision_service.voting.open_voting. دائمًا is_approving=false له.
+    is_abstain: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -94,6 +98,12 @@ class DecisionVote(Base):
     option_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("decision_vote_options.option_id"), nullable=False
     )
+    # سبب الامتناع — إلزامي فقط عند اختيار خيار is_abstain=true (يُفرض
+    # بطبقة الخدمة، راجعي decision_service.voting.cast_vote). رؤيته
+    # مقيَّدة برئيسة اللجنة أو صاحب الصوت نفسه فقط (راجعي رأس migration
+    # 0040 وaccess._redact_votes_if_unauthorized) — أشد تقييدًا من رؤية
+    # نتيجة التصويت العامة.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     voted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

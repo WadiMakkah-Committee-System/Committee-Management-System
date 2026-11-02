@@ -83,6 +83,23 @@ class TaskOut(BaseModel):
     updated_at: datetime
 
 
+class TaskAttachmentOut(BaseModel):
+    """
+    ملف مرفق بمهمة (تجميعة من Document + document_links، بنفس نمط
+    MeetingAttachmentOut بوحدة الاجتماعات بالضبط) — رئيسة اللجنة عند
+    الإنشاء عادةً، أو المسؤول عن المهمة لاحقًا (يرفع/يعدّل/يحذف — راجعي
+    task_service.attachments).
+    """
+
+    document_id: uuid.UUID
+    title: str
+    file_name: str
+    mime_type: str
+    file_size_bytes: int
+    uploaded_by: CommitteeMemberUserOut
+    linked_at: datetime
+
+
 class TaskActivityEntry(BaseModel):
     """
     سطر واحد بمسار المهمة الموحَّد (طلب صاحبة المشروع 2026-09-11، بعد

@@ -2,6 +2,7 @@ import { apiClient } from '@/lib/apiClient'
 import type {
   Task,
   TaskActivityEntry,
+  TaskAttachment,
   TaskCreatePayload,
   TaskReassignPayload,
   TaskStatus,
@@ -56,4 +57,42 @@ export async function reassignTask(
 ): Promise<Task> {
   const { data } = await apiClient.post<Task>(`/tasks/${taskId}/reassign`, payload)
   return data
+}
+
+/**
+ * مرفقات المهمة (طلب صاحبة المشروع 2026-11-01) — رئيسة اللجنة تقدر ترفق
+ * ملفًا اختياريًا عند الإنشاء، والمسؤول عن المهمة يرفع/يعدّل/يحذف أكثر
+ * من ملف لاحقًا. نفس نمط مرفقات الاجتماعات تمامًا.
+ */
+export async function fetchTaskAttachments(taskId: string): Promise<TaskAttachment[]> {
+  const { data } = await apiClient.get<TaskAttachment[]>(`/tasks/${taskId}/attachments`)
+  return data
+}
+
+export async function uploadTaskAttachment(taskId: string, file: File): Promise<TaskAttachment> {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await apiClient.post<TaskAttachment>(
+    `/tasks/${taskId}/attachments`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )
+  return data
+}
+
+export async function deleteTaskAttachment(taskId: string, documentId: string): Promise<void> {
+  await apiClient.delete(`/tasks/${taskId}/attachments/${documentId}`)
+}
+
+export async function fetchTaskAttachmentBlob(
+  taskId: string,
+  documentId: string,
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await apiClient.get(
+    `/tasks/${taskId}/attachments/${documentId}/download`,
+    { responseType: 'blob' },
+  )
+  const disposition = String(response.headers['content-disposition'] ?? '')
+  const match = /filename="?([^"]+)"?/.exec(disposition)
+  return { blob: response.data as Blob, fileName: match?.[1] ?? 'attachment' }
 }

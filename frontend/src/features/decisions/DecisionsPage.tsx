@@ -9,6 +9,7 @@ import {
   useDeleteDecision,
   useOpenVoting,
   usePrefetchDecision,
+  useUploadDecisionAttachment,
 } from '@/hooks/useDecisions'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
@@ -40,6 +41,7 @@ export function DecisionsPage() {
   const createMutation = useCreateDecision()
   const openVotingMutation = useOpenVoting()
   const deleteMutation = useDeleteDecision()
+  const uploadAttachmentMutation = useUploadDecisionAttachment()
   const { showToast } = useToast()
 
   const [search, setSearch] = useState('')
@@ -105,9 +107,16 @@ export function DecisionsPage() {
    */
   async function handleCreate(values: DecisionFormSubmitValues) {
     setFormError(null)
-    const { votingOptions, ...payload } = values
+    const { votingOptions, attachmentFile, ...payload } = values
     try {
       const created = await createMutation.mutateAsync(payload)
+      if (attachmentFile) {
+        try {
+          await uploadAttachmentMutation.mutateAsync({ decisionId: created.decision_id, file: attachmentFile })
+        } catch (err) {
+          showToast(`تم إنشاء القرار، لكن تعذّر رفع المرفق: ${extractErrorMessage(err)}`, 'error')
+        }
+      }
       if (votingOptions && votingOptions.length >= 2) {
         try {
           await openVotingMutation.mutateAsync({

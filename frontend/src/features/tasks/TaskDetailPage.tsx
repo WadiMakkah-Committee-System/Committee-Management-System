@@ -5,9 +5,12 @@ import {
   AlertTriangle,
   ArrowRight,
   CalendarRange,
+  Download,
   History,
   ListChecks,
+  Paperclip,
   Pencil,
+  Plus,
   RefreshCw,
   Repeat,
   Trash2,
@@ -16,11 +19,14 @@ import {
 } from 'lucide-react'
 import {
   useDeleteTask,
+  useDeleteTaskAttachment,
   useReassignTask,
   useTaskActivity,
+  useTaskAttachments,
   useTaskDetail,
   useUpdateTask,
   useUpdateTaskStatus,
+  useUploadTaskAttachment,
 } from '@/hooks/useTasks'
 import { useCommitteeDetail } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
@@ -43,6 +49,7 @@ import { useToast } from '@/components/ui/Toast'
 import { TaskFormModal, type TaskFormSubmitValues } from './TaskFormModal'
 import { TaskPipeline } from './TaskPipeline'
 import { cn, extractErrorMessage, formatDate, formatDateTime, getInitials } from '@/lib/utils'
+import { fetchTaskAttachmentBlob } from '@/api/tasks'
 import type { TaskActivityEntry, TaskStatus } from '@/types'
 
 const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
@@ -84,6 +91,9 @@ export function TaskDetailPage() {
   const deleteMutation = useDeleteTask()
   const statusMutation = useUpdateTaskStatus()
   const reassignMutation = useReassignTask()
+  const { data: attachments } = useTaskAttachments(taskId)
+  const uploadAttachmentMutation = useUploadTaskAttachment()
+  const deleteAttachmentMutation = useDeleteTaskAttachment()
 
   const [editOpen, setEditOpen] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
@@ -94,6 +104,7 @@ export function TaskDetailPage() {
   const [reassignError, setReassignError] = useState<string | null>(null)
   const [completeConfirmOpen, setCompleteConfirmOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
 
   const isChair = !!committee && committee.chair_user_id === user?.user_id
   const isAssignee = !!task && task.assignee.user_id === user?.user_id
@@ -107,6 +118,10 @@ export function TaskDetailPage() {
   // تحديث الحالة مقيَّد بالكائن نفسه — رئيس اللجنة لأي مهمة بلجنته، أو
   // المسؤول الحالي عن المهمة لمهمته هو تحديدًا فقط (نفس المبدأ أعلاه).
   const canUpdateStatus = isChair || isAssignee
+  // مرفقات المهمة: رئيسة اللجنة لأي مهمة بلجنتها، أو المسؤول الحالي
+  // لمهمته هو تحديدًا فقط — نفس فحص tasks.update بالباك-إند تمامًا
+  // (راجعي task_service.attachments._require_object_scoped_access).
+  const canManageAttachments = isChair || isAssignee
 
   const isLocked = task?.status === 'completed'
 
@@ -190,6 +205,24 @@ export function TaskDetailPage() {
         },
         onError: (err) => setReassignError(extractErrorMessage(err)),
       },
+    )
+  }
+
+  function handleAttachmentUpload(file: File) {
+    if (!taskId) return
+    setAttachmentError(null)
+    uploadAttachmentMutation.mutate(
+      { taskId, file },
+      { onError: (err) => setAttachmentError(extractErrorMessage(err)) },
+    )
+  }
+
+  function handleAttachmentDelete(documentId: string) {
+    if (!taskId) return
+    setAttachmentError(null)
+    deleteAttachmentMutation.mutate(
+      { taskId, documentId },
+      { onError: (err) => setAttachmentError(extractErrorMessage(err)) },
     )
   }
 
@@ -337,6 +370,73 @@ export function TaskDetailPage() {
           )}
         </Card>
       )}
+
+      {/* مرفقات المهمة — اختياري عند الإنشاء (رئيسة اللجنة)، والرفع/التعديل/الحذف بعد ذلك
+          مقصور على المسؤول عن المهمة أو رئيسة اللجنة (نفس فحص tasks.update بالباك-إند) */}
+      {(attachments && attachments.length > 0) || canManageAttachments ? (
+        <Card>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <Paperclip size={15} />
+            المرفقات
+          </h2>
+          {attachmentError && <p className="mt-2 text-xs text-danger">{attachmentError}</p>}
+          <ul className="mt-3 flex flex-col gap-2">
+            {attachments?.map((a) => (
+              <li key={a.document_id} className="flex items-center justify-between gap-2 text-sm">
+                <span className="truncate">{a.title}</span>
+                <div className="flex shrink-0 items-center gap-3">
+                  <a
+                    href="#"
+                    onClick={async (e) => {
+                      e.preventDefault()
+                      if (!taskId) return
+                      const { blob, fileName } = await fetchTaskAttachmentBlob(taskId, a.document_id)
+                      const url = URL.createObjectURL(blob)
+                      const link = document.createElement('a')
+                      link.href = url
+                      link.download = fileName
+                      link.click()
+                      URL.revokeObjectURL(url)
+                    }}
+                    className="flex items-center gap-1 text-xs text-brand-primary hover:underline"
+                  >
+                    <Download size={13} />
+                    تحميل
+                  </a>
+                  {canManageAttachments && (
+                    <button
+                      type="button"
+                      onClick={() => handleAttachmentDelete(a.document_id)}
+                      className="flex items-center gap-1 text-xs text-danger hover:underline"
+                    >
+                      <Trash2 size={13} />
+                      حذف
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+            {(!attachments || attachments.length === 0) && (
+              <p className="text-xs text-text-muted">لا توجد مرفقات بعد.</p>
+            )}
+          </ul>
+          {canManageAttachments && (
+            <label className="mt-3 inline-flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-brand-primary">
+              <Plus size={13} />
+              إضافة مرفق
+              <input
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) handleAttachmentUpload(file)
+                  e.target.value = ''
+                }}
+              />
+            </label>
+          )}
+        </Card>
+      ) : null}
 
       {actionError && (
         <p className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">

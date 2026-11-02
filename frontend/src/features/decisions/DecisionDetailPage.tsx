@@ -5,21 +5,26 @@ import {
   ArrowRight,
   CalendarRange,
   CheckCircle2,
+  Download,
   Gavel,
+  Paperclip,
   Pencil,
   Plus,
   Trash2,
   UserCheck,
+  UserX,
   Vote,
   XCircle,
 } from 'lucide-react'
 import {
   useApproveDecision,
   useCastVote,
+  useDecisionAttachments,
   useDecisionDetail,
   useDeleteDecision,
   useOpenVoting,
   useUpdateDecision,
+  useUploadDecisionAttachment,
 } from '@/hooks/useDecisions'
 import { useCommitteeDetail } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
@@ -31,6 +36,7 @@ import { Skeleton, TableSkeleton } from '@/components/ui/Skeleton'
 import { Avatar } from '@/components/ui/Avatar'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ActionMenu } from '@/components/ui/ActionMenu'
+import { Textarea } from '@/components/ui/Textarea'
 import { DecisionStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { DecisionFormModal, type DecisionFormSubmitValues } from './DecisionFormModal'
@@ -63,6 +69,8 @@ export function DecisionDetailPage() {
   const openVotingMutation = useOpenVoting()
   const castVoteMutation = useCastVote()
   const approveMutation = useApproveDecision()
+  const { data: attachments } = useDecisionAttachments(decisionId)
+  const uploadAttachmentMutation = useUploadDecisionAttachment()
 
   const [editOpen, setEditOpen] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
@@ -75,6 +83,11 @@ export function DecisionDetailPage() {
   ])
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  // اختيار "ممتنع" يفتح مربع سبب إلزامي قبل الإرسال فعليًا (راجعي رأس
+  // migration 0040) — بدل تصويت فوري مثل بقية الخيارات.
+  const [abstainOptionPending, setAbstainOptionPending] = useState<string | null>(null)
+  const [abstainReasonText, setAbstainReasonText] = useState('')
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
 
   /**
    * تصحيح 2026-09-02 — نفس إصلاح MeetingDetailPage.tsx.canManage بالضبط.
@@ -199,15 +212,43 @@ export function DecisionDetailPage() {
     )
   }
 
-  function handleVote(optionId: string) {
+  function handleVote(optionId: string, reason?: string) {
     if (!decisionId) return
     setActionError(null)
     castVoteMutation.mutate(
-      { decisionId, optionId },
+      { decisionId, optionId, reason },
       {
-        onSuccess: () => showToast('تم تسجيل تصويتك', 'success'),
+        onSuccess: () => {
+          showToast('تم تسجيل تصويتك', 'success')
+          setAbstainOptionPending(null)
+          setAbstainReasonText('')
+        },
         onError: (err) => setActionError(extractErrorMessage(err)),
       },
+    )
+  }
+
+  function handleAbstainClick(optionId: string) {
+    setActionError(null)
+    setAbstainReasonText(myVote?.option.option_id === optionId ? myVote.reason ?? '' : '')
+    setAbstainOptionPending(optionId)
+  }
+
+  function handleAbstainConfirm() {
+    if (!abstainOptionPending) return
+    if (!abstainReasonText.trim()) {
+      setActionError('ذكر سبب الامتناع إلزامي')
+      return
+    }
+    handleVote(abstainOptionPending, abstainReasonText.trim())
+  }
+
+  function handleAttachmentUpload(file: File) {
+    if (!decisionId) return
+    setAttachmentError(null)
+    uploadAttachmentMutation.mutate(
+      { decisionId, file },
+      { onError: (err) => setAttachmentError(extractErrorMessage(err)) },
     )
   }
 
@@ -358,7 +399,7 @@ export function DecisionDetailPage() {
                     key={opt.option_id}
                     size="sm"
                     variant={myVote?.option.option_id === opt.option_id ? 'primary' : 'secondary'}
-                    onClick={() => handleVote(opt.option_id)}
+                    onClick={() => (opt.is_abstain ? handleAbstainClick(opt.option_id) : handleVote(opt.option_id))}
                     loading={castVoteMutation.isPending}
                   >
                     {opt.label}
@@ -368,22 +409,129 @@ export function DecisionDetailPage() {
               </div>
             )}
 
+            {/* سبب الامتناع إلزامي — يظهر فقط عند اختيار خيار "ممتنع" الثابت. */}
+            {abstainOptionPending && (
+              <div className="flex flex-col gap-2 rounded-md border border-border-default bg-bg-elevated p-3">
+                <label className="text-xs font-semibold text-text-secondary">سبب الامتناع (إلزامي)</label>
+                <Textarea
+                  value={abstainReasonText}
+                  onChange={(e) => setAbstainReasonText(e.target.value)}
+                  rows={2}
+                  placeholder="اذكري سبب امتناعك عن التصويت..."
+                />
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={handleAbstainConfirm} loading={castVoteMutation.isPending}>
+                    تأكيد الامتناع
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setAbstainOptionPending(null)
+                      setAbstainReasonText('')
+                    }}
+                  >
+                    إلغاء
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <ul className="flex flex-col gap-1.5">
               {decision.votes.map((v) => (
-                <li key={v.voter.user_id} className="flex items-center justify-between text-sm">
-                  <span className="flex items-center gap-2">
-                    <Avatar firstName={v.voter.first_name} lastName={v.voter.last_name} size={24} />
-                    {v.voter.first_name} {v.voter.last_name}
-                  </span>
-                  <span className={v.option.is_approving ? 'text-success' : 'text-text-secondary'}>
-                    {v.option.label}
-                  </span>
+                <li key={v.voter.user_id} className="flex flex-col gap-0.5 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <Avatar firstName={v.voter.first_name} lastName={v.voter.last_name} size={24} />
+                      {v.voter.first_name} {v.voter.last_name}
+                    </span>
+                    <span className={v.option.is_approving ? 'text-success' : 'text-text-secondary'}>
+                      {v.option.label}
+                    </span>
+                  </div>
+                  {/* يظهر فقط لرئيسة اللجنة أو صاحب الصوت نفسه — الباك-إند يرسل null لغيرهم. */}
+                  {v.option.is_abstain && v.reason && (
+                    <p className="mr-9 text-xs text-text-muted">السبب: {v.reason}</p>
+                  )}
                 </li>
               ))}
             </ul>
+
+            {/* من لم يصوّت بعد — لرئيسة اللجنة فقط (الباك-إند يرسل [] لغيرها). */}
+            {decision.non_voters.length > 0 && (
+              <div className="rounded-md border border-border-default bg-bg-elevated p-3">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-text-secondary">
+                  <UserX size={13} />
+                  لم يصوّت بعد ({decision.non_voters.length})
+                </p>
+                <ul className="flex flex-wrap gap-x-4 gap-y-1">
+                  {decision.non_voters.map((u) => (
+                    <li key={u.user_id} className="flex items-center gap-1.5 text-xs text-text-muted">
+                      <Avatar firstName={u.first_name} lastName={u.last_name} size={18} />
+                      {u.first_name} {u.last_name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </Card>
       )}
+
+      {/* مرفقات القرار — اختياري، رئيسة اللجنة عادةً عند الإنشاء (راجعي DecisionFormModal) */}
+      {(attachments && attachments.length > 0) || canManage ? (
+        <Card>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <Paperclip size={15} />
+            المرفقات
+          </h2>
+          {attachmentError && <p className="mt-2 text-xs text-danger">{attachmentError}</p>}
+          <ul className="mt-3 flex flex-col gap-2">
+            {attachments?.map((a) => (
+              <li key={a.document_id} className="flex items-center justify-between gap-2 text-sm">
+                <span className="truncate">{a.title}</span>
+                <a
+                  href="#"
+                  onClick={async (e) => {
+                    e.preventDefault()
+                    if (!decisionId) return
+                    const { fetchDecisionAttachmentBlob } = await import('@/api/decisions')
+                    const { blob, fileName } = await fetchDecisionAttachmentBlob(decisionId, a.document_id)
+                    const url = URL.createObjectURL(blob)
+                    const link = document.createElement('a')
+                    link.href = url
+                    link.download = fileName
+                    link.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                  className="flex shrink-0 items-center gap-1 text-xs text-brand-primary hover:underline"
+                >
+                  <Download size={13} />
+                  تحميل
+                </a>
+              </li>
+            ))}
+            {(!attachments || attachments.length === 0) && (
+              <p className="text-xs text-text-muted">لا توجد مرفقات بعد.</p>
+            )}
+          </ul>
+          {canManage && (
+            <label className="mt-3 inline-flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-brand-primary">
+              <Plus size={13} />
+              إضافة مرفق
+              <input
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) handleAttachmentUpload(file)
+                  e.target.value = ''
+                }}
+              />
+            </label>
+          )}
+        </Card>
+      ) : null}
 
       {canOpenVoting && (
         <Card>

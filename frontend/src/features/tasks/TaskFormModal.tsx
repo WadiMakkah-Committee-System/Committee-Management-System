@@ -1,8 +1,8 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { AlertTriangle, Bell, CalendarRange, FileText, Save, UserCheck } from 'lucide-react'
+import { AlertTriangle, Bell, CalendarRange, FileText, Paperclip, Save, UserCheck } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -46,6 +46,8 @@ export interface TaskFormSubmitValues {
   assignee_user_id: string
   priority: TaskPriority
   reminder_offset_days: number
+  /** مرفق اختياري عند الإنشاء فقط (طلب صاحبة المشروع 2026-11-01) — يُرفع بنداء منفصل بعد نجاح الإنشاء. */
+  attachmentFile: File | null
 }
 
 interface TaskFormModalProps {
@@ -105,10 +107,13 @@ export function TaskFormModal({
         priority: task?.priority ?? 'medium',
         reminder_offset_days: task?.reminder_offset_days ?? 1,
       })
+      setAttachmentFile(null)
     }
   }, [open, task, committees, reset])
 
-  const submit = handleSubmit((values) => onSubmit(values))
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
+
+  const submit = handleSubmit((values) => onSubmit({ ...values, attachmentFile }))
 
   const committeeOptions = committees.map((c) => ({ value: c.committee_id, label: c.name }))
 
@@ -311,6 +316,23 @@ export function TaskFormModal({
             <p className="text-xs font-medium text-danger">{errors.assignee_user_id.message}</p>
           )}
         </div>
+
+        {!isEdit && (
+          <div className="flex flex-col gap-2 border-t border-border-default pt-3">
+            <label className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
+              <Paperclip size={14} />
+              مرفق (اختياري)
+            </label>
+            <input
+              type="file"
+              onChange={(e) => setAttachmentFile(e.target.files?.[0] ?? null)}
+              className="text-sm text-text-secondary file:ml-3 file:rounded-sm file:border-0 file:bg-brand-primary/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-brand-primary"
+            />
+            {attachmentFile && (
+              <p className="text-xs text-text-muted">تم اختيار: {attachmentFile.name}</p>
+            )}
+          </div>
+        )}
 
         {serverError && (
           <p className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">

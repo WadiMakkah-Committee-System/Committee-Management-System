@@ -49,6 +49,10 @@ def _all_committee_members(committee: Committee) -> list[User]:
     return list(members.values())
 
 
+def _is_chair(access: CommitteeAccess, committee: Committee) -> bool:
+    return committee.chair_user_id == access.actor_id
+
+
 async def _redact_votes_if_unauthorized(
     access: CommitteeAccess, committee: Committee, decision: Decision
 ) -> Decision:
@@ -73,11 +77,37 @@ async def _redact_votes_if_unauthorized(
     list_decisions بعد إغلاق كسلي لتصويت قرار آخر: عضو بلا view_result
     يفتح القائمة فتنحذف أصوات بقية الأعضاء نهائيًا. set_committed_value
     يغيّر ما يُعرض فقط بدون تسجيل أي تغيير بالجلسة، فلا يُحذف شيء أبدًا.
+
+    إضافة 2026-11-01 (طلب صاحبة المشروع): سبب الامتناع (DecisionVote.
+    reason) أشد خصوصية من نتيجة التصويت نفسها — يظهر فقط لرئيسة اللجنة،
+    أو لصاحب الصوت نفسه (صوته هو)، حتى لو كان عضو آخر يملك decisions.
+    vote.view_result لسبب مختلف. وقائمة "من لم يصوّت بعد" (non_voters)
+    مقصورة على رئيسة اللجنة حصرًا بنفس المنطق — تُحسب من أعضاء اللجنة
+    المحمَّلين فعلًا فقط (with_members=True)، وإلا تبقى [] بصمت (قوائم
+    الأداء المحسَّنة لا تحمّل الأعضاء دائمًا، راجعي loading.py).
     """
-    if await access.has(committee, "decisions.vote.view_result"):
-        return decision
+    is_chair = _is_chair(access, committee)
     actor_id = access.actor_id
-    set_committed_value(decision, "votes", [v for v in decision.votes if v.user_id == actor_id])
+    has_result_access = await access.has(committee, "decisions.vote.view_result")
+
+    if has_result_access:
+        visible_votes = list(decision.votes)
+    else:
+        visible_votes = [v for v in decision.votes if v.user_id == actor_id]
+    if visible_votes != list(decision.votes):
+        set_committed_value(decision, "votes", visible_votes)
+
+    for vote in decision.votes:
+        if not (is_chair or vote.user_id == actor_id):
+            set_committed_value(vote, "reason", None)
+
+    non_voters: list[User] = []
+    if is_chair and decision.voting_opened_at is not None and "members" in committee.__dict__:
+        voted_ids = {v.user_id for v in decision.votes}
+        non_voter_ids = _committee_voter_ids(committee) - voted_ids
+        non_voters = [u for u in _all_committee_members(committee) if u.user_id in non_voter_ids]
+    decision.non_voters = non_voters
+
     return decision
 
 
