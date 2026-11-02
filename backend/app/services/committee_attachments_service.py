@@ -13,7 +13,12 @@
 - get_meeting_bundle: مرفقات اجتماع واحد (العرض/المرفقات العامة/مرفقات
   البنود مع عنوان البند) + توفر المحضر ومرحلته. محتوى المحضر نفسه لا يُجلب
   هنا — يُولَّد PDF فقط لما يضغط تحميل (GET /meetings/{id}/minutes/pdf).
-- مرفقات المهام: لا نقطة لها حاليًا (قرار لاما: القسم يظهر فاضي الآن).
+- list_committee_tasks_brief / list_committee_decisions_brief: نفس نمط
+  list_committee_meetings_brief بالضبط (عنوان/حالة فقط، بلا علاقات) — إضافة
+  2026-11-02 (طلب لجين): قسما "مرفقات المهام" و"مرفقات القرارات" بالتصنيف.
+  مستوى المرفقات نفسه لكل مهمة/قرار لا نقطة جديدة له هنا — الواجهة تستدعي
+  مباشرة GET /tasks/{id}/attachments و/decisions/{id}/attachments الموجودتين
+  أصلًا (نفس فلسفة إعادة استخدام نقاط الاجتماعات القائمة لتنزيل المرفقات).
 
 الصلاحيات (RBAC بالباك-إند):
 - اللجان: نطاق committees.view النظامي (own/department/all)، ومن لا يملكه
@@ -33,13 +38,15 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.decision import Decision, DecisionStatus
 from app.models.document import Document
 from app.models.meeting import Meeting, MeetingAgendaItem
 from app.models.meeting_minutes import MeetingMinutes
+from app.models.task import Task, TaskStatus
 from app.models.user import User
 from app.services import committee_service, meeting_service
 from app.services.committee_access import CommitteeAccess
-from app.services.meeting_service.errors import MeetingForbiddenError
+from app.services.meeting_service.errors import MeetingForbiddenError, MeetingNotFoundError
 from app.services.meeting_service.loading import load_committee, load_meeting
 
 # السعودية بلا توقيت صيفي — "اليوم" لتحديد اللجنة المنتهية بتوقيت الرياض.
@@ -59,6 +66,22 @@ class MeetingBrief:
     meeting_id: uuid.UUID
     title: str
     scheduled_at: datetime
+
+
+@dataclass
+class TaskBrief:
+    task_id: uuid.UUID
+    title: str
+    status: TaskStatus
+    created_at: datetime
+
+
+@dataclass
+class DecisionBrief:
+    decision_id: uuid.UUID
+    title: str
+    status: DecisionStatus
+    created_at: datetime
 
 
 @dataclass
@@ -125,6 +148,58 @@ async def list_committee_meetings_brief(
         .order_by(Meeting.scheduled_at.desc())
     )
     return [MeetingBrief(meeting_id=r.meeting_id, title=r.title, scheduled_at=r.scheduled_at) for r in result.all()]
+
+
+async def list_committee_tasks_brief(
+    db: AsyncSession, *, actor: User, committee_id: uuid.UUID
+) -> list[TaskBrief]:
+    """
+    الهدف: أسماء مهام لجنة واحدة فقط (المستوى الثالث — بعد اختيار "مرفقات
+    المهام"). مستوى مرفقات المهمة نفسه لا نقطة له هنا — الواجهة تستدعي
+    GET /tasks/{id}/attachments الموجودة أصلًا.
+    المدخلات: committee_id. يتطلب tasks.view على اللجنة.
+    المخرجات: TaskBrief (معرّف/عنوان/حالة/تاريخ إنشاء) الأحدث أولًا.
+    الأخطاء: MeetingNotFoundError (404) لجنة غير موجودة، MeetingForbiddenError (403).
+    الاستعلامات: اللجنة + رئيسها (1) + أكواد دور اللجنة عند الحاجة (0-1) + المهام (1).
+    """
+    committee = await load_committee(db, committee_id)
+    if not await CommitteeAccess(db, actor).has(committee, "tasks.view"):
+        raise MeetingForbiddenError("ليست لديك صلاحية عرض مهام هذه اللجنة")
+    result = await db.execute(
+        select(Task.task_id, Task.title, Task.status, Task.created_at)
+        .where(Task.committee_id == committee_id, Task.deleted_at.is_(None))
+        .order_by(Task.created_at.desc())
+    )
+    return [
+        TaskBrief(task_id=r.task_id, title=r.title, status=r.status, created_at=r.created_at)
+        for r in result.all()
+    ]
+
+
+async def list_committee_decisions_brief(
+    db: AsyncSession, *, actor: User, committee_id: uuid.UUID
+) -> list[DecisionBrief]:
+    """
+    الهدف: أسماء قرارات لجنة واحدة فقط (المستوى الثالث — بعد اختيار "مرفقات
+    القرارات"). مستوى مرفقات القرار نفسه لا نقطة له هنا — الواجهة تستدعي
+    GET /decisions/{id}/attachments الموجودة أصلًا.
+    المدخلات: committee_id. يتطلب decisions.view على اللجنة.
+    المخرجات: DecisionBrief (معرّف/عنوان/حالة/تاريخ إنشاء) الأحدث أولًا.
+    الأخطاء: MeetingNotFoundError (404) لجنة غير موجودة، MeetingForbiddenError (403).
+    الاستعلامات: اللجنة + رئيسها (1) + أكواد دور اللجنة عند الحاجة (0-1) + القرارات (1).
+    """
+    committee = await load_committee(db, committee_id)
+    if not await CommitteeAccess(db, actor).has(committee, "decisions.view"):
+        raise MeetingForbiddenError("ليست لديك صلاحية عرض قرارات هذه اللجنة")
+    result = await db.execute(
+        select(Decision.decision_id, Decision.title, Decision.status, Decision.created_at)
+        .where(Decision.committee_id == committee_id, Decision.deleted_at.is_(None))
+        .order_by(Decision.created_at.desc())
+    )
+    return [
+        DecisionBrief(decision_id=r.decision_id, title=r.title, status=r.status, created_at=r.created_at)
+        for r in result.all()
+    ]
 
 
 async def get_meeting_bundle(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> MeetingBundle:

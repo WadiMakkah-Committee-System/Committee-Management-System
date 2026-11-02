@@ -2,8 +2,10 @@ import { apiClient } from '@/lib/apiClient'
 import { fileNameFromDisposition } from '@/lib/utils'
 import type {
   CommitteeAttachmentsCommittee,
+  CommitteeAttachmentsDecision,
   CommitteeAttachmentsMeeting,
   CommitteeAttachmentsMeetingBundle,
+  CommitteeAttachmentsTask,
 } from '@/types'
 
 /**
@@ -21,6 +23,22 @@ export async function fetchAttachmentCommittees(): Promise<CommitteeAttachmentsC
 export async function fetchAttachmentCommitteeMeetings(committeeId: string): Promise<CommitteeAttachmentsMeeting[]> {
   const { data } = await apiClient.get<CommitteeAttachmentsMeeting[]>(
     `/documents/committee-attachments/committees/${committeeId}/meetings`,
+  )
+  return data
+}
+
+/** بعد اختيار "مرفقات المهام": أسماء مهام اللجنة فقط. */
+export async function fetchAttachmentCommitteeTasks(committeeId: string): Promise<CommitteeAttachmentsTask[]> {
+  const { data } = await apiClient.get<CommitteeAttachmentsTask[]>(
+    `/documents/committee-attachments/committees/${committeeId}/tasks`,
+  )
+  return data
+}
+
+/** بعد اختيار "مرفقات القرارات": أسماء قرارات اللجنة فقط. */
+export async function fetchAttachmentCommitteeDecisions(committeeId: string): Promise<CommitteeAttachmentsDecision[]> {
+  const { data } = await apiClient.get<CommitteeAttachmentsDecision[]>(
+    `/documents/committee-attachments/committees/${committeeId}/decisions`,
   )
   return data
 }

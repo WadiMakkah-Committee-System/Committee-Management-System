@@ -12,6 +12,8 @@ export const committeeAttachmentsKeys = {
   committees: ['committee-attachments', 'committees'] as const,
   meetings: (committeeId: string) => ['committee-attachments', 'meetings', committeeId] as const,
   bundle: (meetingId: string) => ['committee-attachments', 'bundle', meetingId] as const,
+  tasks: (committeeId: string) => ['committee-attachments', 'tasks', committeeId] as const,
+  decisions: (committeeId: string) => ['committee-attachments', 'decisions', committeeId] as const,
 }
 
 export function useAttachmentCommittees(enabled: boolean) {
@@ -27,6 +29,24 @@ export function useAttachmentCommitteeMeetings(committeeId: string | null) {
   return useQuery({
     queryKey: committeeAttachmentsKeys.meetings(committeeId ?? ''),
     queryFn: () => api.fetchAttachmentCommitteeMeetings(committeeId!),
+    enabled: !!committeeId,
+    staleTime: STALE,
+  })
+}
+
+export function useAttachmentCommitteeTasks(committeeId: string | null) {
+  return useQuery({
+    queryKey: committeeAttachmentsKeys.tasks(committeeId ?? ''),
+    queryFn: () => api.fetchAttachmentCommitteeTasks(committeeId!),
+    enabled: !!committeeId,
+    staleTime: STALE,
+  })
+}
+
+export function useAttachmentCommitteeDecisions(committeeId: string | null) {
+  return useQuery({
+    queryKey: committeeAttachmentsKeys.decisions(committeeId ?? ''),
+    queryFn: () => api.fetchAttachmentCommitteeDecisions(committeeId!),
     enabled: !!committeeId,
     staleTime: STALE,
   })

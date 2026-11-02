@@ -1199,6 +1199,20 @@ export interface CommitteeAttachmentsMeeting {
   scheduled_at: string
 }
 
+export interface CommitteeAttachmentsTask {
+  task_id: string
+  title: string
+  status: TaskStatus
+  created_at: string
+}
+
+export interface CommitteeAttachmentsDecision {
+  decision_id: string
+  title: string
+  status: DecisionStatus
+  created_at: string
+}
+
 export interface CommitteeAttachmentsBundleFile extends MeetingAttachment {
   agenda_item_title: string | null
 }

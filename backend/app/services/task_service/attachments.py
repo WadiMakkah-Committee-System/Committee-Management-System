@@ -6,12 +6,15 @@
 Storage)، ثم يُربَط بالمهمة عبر document_links (linked_entity_type=
 'task_attachment') — لا جدول جديد.
 
-التفويض: يُعاد استخدام _require_object_scoped_access(..., _UPDATE, ...)
-الموجودة أصلًا بوحدة المهام حرفيًا (نفس فحص update_task) — رئيسة اللجنة
-(أو صاحب نطاق نظام) غير مقيَّدة، وعضو عادي يملك tasks.update مقيَّد
-بمهامه المسندة له هو فقط. هذا يحقق المطلوب تمامًا: المسؤول يرفع/يعدّل/
-يحذف مرفقات مهمته، ورئيسة اللجنة تقدر ترفق عند الإنشاء (وبعده أيضًا —
-نفس صلاحيتها الإدارية الموجودة أصلًا على كل مهام لجنتها).
+التفويض: يُعاد استخدام _require_object_scoped_access(..., _STATUS_UPDATE, ...)
+— تصحيح 2026-11-02 (كانت _UPDATE، وتلك لا يملكها إلا رئيسة اللجنة فعليًا
+بقاعدة البيانات، فكان رفع المرفق يفشل لأي عضو عادي مسؤول عن المهمة).
+tasks.status.update يملكها كل من رئيسة اللجنة والعضو المسؤول عن مهمته —
+نفس الصلاحية المستخدمة لتحديث حالة المهمة، و_require_object_scoped_access
+تقيّد العضو العادي (غير الرئيسة) بمهامه المسندة له هو فقط تلقائيًا. هذا
+يحقق المطلوب تمامًا: المسؤول يرفع/يحذف مرفقات مهمته، ورئيسة اللجنة تقدر
+ترفق عند الإنشاء (وبعده أيضًا — نفس صلاحيتها الإدارية الموجودة أصلًا على
+كل مهام لجنتها).
 """
 
 import uuid
@@ -27,7 +30,7 @@ from app.models.user import User
 from app.services import document_service
 from app.services.committee_access import CommitteeAccess
 from app.services.task_service.access import _require_object_scoped_access
-from app.services.task_service.codes import _UPDATE, _VIEW_DETAILS
+from app.services.task_service.codes import _STATUS_UPDATE, _VIEW_DETAILS
 from app.services.task_service.errors import TaskNotFoundError
 from app.services.task_service.loading import load_task
 
@@ -48,12 +51,12 @@ async def add_attachment(
     mime_type: str,
     content: bytes,
 ) -> tuple[Document, datetime]:
-    """يتطلب tasks.update على هذه المهمة تحديدًا (رئيسة اللجنة، أو المسؤول عنها هو)."""
+    """يتطلب tasks.status.update على هذه المهمة تحديدًا (رئيسة اللجنة، أو المسؤول عنها هو)."""
     access = CommitteeAccess(db, actor)
     task = await load_task(db, task_id)
     committee = task.committee  # محمَّلة مع المهمة (loading.task_options)
     await _require_object_scoped_access(
-        access, committee, task, _UPDATE, "ليست لديك صلاحية إرفاق ملف بهذه المهمة",
+        access, committee, task, _STATUS_UPDATE, "ليست لديك صلاحية إرفاق ملف بهذه المهمة",
         "لا يمكنك إرفاق ملف إلا بمهامك المسندة لك أنت تحديدًا",
     )
 
@@ -147,12 +150,12 @@ async def get_attachment_download(
 async def delete_attachment(
     db: AsyncSession, *, actor: User, task_id: uuid.UUID, document_id: uuid.UUID
 ) -> None:
-    """يتطلب tasks.update على هذه المهمة — يحذف الوثيقة نفسها (Soft Delete)."""
+    """يتطلب tasks.status.update على هذه المهمة — يحذف الوثيقة نفسها (Soft Delete)."""
     access = CommitteeAccess(db, actor)
     task = await load_task(db, task_id)
     committee = task.committee
     await _require_object_scoped_access(
-        access, committee, task, _UPDATE, "ليست لديك صلاحية حذف مرفقات هذه المهمة",
+        access, committee, task, _STATUS_UPDATE, "ليست لديك صلاحية حذف مرفقات هذه المهمة",
         "لا يمكنك حذف مرفقات إلا من مهامك المسندة لك أنت تحديدًا",
     )
 

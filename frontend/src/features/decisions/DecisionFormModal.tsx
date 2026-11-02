@@ -343,7 +343,7 @@ export function DecisionFormModal({
           <div className="flex flex-col gap-2 border-t border-border-default pt-3">
             <label className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
               <Paperclip size={14} />
-              مرفق (اختياري)
+              مرفق
             </label>
             <input
               type="file"
