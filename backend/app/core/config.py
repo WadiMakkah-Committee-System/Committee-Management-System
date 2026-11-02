@@ -87,22 +87,13 @@ class Settings(BaseSettings):
       SUPABASE_STORAGE_BUCKET: str = "documents"
       MAX_DOCUMENT_UPLOAD_MB: int = 25
 
-    # --- Agora (اجتماعات الفيديو عن بعد — meetings.join) ---
-    # AGORA_APP_ID/AGORA_APP_CERTIFICATE اختياريان بقيمة افتراضية فارغة (نفس
-    # نمط SUPABASE_*/SMTP_* أعلاه) حتى لا تنكسر بيئات .env القديمة. يُستخدَمان
-    # من app.core.agora_client فقط لإصدار Token قصير العمر (Server-Side)، ولا
-    # يصلان للـFrontend أبدًا (نفس مبدأ SUPABASE_SERVICE_ROLE_KEY أعلاه) —
-    # العميل يستلم Token جاهز فقط عبر POST /meetings/{id}/join.
-      AGORA_APP_ID: str = ""
-      AGORA_APP_CERTIFICATE: str = ""
-      AGORA_TOKEN_TTL_SECONDS: int = 3600
-
     # --- Microsoft Teams (الاجتماعات عن بعد — migration 0041، قرار لاما
     # 2026-11-02 بالانتقال من Agora إلى Teams) ---
     # بيانات تطبيق "Committee Management System" المسجّل بـEntra ID (Client
     # Credentials عبر app.core.teams_client) — لا تصل للـFrontend أبدًا.
-    # اختيارية بقيمة فارغة (نفس نمط AGORA_*/GEMINI_*): لو أي منها فارغ يبقى
-    # التكامل معطّلًا ويُنشأ الاجتماع عن بعد بلا رابط Teams (بيئات التطوير).
+    # اختيارية بقيمة فارغة (نفس نمط GEMINI_*/SUPABASE_*): لو أي منها فارغ يبقى
+    # التكامل معطّلًا ويُنشأ الاجتماع عن بعد بلا رابط Teams (بيئات التطوير
+    # فقط — Teams هو وسيلة الاجتماع عن بعد الوحيدة منذ إزالة Agora 2026-11-02).
     # TEAMS_ORGANIZER_EMAIL: الحساب الذي تُنشأ الاجتماعات باسمه — يجب أن
     # تشمله Application Access Policy بـTeams PowerShell. تغييره لاحقًا (مثلًا
     # لحساب مخصص meetings@...) لا يكسر الاجتماعات القديمة (meetings.teams_organizer_id).
@@ -114,7 +105,7 @@ class Settings(BaseSettings):
     # --- Google Gemini (تحويل تسجيل الاجتماع الصوتي إلى مسودة —
     # meetings.record_audio/draft.summarize، migration 0025) ---
     # GEMINI_API_KEY اختياري بقيمة افتراضية فارغة (نفس نمط CLAUDE_API_KEY/
-    # AGORA_*/SUPABASE_* أعلاه) — لا يصل للـFrontend أبدًا، يُستخدَم من
+    # TEAMS_*/SUPABASE_* أعلاه) — لا يصل للـFrontend أبدًا، يُستخدَم من
     # app.core.gemini_client فقط. GEMINI_MODEL قابل للتغيير بدون تعديل
     # الكود (أسماء نماذج Gemini تتحدّث بمرور الوقت).
       GEMINI_API_KEY: str = ""

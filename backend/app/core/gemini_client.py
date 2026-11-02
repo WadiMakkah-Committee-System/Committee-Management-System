@@ -19,7 +19,7 @@ db/migrations/0025_meeting_recordings_and_drafts.sql لقرار اختيار Gem
   الخدمة (meeting_draft_service.py) — تغلّف كل خطوات Files API أعلاه.
 
 ملاحظات أمنية:
-- GEMINI_API_KEY لا يصل للـFrontend أبدًا (نفس مبدأ AGORA_APP_CERTIFICATE/
+- GEMINI_API_KEY لا يصل للـFrontend أبدًا (نفس مبدأ TEAMS_CLIENT_SECRET/
   SUPABASE_SERVICE_ROLE_KEY) — كل الاستدعاء من الـBackend فقط.
 - GeminiError عام تلتقطه طبقة الخدمة وتحوّله لحالة status='failed' بجدول
   meeting_drafts (مع error_message)، بدل تسريب تفاصيل الاستدعاء الخارجي

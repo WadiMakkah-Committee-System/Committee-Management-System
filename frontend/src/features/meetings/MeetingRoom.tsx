@@ -8,12 +8,10 @@ import { useAuthStore } from '@/store/authStore'
 import { useMeetingRealtime } from '@/hooks/useMeetingRealtime'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
-import { useAgoraConnection } from './room/useAgoraConnection'
-import { useAudioRecorder } from './room/useAudioRecorder'
 import { MeetingRoomAppRail } from './room/MeetingRoomAppRail'
 import { MeetingRoomSidebar, type RoomPanelKey } from './room/MeetingRoomSidebar'
 import { MeetingRoomHeader } from './room/MeetingRoomHeader'
-import { MeetingStage } from './room/MeetingStage'
+import { TeamsMeetingStage } from './room/TeamsMeetingStage'
 import { MeetingControls } from './room/MeetingControls'
 import { ParticipantsPanel } from './room/panels/ParticipantsPanel'
 import { AgendaPanel } from './room/panels/AgendaPanel'
@@ -21,7 +19,6 @@ import { DecisionsPanel } from './room/panels/DecisionsPanel'
 import { AttachmentsPanel } from './room/panels/AttachmentsPanel'
 import { ChatPanel } from './room/panels/ChatPanel'
 import { ActivityPanel } from './room/panels/ActivityPanel'
-import { RecordingPanel } from './room/panels/RecordingPanel'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
 
@@ -35,19 +32,16 @@ const MEETING_STATUS_POLL_MS = 20_000
 const AUTO_LEAVE_GRACE_MS = 6_000
 
 /**
- * غرفة الاجتماع — إعادة تصميم 2026-09-06 المسائية لمطابقة الواجهة
- * المرجعية الثانية التي رسمتها لاما بالضبط (بعد الإصدار الأول الذي لم
- * يعجبها): شريطان منفصلان يمين الشاشة — شريط عام داكن بشعار الشركة
- * وتنقّل عام (MeetingRoomAppRail.tsx)، ثم لوحة ديناميكية بيضاء (340px)
- * تبويباتها صف أفقي صغير أعلاها (MeetingRoomSidebar.tsx، لم يعد شريطًا
- * جانبيًا) — المحادثة تُفتح من الشريط العام، ولوحة التسجيل+الذكاء
- * الاصطناعي من زر "المزيد" بشريط التحكم السفلي، لا من تبويب بلوحة
- * المشاركين. التسجيل الصوتي رُفع لهذا المستوى (useAudioRecorder) ليكون
- * مصدرًا حيًا واحدًا لثلاث واجهات: زر التسجيل بالتحكم السفلي، شارة
- * "جاري التسجيل" أعلى الفيديو، ولوحة الذكاء الاصطناعي.
+ * غرفة الاجتماع — مساحة إدارة الجلسة بجانب Microsoft Teams (تحديث 2026-11-02:
+ * أُزيل فيديو Agora بالكامل بقرار لاما، والصوت/الفيديو/التسجيل داخل تيمز).
+ * التصميم نفسه (تعديل 2026-09-06 لمطابقة الواجهة المرجعية) باقٍ كما هو:
+ * شريط عام داكن (MeetingRoomAppRail.tsx)، ولوحة ديناميكية بيضاء (340px)
+ * بتبويبات أعلاها (MeetingRoomSidebar.tsx)، والمساحة الرئيسية صارت
+ * TeamsMeetingStage.tsx (زر الانضمام عبر تيمز) بدل مربعات الفيديو، مع شريط
+ * تحكم مبسّط (رفع اليد/مغادرة/ملء الشاشة).
  *
- * الواجهة الخارجية (props) لم تتغيّر عمدًا — MeetingDetailPage.tsx ما
- * زال يستدعيها بنفس الشكل: <MeetingRoom meetingId meetingTitle onClose />.
+ * الواجهة الخارجية (props) لم تتغيّر — MeetingDetailPage.tsx ما زال يستدعيها
+ * بنفس الشكل: <MeetingRoom meetingId meetingTitle onClose />.
  */
 export function MeetingRoom({
   meetingId,
@@ -69,17 +63,10 @@ export function MeetingRoom({
   // بنطاق 'all' فعليًا.
   const { data: committees } = useCommittees()
   const realtime = useMeetingRealtime(meetingId)
-  // إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
-  // كرقم بدل اسمها): realtime يجب إنشاؤها قبل useAgoraConnection هنا
-  // لتمرير announceAgoraUid لها — تُستدعى فور نجاح انضمام Agora الفعلي
-  // (راجعي useAgoraConnection.ts وتعليق video_uid بـsocketio_server.py).
-  const agora = useAgoraConnection(meetingId, realtime.announceAgoraUid)
-  const recorder = useAudioRecorder(meetingId)
 
   const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
   const [pendingAgendaItemId, setPendingAgendaItemId] = useState<string | null>(null)
-  const [leaving, setLeaving] = useState(false)
 
   // عدد رسائل المحادثة "المُشاهَدة" — State حقيقي يُحدَّث فقط داخل معالج
   // الحدث عند التنقل إلى لوحة "المحادثة" (انظر handleSelectPanel)، لا أثناء
@@ -102,15 +89,6 @@ export function MeetingRoom({
   )
   const iRaisedHand = currentUser ? raisedHandUserIds.has(currentUser.user_id) : false
 
-  // إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
-  // كرقم غريب بدل اسمها الحقيقي، مثال ليليان): كانت هذي الخريطة مبنية
-  // بمفتاح user_id (UUID من قاعدة البيانات)، لكن MeetingStage.tsx يبحث
-  // فيها بمفتاح agora_uid (رقم عشوائي مختلف تمامًا يولّده Agora لكل جلسة
-  // انضمام فيديو — راجعي meeting_service.join_meeting) — عدم تطابق مفاتيح
-  // دائم لأي مشارك، لا علاقة له بهوية المستخدم نفسها. المصدر الصحيح الآن:
-  // realtime.videoUidNames (يُبنى من بث video.uid/video.roster اللحظي —
-  // راجعي useMeetingRealtime.ts وsocketio_server.py::video_uid).
-  const participantNames = realtime.videoUidNames
 
   // إصلاح 2026-09-14 (بلاغ لاما الثاني — ضغط رئيس اللجنة "بدء المناقشة"
   // لا يعطيه أي مؤشر، كأن الزر ثابت لا يفعل شيئًا): announceDiscussing
@@ -132,21 +110,11 @@ export function MeetingRoom({
     }
   }
 
-  async function handleConfirmLeave() {
-    setLeaving(true)
-    if (recorder.isRecording) recorder.stop()
-    await agora.leave()
-    setLeaving(false)
+  // المغادرة هنا تُغلق غرفة النظام فقط — نافذة تيمز مستقلة يغادرها
+  // المستخدم من تيمز نفسه (لا يوجد اتصال وسائط بالمتصفح لإنهائه بعد Agora).
+  function handleConfirmLeave() {
     setConfirmLeaveOpen(false)
     onClose()
-  }
-
-  async function handleToggleRecording() {
-    if (recorder.isRecording) {
-      recorder.stop()
-    } else {
-      await recorder.start()
-    }
   }
 
   const meeting = meetingQuery.data
@@ -176,8 +144,10 @@ export function MeetingRoom({
         )),
   )
 
-  // إصلاح 2026-09-14 (بلاغ لاما — عضو اللجنة العادي يقدر يبدأ التسجيل
-  // الصوتي من شريط التحكم السفلي، والمفترض يكون هذا لرئيس اللجنة فقط):
+  // يحدد ظهور تنبيه "شغّل التسجيل والتفريغ من داخل تيمز" (TeamsMeetingStage)
+  // — نفس قاعدة من يسجّل (رئيس اللجنة أو meetings.record_audio عامة). أصل
+  // الشرط: إصلاح 2026-09-14 (بلاغ لاما — عضو اللجنة العادي كان يقدر يبدأ
+  // التسجيل الصوتي من شريط التحكم السفلي، والمفترض يكون لرئيس اللجنة فقط):
   // الباك-إند أصلًا يرفض حفظ/رفع التسجيل لغير صاحب صلاحية
   // meetings.record_audio (راجعي meeting_service.py::upload_recording)،
   // لكن الواجهة كانت تعرض زر "تسجيل" بلا أي فحص — فيدخل العضو بتجربة
@@ -206,22 +176,10 @@ export function MeetingRoom({
   useEffect(() => {
     if (!meetingEnded || autoLeaveTriggeredRef.current) return
     autoLeaveTriggeredRef.current = true
-    const timeout = setTimeout(() => {
-      setLeaving(true)
-      if (recorder.isRecording) recorder.stop()
-      agora
-        .leave()
-        .catch(() => {})
-        .finally(() => {
-          setLeaving(false)
-          onClose()
-        })
-    }, AUTO_LEAVE_GRACE_MS)
+    const timeout = setTimeout(onClose, AUTO_LEAVE_GRACE_MS)
     return () => clearTimeout(timeout)
-    // عمدًا: agora/recorder/onClose لا تدخل بالـdeps — agora كائن جديد كل
-    // render (سيُعيد تشغيل المؤقّت باستمرار لو أُدرِج)، والاعتماد الفعلي
-    // الوحيد للتشغيل هو meetingEnded نفسه (الحارس أعلاه autoLeaveTriggeredRef
-    // يمنع أي تكرار على أي حال، بنفس نمط useAgoraConnection.ts).
+    // عمدًا: onClose لا يدخل بالـdeps — الاعتماد الفعلي الوحيد للتشغيل هو
+    // meetingEnded نفسه (الحارس autoLeaveTriggeredRef يمنع أي تكرار).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingEnded])
 
@@ -292,11 +250,7 @@ export function MeetingRoom({
                   />
                 )}
                 {activePanel === 'attachments' && (
-                  <AttachmentsPanel
-                    meetingId={meetingId}
-                    sharingScreen={agora.sharingScreen}
-                    onToggleScreenShare={agora.toggleScreenShare}
-                  />
+                  <AttachmentsPanel meetingId={meetingId} />
                 )}
                 {activePanel === 'chat' && (
                   <ChatPanel
@@ -308,9 +262,6 @@ export function MeetingRoom({
                   />
                 )}
                 {activePanel === 'activity' && <ActivityPanel events={realtime.activityEvents} />}
-                {activePanel === 'ai' && (
-                  <RecordingPanel meetingId={meetingId} recorder={recorder} />
-                )}
               </div>
             </aside>
 
@@ -334,54 +285,13 @@ export function MeetingRoom({
                 </div>
               )}
 
-              {agora.phase === 'connecting' && (
-                <div className="flex flex-1 flex-col items-center justify-center gap-3 text-white/60">
-                  <Loader2 size={26} className="animate-spin" />
-                  <p className="text-sm">جاري الاتصال بالاجتماع...</p>
-                </div>
-              )}
-              {agora.phase === 'error' && (
-                <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-                  <p className="max-w-sm text-sm text-danger">
-                    {agora.errorMessage ?? 'تعذّر الاتصال بالاجتماع.'}
-                  </p>
-                </div>
-              )}
-              {agora.phase === 'connected' && (
-                <MeetingStage
-                  localName={currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'أنت'}
-                  localDisplayTrack={agora.localDisplayTrack}
-                  micEnabled={agora.micEnabled}
-                  camEnabled={agora.camEnabled}
-                  sharingScreen={agora.sharingScreen}
-                  localAudioLevel={agora.localAudioLevel}
-                  remoteParticipants={agora.remoteParticipants}
-                  participantNames={participantNames}
-                  raisedHandUserIds={raisedHandUserIds}
-                  localUserId={currentUser?.user_id ?? ''}
-                  isRecording={recorder.isRecording}
-                  recordingElapsedSeconds={recorder.elapsedSeconds}
-                  onStopRecording={recorder.stop}
-                />
-              )}
+              <TeamsMeetingStage meeting={meeting} canRecord={canRecord} />
 
-              {agora.phase === 'connected' && (
-                <MeetingControls
-                  micEnabled={agora.micEnabled}
-                  camEnabled={agora.camEnabled}
-                  sharingScreen={agora.sharingScreen}
-                  handRaised={iRaisedHand}
-                  isRecording={recorder.isRecording}
-                  canRecord={canRecord}
-                  onToggleMic={agora.toggleMic}
-                  onToggleCamera={agora.toggleCamera}
-                  onToggleScreenShare={agora.toggleScreenShare}
-                  onToggleHand={() => (iRaisedHand ? realtime.lowerHand() : realtime.raiseHand())}
-                  onToggleRecording={handleToggleRecording}
-                  onOpenMore={() => handleSelectPanel('ai')}
-                  onLeave={() => setConfirmLeaveOpen(true)}
-                />
-              )}
+              <MeetingControls
+                handRaised={iRaisedHand}
+                onToggleHand={() => (iRaisedHand ? realtime.lowerHand() : realtime.raiseHand())}
+                onLeave={() => setConfirmLeaveOpen(true)}
+              />
             </div>
           </div>
         </>
@@ -395,7 +305,6 @@ export function MeetingRoom({
         description="هل أنت متأكد أنك تريد مغادرة الاجتماع؟"
         confirmLabel="مغادرة"
         variant="danger"
-        loading={leaving}
       />
     </motion.div>,
     document.body,

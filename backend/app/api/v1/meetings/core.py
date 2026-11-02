@@ -1,4 +1,4 @@
-"""إنشاء/عرض/قائمة/تعديل/حذف الاجتماعات + الانضمام/المغادرة + جدول الأعمال."""
+"""إنشاء/عرض/قائمة/تعديل/حذف الاجتماعات + جدول الأعمال (الانضمام عبر Teams — راجعي teams.py)."""
 
 import uuid
 
@@ -14,7 +14,6 @@ from fastapi import (
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import agora_client
 from app.core.background import run_detached
 from app.core.config import settings
 from app.core.dependencies import CurrentUser
@@ -26,19 +25,13 @@ from app.schemas.meeting import (
     MeetingCreate,
     MeetingExtend,
     MeetingCreateWithAttachmentsOut,
-    MeetingJoinOut,
     MeetingListItem,
     MeetingOut,
     MeetingUpdate,
 )
 from app.services import meeting_service, notification_service, user_service
-from app.services.meeting_service import (
-    MeetingForbiddenError,
-    MeetingInvalidStateError,
-    MeetingNotFoundError,
-)
 
-from app.api.v1.meetings._errors import _SERVICE_ERRORS, _agora_error_to_http, _handle_errors
+from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
@@ -321,53 +314,6 @@ async def delete_meeting(
     run_detached(
         notification_service.notify_meeting_cancelled(meeting, actor_user_id=current_user.user_id)
     )
-
-
-# ============================== الانضمام لاجتماع عن بعد (Agora) ==============================
-# join_meeting/leave_meeting تُبقي commit/rollback على مستوى الراوت عمدًا
-# (بخلاف بقية دوال الوحدة) — meeting_service.join_meeting يُصدر Token عبر
-# Agora قبل أي db.add، فلو فشل استدعاء Agora لا شيء التُزم أصلًا بعد.
-
-
-@router.post("/{meeting_id}/join", response_model=MeetingJoinOut)
-async def join_meeting(
-    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
-) -> MeetingJoinOut:
-    try:
-        _meeting, join_info = await meeting_service.join_meeting(
-            db, actor=current_user, meeting_id=meeting_id
-        )
-        await db.commit()
-    except (MeetingNotFoundError, MeetingForbiddenError, MeetingInvalidStateError) as exc:
-        await db.rollback()
-        raise _handle_errors(exc) from exc
-    except agora_client.AgoraError as exc:
-        await db.rollback()
-        raise _agora_error_to_http(exc) from exc
-    return MeetingJoinOut(
-        app_id=join_info.app_id,
-        channel=join_info.channel,
-        token=join_info.token,
-        uid=join_info.uid,
-        expires_at=join_info.expires_at,
-    )
-
-
-@router.post("/{meeting_id}/leave", status_code=status.HTTP_204_NO_CONTENT)
-async def leave_meeting(
-    meeting_id: uuid.UUID,
-    current_user: CurrentUser,
-    agora_uid: int | None = None,
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    try:
-        await meeting_service.leave_meeting(
-            db, actor=current_user, meeting_id=meeting_id, agora_uid=agora_uid
-        )
-        await db.commit()
-    except (MeetingNotFoundError, MeetingForbiddenError) as exc:
-        await db.rollback()
-        raise _handle_errors(exc) from exc
 
 
 @router.post(

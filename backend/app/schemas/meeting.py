@@ -255,21 +255,6 @@ class TeamsRecordingOut(BaseModel):
     created_at: datetime | None
 
 
-class MeetingJoinOut(BaseModel):
-    """
-    استجابة POST /meetings/{id}/join — معلومات الانضمام الجاهزة لتمريرها
-    مباشرة لـAgora Web SDK (client.join(app_id, channel, token, uid)). تُبنى يدويًا
-    بطبقة الـAPI من meeting_service.MeetingJoinToken (ليس من attributes نموذج ORM،
-    فلا from_attributes هنا).
-    """
-
-    app_id: str
-    channel: str
-    token: str
-    uid: int
-    expires_at: int
-
-
 class MeetingCreateWithAttachmentsOut(BaseModel):
     """
     استجابة POST /meetings/with-attachments (2026-11-01): الاجتماع المنشأ +

@@ -59,10 +59,6 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   )
   const [activityEvents, setActivityEvents] = useState<LiveActivityEvent[]>([])
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
-  // إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
-  // كرقم بدل اسمها): يربط agora_uid (رقمي، مختلف عن user_id) باسم صاحبه
-  // الحقيقي — راجعي تعليق video_uid بـsocketio_server.py للتفصيل الكامل.
-  const [videoUidNames, setVideoUidNames] = useState<Map<string, string>>(new Map())
 
   const socketRef = useRef<Socket | null>(null)
   const queryClient = useQueryClient()
@@ -102,21 +98,6 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     socket.on('chat.message', (payload: { message: MeetingChatMessage }) => {
       setLiveMessages((prev) => [...prev, payload.message])
     })
-
-    socket.on('video.uid', (payload: { user_id: string; full_name: string; agora_uid: number }) => {
-      setVideoUidNames((prev) => new Map(prev).set(String(payload.agora_uid), payload.full_name))
-    })
-
-    socket.on(
-      'video.roster',
-      (payload: { entries: { user_id: string; full_name: string; agora_uid: number }[] }) => {
-        setVideoUidNames((prev) => {
-          const next = new Map(prev)
-          for (const entry of payload.entries) next.set(String(entry.agora_uid), entry.full_name)
-          return next
-        })
-      },
-    )
 
     socket.on('hand.raised', (payload: { user_id: string; full_name: string }) => {
       setRaisedHands((prev) =>
@@ -250,7 +231,6 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     },
     [],
   )
-  const announceAgoraUid = useCallback((agoraUid: number) => send('video.uid', { agora_uid: agoraUid }), [send])
   const raiseHand = useCallback(() => send('hand.raise'), [send])
   const lowerHand = useCallback(() => send('hand.lower'), [send])
   // إصلاح 2026-09-14 (بلاغ لاما — رئيس اللجنة يضغط "بدء المناقشة" ولا
@@ -289,11 +269,9 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     discussingAgendaItem,
     activityEvents,
     onlineUserIds,
-    videoUidNames,
     sendChatMessage,
     raiseHand,
     lowerHand,
     announceDiscussing,
-    announceAgoraUid,
   }
 }

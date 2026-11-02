@@ -18,8 +18,9 @@ db/migrations/0041_meetings_teams_integration.sql):
    بلا تخزين نسخة عندنا (قرار مؤقت حتى تحديد مدة الاحتفاظ مع الإدارة).
 
 لو التكامل غير مهيّأ بالبيئة (teams_client.is_configured() = False) تُنشأ
-الاجتماعات عن بعد بلا رابط Teams ويبقى مسار Agora القديم كما هو — بيئات
-التطوير لا تتعطل بغياب المفاتيح.
+الاجتماعات عن بعد بلا رابط Teams (لا يمكن الانضمام لها حتى تُعبَّأ المفاتيح)
+— بيئات التطوير لا تتعطل بغياب المفاتيح. Teams هو وسيلة الاجتماع عن بعد
+الوحيدة منذ إزالة Agora 2026-11-02.
 
 الاعتماديات: app.core.teams_client (Graph)، app.core.teams_transcript،
 app.core.gemini_client، وrecordings._begin_draft (تهيئة صف المسودة).
@@ -272,7 +273,7 @@ async def get_join_url(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) 
 
     المدخلات: actor (المستخدم الحالي)، meeting_id.
     المخرجات: رابط Teams.
-    الصلاحيات: meetings.join (System Role أو Committee Role — نفس الانضمام عبر Agora).
+    الصلاحيات: meetings.join (System Role أو Committee Role).
     قواعد: اجتماع remote مربوط بـTeams، ولم ينتهِ بعد.
     التأثيرات الجانبية: يسجّل started_at أول مرة + سطر تدقيق join، ثم commit.
     الأخطاء: MeetingNotFoundError، MeetingForbiddenError، MeetingInvalidStateError.

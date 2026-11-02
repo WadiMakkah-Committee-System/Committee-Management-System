@@ -8,7 +8,8 @@ import type {
   MeetingAttachment,
   MeetingAttachmentKind,
   MeetingCreatePayload,
-  MeetingJoinResponse,
+  TeamsJoinResponse,
+  TeamsRecording,
   MeetingListItem,
   MeetingUpdatePayload,
 } from '@/types'
@@ -105,24 +106,40 @@ export async function deleteMeeting(meetingId: string): Promise<void> {
 }
 
 /**
- * الانضمام لغرفة فيديو الاجتماع (Agora) — يعيد بيانات دخول قصيرة العمر
- * (token صالح AGORA_TOKEN_TTL_SECONDS فقط، راجعي config.py بالباك-إند).
- * يفشل بـ400/403/404 لو الاجتماع ليس mode='remote'، أو انتهى، أو ماعندك
- * صلاحية meetings.join — راجعي MeetingRoom.tsx لكيفية عرض هذا الخطأ.
+ * رابط الانضمام لاجتماع Microsoft Teams (GET /meetings/{id}/teams/join).
+ * الباك-إند يتحقق من meetings.join وأن الاجتماع عن بعد مربوط بتيمز ولم ينتهِ
+ * (409 غير ذلك، 403 بلا صلاحية). يُطلب عند الضغط على "الانضمام" فقط — لا
+ * يُخزَّن بالواجهة ولا يأتي ضمن تفاصيل الاجتماع.
  */
-export async function joinMeeting(meetingId: string): Promise<MeetingJoinResponse> {
-  const { data } = await apiClient.post<MeetingJoinResponse>(`/meetings/${meetingId}/join`)
+export async function getTeamsJoinUrl(meetingId: string): Promise<TeamsJoinResponse> {
+  const { data } = await apiClient.get<TeamsJoinResponse>(`/meetings/${meetingId}/teams/join`)
   return data
 }
 
 /**
- * مغادرة غرفة الفيديو — agora_uid اختياري (يحدد جلسة الحضور بالضبط لو
- * المستخدم فتح أكثر من تبويب/جهاز بنفس الوقت)، راجعي app/api/v1/meetings.py.
+ * تسجيلات Teams للاجتماع (meetings.record_audio) — قائمة فارغة لو لم يُسجَّل
+ * الاجتماع، أو انتهت مدة احتفاظ تيمز بالتسجيل.
  */
-export async function leaveMeeting(meetingId: string, agoraUid?: number): Promise<void> {
-  await apiClient.post(`/meetings/${meetingId}/leave`, null, {
-    params: agoraUid !== undefined ? { agora_uid: agoraUid } : undefined,
-  })
+export async function listTeamsRecordings(meetingId: string): Promise<TeamsRecording[]> {
+  const { data } = await apiClient.get<TeamsRecording[]>(`/meetings/${meetingId}/teams/recordings`)
+  return data
+}
+
+/**
+ * محتوى تسجيل Teams كـBlob — عبر axios (Authorization header) لا رابط مباشر،
+ * نفس نمط fetchMeetingRecordingBlob. الباك-إند يبث الملف من تيمز بلا تخزينه.
+ */
+export async function fetchTeamsRecordingBlob(
+  meetingId: string,
+  recordingId: string,
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await apiClient.get(
+    `/meetings/${meetingId}/teams/recordings/${encodeURIComponent(recordingId)}/content`,
+    { responseType: 'blob' },
+  )
+  const disposition = String(response.headers['content-disposition'] ?? '')
+  const match = /filename="?([^"]+)"?/.exec(disposition)
+  return { blob: response.data as Blob, fileName: match?.[1] ?? 'meeting-recording.mp4' }
 }
 
 export async function addAgendaItem(

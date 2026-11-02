@@ -125,11 +125,6 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
     # استعلام DB إضافي) ونرسلها لهذا الاتصال فقط (to=sid، لا بث للغرفة)
     # كصورة أولية — presence.joined يبقى كما هو لبث الانضمامات اللاحقة.
     existing_user_ids: set[str] = set()
-    # إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
-    # كرقم/معرّف غريب بدل اسمها الحقيقي، مثال ليليان): نفس منطق
-    # presence.roster أدناه بالضبط، لكن لـ"من هو صاحب أي agora_uid" —
-    # راجعي تعليق video_uid تحت لتفصيل الجذر الحقيقي للمشكلة.
-    existing_video_uids: list[dict[str, Any]] = []
     for other_sid, _eio_sid in sio.manager.get_participants("/", room):
         try:
             other_session = await sio.get_session(other_sid)
@@ -138,22 +133,13 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
         other_user: User | None = other_session.get("user")
         if other_user is not None:
             existing_user_ids.add(str(other_user.user_id))
-            other_agora_uid = other_session.get("agora_uid")
-            if other_agora_uid is not None:
-                existing_video_uids.append(
-                    {
-                        "user_id": str(other_user.user_id),
-                        "full_name": other_user.full_name,
-                        "agora_uid": other_agora_uid,
-                    }
-                )
 
     # إصلاح 2026-09-15 (تحقيق أداء لاما — تحليل.pdf، البند رقم 8): sio.enter_room
     # بـAsyncServer هو coroutine فعليًا (موثّق صراحة بمصدر python-socketio:
     # "Note: this method is a coroutine") — استدعاؤه بدون await كان يُنشئ
     # كائن coroutine ولا يُنفَّذه إطلاقًا، أي هذا الـsid لم يكن ينضم لغرفة
     # الاجتماع فعليًا رغم نجاح connect() ورجوع True. الأثر: presence.joined/
-    # chat.message/hand.raised/agenda.discussing/minutes.updated/video.uid —
+    # chat.message/hand.raised/agenda.discussing/minutes.updated —
     # كل بث لاحق عبر room=room (وكلها تمر بنفس هذا المسار) كان لا يصل أبدًا
     # لهذا الاتصال تحديدًا (بينما الرسائل المباشرة to=sid، مثل presence.roster
     # أعلاه، كانت تصل بشكل طبيعي لأنها لا تعتمد على عضوية الغرفة). الإصلاح:
@@ -162,8 +148,6 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
 
     if existing_user_ids:
         await sio.emit("presence.roster", {"user_ids": list(existing_user_ids)}, to=sid)
-    if existing_video_uids:
-        await sio.emit("video.roster", {"entries": existing_video_uids}, to=sid)
 
     await sio.emit(
         "presence.joined",
@@ -249,41 +233,6 @@ async def chat_send(sid: str, data: dict[str, Any] | None) -> dict[str, Any]:
     payload = {"message": MeetingChatMessageOut.model_validate(message).model_dump(mode="json")}
     await sio.emit("chat.message", payload, room=_room(meeting_id))
     return {"ok": True, "message": payload["message"]}
-
-
-# إصلاح 2026-09-14 (بلاغ لاما — Bug 2: اسم المشارك بمربّع الفيديو يظهر
-# كرقم غريب بدل اسمها الحقيقي): الجذر الحقيقي ليس بربط بيانات المستخدم
-# (participants يرجع أصلًا first_name/last_name كاملة — راجعي
-# schemas/meeting.py::MeetingOut.participants) بل بمكوّن الفيديو نفسه —
-# MeetingStage.tsx::nameFor يبحث بخريطة participantNames المبنية بمفتاح
-# user_id (UUID من قاعدة البيانات)، بينما المفتاح الفعلي لكل مربّع فيديو
-# بمكتبة Agora هو agora_uid (رقم عشوائي 6 خانات مُولَّد لكل جلسة انضمام —
-# راجعي meeting_service.join_meeting) — لا علاقة له بـuser_id إطلاقًا،
-# فالبحث يفشل دائمًا لأي مشارك (لا لليليان فقط)، ويظهر بدلًا منه نص
-# احتياطي "مشارك #<agora_uid>". الحل: بث ربط user_id↔agora_uid لحظيًا عبر
-# نفس قناة Socket.IO الموجودة أصلًا (بنفس نمط presence.roster/joined
-# تمامًا، بلا أي بنية جديدة) فور انضمام العميل فعليًا لقناة Agora —
-# راجعي useAgoraConnection.ts وuseMeetingRealtime.ts بالفرونت للطرف الآخر.
-@sio.on("video.uid")
-async def video_uid(sid: str, data: dict[str, Any] | None) -> None:
-    resolved = await _session_user_and_room(sid)
-    if resolved is None:
-        return
-    user, meeting_id = resolved
-    agora_uid = (data or {}).get("agora_uid")
-    if agora_uid is None:
-        return
-    try:
-        session = await sio.get_session(sid)
-    except KeyError:
-        return
-    session["agora_uid"] = agora_uid
-    await sio.save_session(sid, session)
-    await sio.emit(
-        "video.uid",
-        {"user_id": str(user.user_id), "full_name": user.full_name, "agora_uid": agora_uid},
-        room=_room(meeting_id),
-    )
 
 
 @sio.on("hand.raise")

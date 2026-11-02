@@ -7,7 +7,7 @@ from fastapi import (
     status,
 )
 
-from app.core import agora_client, storage_client, teams_client
+from app.core import storage_client, teams_client
 from app.services.meeting_minutes_service import (
     MinutesForbiddenError,
     MinutesInvalidStateError,
@@ -120,12 +120,3 @@ def _teams_error_to_http(exc: teams_client.TeamsError) -> HTTPException:
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail="تعذّر إتمام العملية مع Microsoft Teams، حاول مرة أخرى بعد قليل",
     )
-
-
-def _agora_error_to_http(exc: agora_client.AgoraError) -> HTTPException:
-    if isinstance(exc, agora_client.AgoraNotConfiguredError):
-        return HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="خدمة الاجتماعات المرئية غير مُهيّأة بعد (راجع إعدادات AGORA_* بالبيئة)",
-        )
-    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))

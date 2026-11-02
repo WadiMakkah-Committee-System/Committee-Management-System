@@ -120,8 +120,9 @@ class Meeting(Base):
     teams_join_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     teams_organizer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
-    # وقت أول/آخر حضور فعلي بغرفة Agora (db/migrations/0022) — معلوماتي بحت،
-    # منفصل تمامًا عن status (راجعي ملاحظة النطاق برأس الـmigration نفسه).
+    # started_at: أول طلب لرابط الانضمام لـTeams (teams.get_join_url)؛ ended_at:
+    # كان يُضبط عند مغادرة آخر مشارك بغرفة Agora (0022) — لم يعد يُحدَّث بعد
+    # إزالة Agora 2026-11-02 (يبقى للبيانات القديمة). معلوماتيان، منفصلان عن status.
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -176,31 +177,3 @@ class MeetingAgendaItem(Base):
     )
 
     meeting: Mapped["Meeting"] = relationship(back_populates="agenda_items")
-
-
-class MeetingAttendance(Base):
-    """
-    سطر تدقيق حضور فعلي لجلسة Agora واحدة (انضمام إلى مغادرة) — منفصل عن
-    meeting_participants (المدعوّون المخطّط لهم عند الجدولة). راجعي رأس
-    db/migrations/0022_meetings_agora_video.sql للتفصيل الكامل. لا Soft
-    Delete هنا (سجل تدقيقي بحت، بنفس فلسفة audit_logs).
-    """
-
-    __tablename__ = "meeting_attendance"
-
-    attendance_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
-    )
-    meeting_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("meetings.meeting_id", ondelete="CASCADE"), nullable=False
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
-    )
-    # uid عشوائي (32-bit آمن) يولّده meeting_service.join_meeting لكل جلسة
-    # انضمام — وليس من العميل (يمنع انتحال uid شخص آخر داخل غرفة Agora).
-    agora_uid: Mapped[int] = mapped_column(Integer, nullable=False)
-    joined_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

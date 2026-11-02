@@ -5,8 +5,10 @@ import type { MeetingDraft, MeetingRecording } from '@/types'
 /**
  * وحدة "التسجيل الصوتي + المسودة" — تقابل app/api/v1/meetings.py
  * (راجعي رأس db/migrations/0025_meeting_recordings_and_drafts.sql
- * وapp/core/gemini_client.py للتصميم الكامل). راجعي RecordingPanel.tsx
- * لطريقة الاستخدام (MediaRecorder بالمتصفح → رفع الملف الناتج هنا).
+ * وapp/core/gemini_client.py للتصميم الكامل). كان الرفع يتم من غرفة الاجتماع
+ * (MediaRecorder بالمتصفح) قبل الانتقال لتيمز 2026-11-02 — الاجتماعات عن بعد
+ * صارت تُسجَّل وتُفرَّغ داخل تيمز (api/meetings.ts: listTeamsRecordings)،
+ * ومسار الرفع هنا باقٍ للتسجيلات الصوتية السابقة وللاجتماعات الحضورية.
  */
 
 export async function uploadMeetingRecording(
