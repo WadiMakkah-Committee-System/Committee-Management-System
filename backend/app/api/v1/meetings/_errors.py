@@ -94,6 +94,11 @@ def _handle_errors(exc: Exception) -> Exception:
         return _teams_error_to_http(exc)
     if isinstance(exc, acs_client.AcsError):
         logger.warning("Azure Communication Services error: %s", exc)
+        if isinstance(exc, acs_client.AcsTeamsIdentityError):
+            return HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="تعذّر الدخول بحساب Microsoft — تأكد أنك تستخدم حساب الشركة، أو ادخل كضيف",
+            )
         if isinstance(exc, acs_client.AcsNotConfiguredError):
             return HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

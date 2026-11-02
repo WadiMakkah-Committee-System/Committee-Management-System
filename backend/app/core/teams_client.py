@@ -313,6 +313,9 @@ def _meeting_body(
     """جسم onlineMeeting المشترك بين الإنشاء والتعديل.
     lobbyBypassSettings.scope='organization': موظفو الشركة يدخلون مباشرة،
     والضيوف من خارجها ينتظرون بالـLobby حتى يُدخلهم المنظِّم/الرئيس.
+    recordAutomatically=True: التسجيل يبدأ تلقائيًا عند بداية الاجتماع —
+    لأن من يدخل من المنصة (عبر ACS) لا يقدر يبدأ التسجيل/التفريغ يدويًا،
+    والمسودة تعتمد على تفريغ Teams.
     participants=None ⇒ لا يُرسَل الحقل إطلاقًا (التعديل يُبقي المشاركين
     الحاليين كما هم) — بخلاف قائمة فارغة التي تحذفهم جميعًا."""
     body: dict = {
@@ -320,6 +323,8 @@ def _meeting_body(
         "startDateTime": _iso_utc(start),
         "endDateTime": _iso_utc(end),
         "lobbyBypassSettings": {"scope": "organization", "isDialInBypassEnabled": False},
+        "recordAutomatically": True,
+        "allowTranscription": True,
     }
     if participants is not None:
         body["participants"] = {

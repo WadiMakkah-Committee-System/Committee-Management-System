@@ -302,15 +302,18 @@ async def get_join_url(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) 
 
 
 async def get_call_token(
-    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID
-) -> tuple[acs_client.AcsToken, str, str]:
+    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, microsoft_token: str | None = None
+) -> tuple[acs_client.AcsToken, str, str, str]:
     """
     الهدف (تجربة poc/acs-teams-embed): بيانات الانضمام لاجتماع Teams **من داخل
     واجهة المنصة** عبر Azure Communication Services — بديل فتح تطبيق Teams.
 
-    المدخلات: actor (المستخدم الحالي)، meeting_id.
-    المخرجات: (توكن ACS، رابط اجتماع Teams، اسم العرض) — الواجهة تمرّرها
-    لـ@azure/communication-calling (callAgent.join({ meetingLink })).
+    المدخلات: actor (المستخدم الحالي)، meeting_id، microsoft_token (اختياري):
+    توكن Microsoft Entra لموظف سجّل دخوله بحساب الشركة من الواجهة.
+    المخرجات: (توكن ACS، رابط اجتماع Teams، اسم العرض، نوع الهوية) — نوع
+    الهوية "teams_user" (دخل بحسابه في Teams: باسمه الحقيقي وبدون Lobby،
+    والواجهة تستخدم createTeamsCallAgent) أو "guest" (هوية ACS مؤقتة كضيف،
+    والواجهة تستخدم createCallAgent).
     الصلاحيات وقواعد العمل: نفس get_join_url بالضبط (meetings.join، اجتماع
     remote مربوط بـTeams لم ينتهِ) — الرابط يُعاد هنا فقط لمن اجتاز الفحص.
     التأثيرات الجانبية: هوية ACS جديدة + started_at أول مرة + سطر تدقيق join، ثم commit.
@@ -324,7 +327,16 @@ async def get_call_token(
     if meeting.status == MeetingStatus.finished:
         raise MeetingInvalidStateError("انتهى هذا الاجتماع بالفعل")
 
-    token = await acs_client.issue_meeting_token()
+    metadata: dict[str, str] = {"provider": "teams_embedded"}
+    if microsoft_token:
+        # فحص صلاحية المنصة تم أعلاه؛ هنا ACS يتحقق من توكن Microsoft نفسه.
+        token, identity = await acs_client.issue_teams_user_token(microsoft_token)
+        identity_kind = "teams_user"
+        metadata.update(identity="teams_user", microsoft_user=identity.username)
+    else:
+        token = await acs_client.issue_meeting_token()
+        identity_kind = "guest"
+        metadata["identity"] = "guest"
     if meeting.started_at is None:
         meeting.started_at = datetime.now(UTC)
     await audit_service.log_action(
@@ -333,12 +345,12 @@ async def get_call_token(
         action_type="join",
         target_type="meeting",
         target_id=meeting.meeting_id,
-        metadata={"provider": "teams_embedded"},
+        metadata=metadata,
     )
     join_url = meeting.teams_join_url
     display_name = actor.full_name
     await db.commit()
-    return token, join_url, display_name
+    return token, join_url, display_name, identity_kind
 
 
 # ============================== التسجيلات ==============================

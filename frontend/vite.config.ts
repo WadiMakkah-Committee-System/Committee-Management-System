@@ -10,6 +10,15 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  build: {
+    rolldownOptions: {
+      // صفحتان: التطبيق نفسه + صفحة جسر تسجيل الدخول بحساب Microsoft (redirect.html).
+      input: {
+        main: path.resolve(import.meta.dirname, 'index.html'),
+        redirect: path.resolve(import.meta.dirname, 'redirect.html'),
+      },
+    },
+  },
   server: {
     host: true,
     port: 5173,

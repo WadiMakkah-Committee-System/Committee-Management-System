@@ -644,6 +644,8 @@ export interface TeamsCallTokenResponse {
   expires_on: string
   join_url: string
   display_name: string
+  /** teams_user: دخل بحساب Microsoft حق الشركة (باسمه وبدون Lobby)، guest: ضيف. */
+  identity: 'teams_user' | 'guest'
 }
 
 export interface TeamsJoinResponse {

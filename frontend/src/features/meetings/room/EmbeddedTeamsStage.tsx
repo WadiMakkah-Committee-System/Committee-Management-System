@@ -1,9 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
 import type { LocalVideoStream, RemoteVideoStream } from '@azure/communication-calling'
-import { ExternalLink, Hourglass, Info, Loader2, MicOff, MonitorUp, RotateCcw, Users, Video } from 'lucide-react'
+import {
+  ExternalLink,
+  Hourglass,
+  Info,
+  Loader2,
+  LogIn,
+  MicOff,
+  MonitorUp,
+  RotateCcw,
+  UserCheck,
+  Users,
+  Video,
+} from 'lucide-react'
 import { useTeamsJoinUrl } from '@/hooks/useMeetings'
 import { useToast } from '@/components/ui/Toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
+import {
+  getMicrosoftAccount,
+  getMicrosoftTeamsToken,
+  isMicrosoftSignInConfigured,
+  signInMicrosoft,
+  signOutMicrosoft,
+} from '@/lib/microsoftSignIn'
 import type { Meeting } from '@/types'
 import type { EmbeddedParticipant, TeamsEmbeddedCall } from './useTeamsEmbeddedCall'
 
@@ -120,11 +139,93 @@ function OpenInTeamsButton({ meetingId, subtle }: { meetingId: string; subtle?: 
 }
 
 /**
+ * حالة حساب Microsoft بهذا المتصفح داخل الغرفة.
+ * يهيّئ MSAL فور فتح الغرفة (لا عند الضغط) حتى تفتح نافذة تسجيل الدخول
+ * مباشرة من ضغطة الزر دون أن يحجبها المتصفح.
+ * المخرجات: { enabled، account (الاسم/الإيميل أو null)، setAccount }.
+ */
+function useMicrosoftAccount() {
+  const enabled = isMicrosoftSignInConfigured()
+  const [account, setAccount] = useState<{ name: string; username: string } | null>(null)
+  useEffect(() => {
+    if (!enabled) return
+    let active = true
+    getMicrosoftAccount()
+      .then((a) => {
+        if (active && a) setAccount({ name: a.name ?? a.username, username: a.username })
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [enabled])
+  return { enabled, account, setAccount }
+}
+
+/** هل الخطأ مجرد إغلاق المستخدم لنافذة تسجيل الدخول (لا نعرض رسالة خطأ). */
+function isUserCancelled(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { errorCode?: string }).errorCode === 'user_cancelled'
+}
+
+/**
+ * شريط المنتظرين بالـLobby — يظهر فقط لمن دخل بحساب Microsoft (المنظّم/الرئيس
+ * يقدر يقبلهم من داخل المنصة بدل تطبيق تيمز). فشل القبول = لا يملك الصلاحية.
+ */
+function LobbyBar({ call }: { call: TeamsEmbeddedCall }) {
+  const { showToast } = useToast()
+  const [busy, setBusy] = useState(false)
+  if (call.identity !== 'teams_user' || call.lobbyParticipants.length === 0) return null
+
+  async function handleAdmit(key?: string) {
+    setBusy(true)
+    try {
+      await call.admit(key)
+    } catch {
+      showToast('لا تملك صلاحية السماح بالدخول — يسمح بها منظّم الاجتماع أو رئيس اللجنة', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning-bg px-3 py-2 text-[13px] text-warning">
+      <Hourglass size={14} className="shrink-0" />
+      <span className="font-semibold">بانتظار السماح بالدخول ({call.lobbyParticipants.length}):</span>
+      {call.lobbyParticipants.map((p) => (
+        <button
+          key={p.key}
+          type="button"
+          disabled={busy}
+          onClick={() => void handleAdmit(p.key)}
+          className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-white transition-colors hover:bg-white/20 disabled:opacity-60"
+        >
+          <UserCheck size={12} />
+          {p.name}
+        </button>
+      ))}
+      {call.lobbyParticipants.length > 1 && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void handleAdmit()}
+          className="mr-auto rounded-full bg-brand-primary px-3 py-1 font-semibold text-white transition-all hover:brightness-110 disabled:opacity-60"
+        >
+          السماح للكل
+        </button>
+      )}
+    </div>
+  )
+}
+
+/**
  * الهدف (تجربة poc/acs-teams-embed — 2026-11-02):
  * المساحة الرئيسية بغرفة الاجتماع: فيديو اجتماع Microsoft Teams **داخل المنصة**
  * (نفس مكان فيديو Agora سابقًا) عبر Azure Communication Services.
  *
- * الحالات: قبل الانضمام (زر انضمام + بديل فتح تيمز)، جارٍ الاتصال، بانتظار
+ * الدخول: بحساب Microsoft حق الشركة (باسمه الحقيقي، بدون انتظار، والمنظّم/الرئيس
+ * يقبل الضيوف من شريط LobbyBar) أو كضيف (ينتظر حتى يُقبل).
+ *
+ * الحالات: قبل الانضمام (أزرار الدخول + بديل فتح تيمز)، جارٍ الاتصال، بانتظار
  * السماح بالدخول (Lobby)، داخل الاجتماع (بطاقة مميزة + شريط مصغّرات، ومشاركة
  * الشاشة تُعرض كبطاقة مميزة تلقائيًا)، انتهى، أو خطأ.
  *
@@ -143,6 +244,29 @@ export function EmbeddedTeamsStage({
   canRecord: boolean
 }) {
   const [pinnedKey, setPinnedKey] = useState<string>('local')
+  const microsoft = useMicrosoftAccount()
+  const [signInError, setSignInError] = useState<string | null>(null)
+
+  /** دخول بحساب Microsoft: توكن صامت للحساب المحفوظ، وإلا نافذة تسجيل دخول. */
+  async function joinWithMicrosoft() {
+    setSignInError(null)
+    try {
+      let token = microsoft.account ? await getMicrosoftTeamsToken() : null
+      if (!token) {
+        const result = await signInMicrosoft()
+        token = result.token
+        microsoft.setAccount({ name: result.account.name ?? result.account.username, username: result.account.username })
+      }
+      await call.join(token)
+    } catch (err) {
+      if (!isUserCancelled(err)) setSignInError(extractErrorMessage(err))
+    }
+  }
+
+  async function switchMicrosoftAccount() {
+    await signOutMicrosoft().catch(() => {})
+    microsoft.setAccount(null)
+  }
 
   if (call.phase === 'idle' || call.phase === 'ended' || call.phase === 'error') {
     return (
@@ -162,22 +286,57 @@ export function EmbeddedTeamsStage({
           {call.phase === 'error' && call.errorMessage && (
             <p className="max-w-md text-sm text-danger">{call.errorMessage}</p>
           )}
+          {signInError && <p className="max-w-md text-sm text-danger">{signInError}</p>}
         </div>
-        <button
-          type="button"
-          onClick={() => void call.join()}
-          className="flex h-11 items-center gap-2 rounded-full bg-brand-primary px-6 text-sm font-semibold text-white transition-all hover:brightness-110 active:scale-95"
-        >
-          {call.phase === 'idle' ? <Video size={17} /> : <RotateCcw size={17} />}
-          {call.phase === 'idle' ? 'الانضمام للاجتماع' : 'إعادة الانضمام'}
-        </button>
+        {microsoft.enabled ? (
+          <div className="flex flex-col items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => void joinWithMicrosoft()}
+              className="flex h-11 items-center gap-2 rounded-full bg-brand-primary px-6 text-sm font-semibold text-white transition-all hover:brightness-110 active:scale-95"
+            >
+              {microsoft.account ? <Video size={17} /> : <LogIn size={17} />}
+              {microsoft.account ? `الانضمام باسم ${microsoft.account.name}` : 'الدخول بحساب Microsoft'}
+            </button>
+            {microsoft.account ? (
+              <button
+                type="button"
+                onClick={() => void switchMicrosoftAccount()}
+                className="text-xs text-white/50 transition-colors hover:text-white"
+              >
+                {microsoft.account.username} — ليس أنت؟ تبديل الحساب
+              </button>
+            ) : (
+              <p className="max-w-sm text-xs text-white/50">
+                بحساب الشركة تدخل باسمك مباشرة بدون انتظار. تسجيل الدخول مرة واحدة فقط على هذا الجهاز.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => void call.join(null)}
+              className="flex items-center gap-1.5 rounded-full bg-white/10 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-white/20"
+            >
+              {call.phase === 'idle' ? <Users size={13} /> : <RotateCcw size={13} />}
+              الدخول كضيف (بدون حساب الشركة)
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void call.join()}
+            className="flex h-11 items-center gap-2 rounded-full bg-brand-primary px-6 text-sm font-semibold text-white transition-all hover:brightness-110 active:scale-95"
+          >
+            {call.phase === 'idle' ? <Video size={17} /> : <RotateCcw size={17} />}
+            {call.phase === 'idle' ? 'الانضمام للاجتماع' : 'إعادة الانضمام'}
+          </button>
+        )}
         <OpenInTeamsButton meetingId={meeting.meeting_id} subtle />
         {canRecord && (
           <div className="flex max-w-md items-start gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-right text-[12px] text-warning">
             <Info size={14} className="mt-0.5 shrink-0" />
             <span>
-              بصفتك رئيس اللجنة: التسجيل والتفريغ يُشغَّلان من <strong>تطبيق تيمز</strong> (لا يمكن تشغيلهما من داخل
-              المنصة) — بدونهما لا يمكن توليد مسودة المحضر.
+              بصفتك رئيس اللجنة: التسجيل يبدأ <strong>تلقائيًا</strong> مع بداية الاجتماع. لو ما ظهر تنبيه التفريغ
+              (Transcription)، شغّليه من <strong>تطبيق تيمز</strong> — بدونه لا يمكن توليد مسودة المحضر.
             </span>
           </div>
         )}
@@ -198,7 +357,9 @@ export function EmbeddedTeamsStage({
             <Hourglass size={28} className="text-warning" />
             <p className="text-sm text-white">في انتظار سماح منظّم الاجتماع بدخولك</p>
             <p className="max-w-sm text-xs text-white/50">
-              يدخل المشاركون بعد انضمام عضو واحد على الأقل بحساب Microsoft الخاص بالشركة، ويسمح لك بالدخول.
+              {call.identity === 'teams_user'
+                ? 'يسمح لك منظّم الاجتماع أو رئيس اللجنة بالدخول.'
+                : 'دخلت كضيف — يسمح لك بالدخول أحد أعضاء الشركة الموجودين بالاجتماع.'}
             </p>
           </>
         )}
@@ -243,6 +404,7 @@ export function EmbeddedTeamsStage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <LobbyBar call={call} />
       <div className="relative flex min-h-0 flex-1">
         {sharer?.screen ? (
           <div className="relative flex-1 overflow-hidden rounded-lg bg-black ring-1 ring-white/10">
