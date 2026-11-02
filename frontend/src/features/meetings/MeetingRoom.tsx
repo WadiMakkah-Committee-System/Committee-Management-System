@@ -17,7 +17,6 @@ import { ParticipantsPanel } from './room/panels/ParticipantsPanel'
 import { AgendaPanel } from './room/panels/AgendaPanel'
 import { DecisionsPanel } from './room/panels/DecisionsPanel'
 import { AttachmentsPanel } from './room/panels/AttachmentsPanel'
-import { ChatPanel } from './room/panels/ChatPanel'
 import { ActivityPanel } from './room/panels/ActivityPanel'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
@@ -68,19 +67,8 @@ export function MeetingRoom({
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
   const [pendingAgendaItemId, setPendingAgendaItemId] = useState<string | null>(null)
 
-  // عدد رسائل المحادثة "المُشاهَدة" — State حقيقي يُحدَّث فقط داخل معالج
-  // الحدث عند التنقل إلى لوحة "المحادثة" (انظر handleSelectPanel)، لا أثناء
-  // الـrender ولا داخل useEffect. طالما اللوحة مفتوحة، شارة "غير مقروءة"
-  // بالشريط العام مخفية أصلًا (!isActive بـMeetingRoomAppRail)، فلا حاجة
-  // لتحديث مستمر أثناء بقاء اللوحة مفتوحة — فقط عند لحظة الدخول إليها.
-  const [seenChatCount, setSeenChatCount] = useState(0)
-  const hasNewChatMessage = realtime.liveMessages.length > seenChatCount
-
   function handleSelectPanel(key: RoomPanelKey) {
     setActivePanel(key)
-    if (key === 'chat') {
-      setSeenChatCount(realtime.liveMessages.length)
-    }
   }
 
   const raisedHandUserIds = useMemo(
@@ -209,9 +197,6 @@ export function MeetingRoom({
           <div className="flex min-h-0 flex-1">
             <MeetingRoomAppRail
               onExitClick={() => setConfirmLeaveOpen(true)}
-              onChatClick={() => handleSelectPanel('chat')}
-              chatActive={activePanel === 'chat'}
-              hasUnreadChat={hasNewChatMessage}
             />
 
             <aside className="flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-border-default bg-bg-app">
@@ -251,15 +236,6 @@ export function MeetingRoom({
                 )}
                 {activePanel === 'attachments' && (
                   <AttachmentsPanel meetingId={meetingId} />
-                )}
-                {activePanel === 'chat' && (
-                  <ChatPanel
-                    meetingId={meetingId}
-                    liveMessages={realtime.liveMessages}
-                    currentUserId={currentUser?.user_id ?? ''}
-                    onSend={realtime.sendChatMessage}
-                    connectionStatus={realtime.status}
-                  />
                 )}
                 {activePanel === 'activity' && <ActivityPanel events={realtime.activityEvents} />}
               </div>

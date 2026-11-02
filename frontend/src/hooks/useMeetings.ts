@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as meetingsApi from '@/api/meetings'
-import { fetchMeetingChatMessages } from '@/api/meetingChat'
 import * as meetingRecordingApi from '@/api/meetingRecording'
 import * as meetingExtractedItemsApi from '@/api/meetingExtractedItems'
 import type {
@@ -21,7 +20,6 @@ export const meetingsKeys = {
   all: ['meetings'] as const,
   detail: (meetingId: string) => ['meetings', meetingId] as const,
   attachments: (meetingId: string) => ['meetings', meetingId, 'attachments'] as const,
-  chatHistory: (meetingId: string) => ['meetings', meetingId, 'chat-history'] as const,
   // مساحة Cache مستقلة كليًا عن meetingsKeys.detail أعلاه — قرار موثّق مع
   // لاما 2026-09-10: قسم "المحاضر" يجب ألا يعتمد على بيانات محمَّلة مسبقًا
   // من قسم "الاجتماعات" (ولا العكس) بأي شكل، حتى عبر مشاركة Cache صامتة —
@@ -29,18 +27,6 @@ export const meetingsKeys = {
   // (من قسم الاجتماعات مباشرة، أو من قسم المحاضر مباشرة). راجعي
   // useMeetingDetailForMinutes أدناه، المستخدَمة حصرًا من MeetingMinutesPage.
   minutesSectionDetail: (meetingId: string) => ['minutes-section', 'meeting', meetingId] as const,
-}
-
-/** تحميل تاريخ المحادثة مرة واحدة عند فتح لوحة "المحادثة" — الرسائل
- * الجديدة تصل بعدها عبر useMeetingRealtime (WebSocket)، لا Polling على
- * هذا الاستعلام (بلا refetchInterval عمدًا). */
-export function useMeetingChatHistory(meetingId: string | undefined) {
-  return useQuery({
-    queryKey: meetingsKeys.chatHistory(meetingId ?? ''),
-    queryFn: () => fetchMeetingChatMessages(meetingId as string),
-    enabled: !!meetingId,
-    staleTime: Infinity,
-  })
 }
 
 export function useMeetings() {
