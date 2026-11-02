@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Download,
   Gavel,
+  Lock,
   Paperclip,
   Pencil,
   Plus,
@@ -539,6 +540,7 @@ export function DecisionDetailPage() {
           <p className="mt-1 text-xs text-text-muted">
             حدِّد خيارات التصويت (موافق/غير موافق افتراضيًا، ويمكن تعديلها أو إضافة خيارات أخرى).
             علّمي "تُحسب موافقة" على أي خيار يُعتبر تأييدًا للقرار — تُستخدم لحساب الأغلبية تلقائيًا.
+            وخيار "ممتنع" يُضاف تلقائيًا لكل تصويت ولا يُحتسب ضمن الأغلبية.
           </p>
 
           <div className="mt-3 flex flex-col gap-2">
@@ -571,6 +573,21 @@ export function DecisionDetailPage() {
                 )}
               </div>
             ))}
+            {/* "ممتنع" خيار ثابت يضيفه الكود تلقائيًا عند الطرح (راجعي
+                decision_service/voting.py) — لا يُكتب ضمن optionInputs ولا
+                يصح تعديله/حذفه. عُرض هنا بصريًا فقط (2026-11-02، بعد مقارنة
+                منصات حوكمة عالمية مثل iDeals Board وLoomio اللي تعرض
+                "ممتنع" ثابتًا ضمن خيارات التصويت من البداية بدل إخفائه)
+                حتى تعرف رئيسة اللجنة أنه سيُضاف دون أن تضيفه بنفسها. */}
+            <div className="flex items-center gap-2 opacity-70">
+              <div className="flex flex-1 items-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-elevated px-3 py-2 text-sm text-text-muted">
+                <Lock size={13} className="shrink-0" />
+                ممتنع
+              </div>
+              <span className="shrink-0 rounded-xs bg-bg-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-muted">
+                يُضاف تلقائيًا
+              </span>
+            </div>
             <button
               type="button"
               onClick={addOption}
