@@ -102,6 +102,13 @@ class Settings(BaseSettings):
       TEAMS_CLIENT_SECRET: str = ""
       TEAMS_ORGANIZER_EMAIL: str = ""
 
+    # --- Azure Communication Services (تجربة: فيديو اجتماع Teams داخل واجهة
+    # المنصة نفسها — 2026-11-02، فرع poc/acs-teams-embed) ---
+    # Connection string لمورد ACS (Azure Portal → Communication Services →
+    # Keys). سر — على الباك-إند فقط؛ الواجهة تستلم توكن قصير العمر فقط.
+    # فارغ ⇒ الانضمام المدمج معطّل، ويبقى زر "فتح في تيمز" فقط.
+      ACS_CONNECTION_STRING: str = ""
+
     # --- Google Gemini (تحويل تسجيل الاجتماع الصوتي إلى مسودة —
     # meetings.record_audio/draft.summarize، migration 0025) ---
     # GEMINI_API_KEY اختياري بقيمة افتراضية فارغة (نفس نمط CLAUDE_API_KEY/

@@ -1,4 +1,4 @@
-import { Hand, LogOut, Maximize } from 'lucide-react'
+import { Hand, LogOut, Maximize, Mic, MicOff, MonitorUp, ScreenShareOff, Video, VideoOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 function ControlButton({
@@ -40,16 +40,27 @@ function ControlButton({
  * نفسه الآن، فيبقى هنا ما يخص الجلسة بنظامنا فقط: رفع اليد (يظهر للرئيس
  * بلوحة المشاركين لحظيًا)، مغادرة الغرفة، وملء الشاشة.
  *
- * المدخلات: handRaised (حالة يدي الحالية)، onToggleHand، onLeave.
+ * المدخلات: handRaised (حالة يدي الحالية)، onToggleHand، onLeave، و media
+ * (اختياري — تجربة الانضمام المدمج عبر Azure Communication Services): عند
+ * تمريره تظهر أزرار المايك والكاميرا ومشاركة الشاشة للاتصال الجاري داخل المنصة.
  */
 export function MeetingControls({
   handRaised,
   onToggleHand,
   onLeave,
+  media,
 }: {
   handRaised: boolean
   onToggleHand: () => void
   onLeave: () => void
+  media?: {
+    micMuted: boolean
+    cameraOn: boolean
+    screenSharing: boolean
+    onToggleMic: () => void
+    onToggleCamera: () => void
+    onToggleScreenShare: () => void
+  }
 }) {
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
@@ -65,6 +76,26 @@ export function MeetingControls({
         <Hand size={18} />
       </ControlButton>
 
+      {media && (
+        <>
+          <span className="mx-1 h-7 w-px bg-white/10" />
+          <ControlButton
+            onClick={media.onToggleMic}
+            active={!media.micMuted}
+            label={media.micMuted ? 'تشغيل الصوت' : 'كتم الصوت'}
+          >
+            {media.micMuted ? <MicOff size={18} /> : <Mic size={18} />}
+          </ControlButton>
+          <ControlButton
+            onClick={media.onToggleCamera}
+            active={media.cameraOn}
+            label={media.cameraOn ? 'إيقاف الكاميرا' : 'تشغيل الكاميرا'}
+          >
+            {media.cameraOn ? <Video size={18} /> : <VideoOff size={18} />}
+          </ControlButton>
+        </>
+      )}
+
       <button
         type="button"
         onClick={onLeave}
@@ -76,6 +107,15 @@ export function MeetingControls({
         مغادرة
       </button>
 
+      {media && (
+        <ControlButton
+          onClick={media.onToggleScreenShare}
+          active={media.screenSharing}
+          label={media.screenSharing ? 'إيقاف مشاركة الشاشة' : 'مشاركة الشاشة'}
+        >
+          {media.screenSharing ? <ScreenShareOff size={18} /> : <MonitorUp size={18} />}
+        </ControlButton>
+      )}
       <ControlButton onClick={toggleFullscreen} label="ملء الشاشة">
         <Maximize size={18} />
       </ControlButton>

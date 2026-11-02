@@ -21,7 +21,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.core import gemini_client, teams_client, teams_transcript
+from app.core import acs_client, gemini_client, teams_client, teams_transcript
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.meeting import Meeting
@@ -362,6 +362,36 @@ async def test_join_url_requires_permission_and_remote_teams_meeting(
 
     in_person = await client.get(f"/api/v1/meetings/{in_person_id}/teams/join", headers=ctx["chair_headers"])
     assert in_person.status_code == 409, in_person.text
+
+
+# ============================== الانضمام المدمج (ACS — تجربة) ==============================
+
+
+async def test_call_token_for_embedded_join(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user: User, fake_teams: FakeTeams, monkeypatch
+) -> None:
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+    await _grant_committee_role_permissions(["meetings.join"], slug="chair")
+    meeting_id = (await _create(client, ctx)).json()["meeting_id"]
+
+    not_configured = await client.post(f"/api/v1/meetings/{meeting_id}/teams/call-token", headers=ctx["chair_headers"])
+    assert not_configured.status_code == 503, not_configured.text
+
+    monkeypatch.setattr(settings, "ACS_CONNECTION_STRING", "endpoint=https://x/;accesskey=y")
+
+    async def fake_issue():
+        return acs_client.AcsToken(token="acs-token", user_id="8:acs:1", expires_on=datetime.now(UTC) + timedelta(hours=24))
+
+    monkeypatch.setattr(acs_client, "issue_meeting_token", fake_issue)
+    ok = await client.post(f"/api/v1/meetings/{meeting_id}/teams/call-token", headers=ctx["chair_headers"])
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert body["token"] == "acs-token"
+    assert body["join_url"] == "https://teams.example/join/MSO-1"
+    assert body["display_name"]
+
+    outsider = await client.post(f"/api/v1/meetings/{meeting_id}/teams/call-token", headers=ctx["outsider_headers"])
+    assert outsider.status_code == 403, outsider.text
 
 
 # ============================== المسودة من التفريغ ==============================

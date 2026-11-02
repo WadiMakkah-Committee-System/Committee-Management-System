@@ -8,6 +8,7 @@ import type {
   MeetingAttachment,
   MeetingAttachmentKind,
   MeetingCreatePayload,
+  TeamsCallTokenResponse,
   TeamsJoinResponse,
   TeamsRecording,
   MeetingListItem,
@@ -113,6 +114,16 @@ export async function deleteMeeting(meetingId: string): Promise<void> {
  */
 export async function getTeamsJoinUrl(meetingId: string): Promise<TeamsJoinResponse> {
   const { data } = await apiClient.get<TeamsJoinResponse>(`/meetings/${meetingId}/teams/join`)
+  return data
+}
+
+/**
+ * تجربة الانضمام المدمج (Azure Communication Services): توكن قصير العمر + رابط
+ * اجتماع Teams + اسم العرض — نفس فحوص getTeamsJoinUrl بالباك-إند (meetings.join،
+ * مربوط بتيمز، لم ينتهِ). 503 لو ACS غير مهيّأ بالخادم.
+ */
+export async function getTeamsCallToken(meetingId: string): Promise<TeamsCallTokenResponse> {
+  const { data } = await apiClient.post<TeamsCallTokenResponse>(`/meetings/${meetingId}/teams/call-token`)
   return data
 }
 
