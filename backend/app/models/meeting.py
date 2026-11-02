@@ -108,9 +108,17 @@ class Meeting(Base):
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False
     )
 
-    # محجوزان لمرحلة تكامل Microsoft Teams القادمة (mode == remote) — غير مستخدَمين بعد.
+    # تكامل Microsoft Teams (db/migrations/0041_meetings_teams_integration.sql):
+    # تُعبَّأ الثلاثة معًا لاجتماع remote فقط، أو تبقى فارغة معًا (CHECK
+    # chk_meetings_teams_fields_together + chk_meetings_teams_only_remote).
+    # teams_meeting_id: معرّف onlineMeeting بـGraph (فريد — uq_meetings_teams_meeting_id).
+    # teams_join_url: رابط الانضمام — يُعرض للمشاركين فقط (فحص بالباك-إند).
+    # teams_organizer_id: Object ID بـEntra لحساب المنظِّم وقت الإنشاء — كل
+    # استدعاءات Graph اللاحقة لهذا الاجتماع تمر عبره، حتى لو تغيّر
+    # TEAMS_ORGANIZER_EMAIL بالبيئة لاحقًا.
     teams_meeting_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     teams_join_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teams_organizer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     # وقت أول/آخر حضور فعلي بغرفة Agora (db/migrations/0022) — معلوماتي بحت،
     # منفصل تمامًا عن status (راجعي ملاحظة النطاق برأس الـmigration نفسه).

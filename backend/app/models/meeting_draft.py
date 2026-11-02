@@ -58,6 +58,17 @@ class MeetingDraftStatus(str, enum.Enum):
     failed = "failed"
 
 
+class MeetingDraftSource(str, enum.Enum):
+    """مصدر المسودة (db/migrations/0041_meetings_teams_integration.sql):
+    audio_upload = تسجيل صوتي مرفوع من المتصفح (اجتماع حضوري، recording_id
+    إلزامي)؛ teams_transcript = تفريغ Teams الرسمي (اجتماع عن بعد،
+    recording_id فارغ) — العلاقة مفروضة بقاعدة البيانات عبر CHECK
+    chk_meeting_drafts_source_recording."""
+
+    audio_upload = "audio_upload"
+    teams_transcript = "teams_transcript"
+
+
 class MeetingDraft(Base):
     __tablename__ = "meeting_drafts"
 
@@ -67,8 +78,14 @@ class MeetingDraft(Base):
     meeting_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("meetings.meeting_id"), nullable=False, unique=True
     )
-    recording_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("meeting_recordings.recording_id"), nullable=False
+    # اختياري منذ 0041 — إلزامي فقط لو source=audio_upload (راجعي MeetingDraftSource).
+    recording_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meeting_recordings.recording_id"), nullable=True
+    )
+    source: Mapped[MeetingDraftSource] = mapped_column(
+        SAEnum(MeetingDraftSource, name="meeting_draft_source", native_enum=True),
+        nullable=False,
+        server_default=MeetingDraftSource.audio_upload.value,
     )
 
     status: Mapped[MeetingDraftStatus] = mapped_column(
@@ -102,5 +119,5 @@ class MeetingDraft(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    recording: Mapped["MeetingRecording"] = relationship(lazy="selectin")
+    recording: Mapped["MeetingRecording | None"] = relationship(lazy="selectin")
     generator: Mapped["User"] = relationship(lazy="selectin")  # noqa: F821
