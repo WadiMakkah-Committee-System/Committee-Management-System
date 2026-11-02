@@ -119,3 +119,32 @@ export function useReassignTask() {
     onSuccess: (_data, variables) => invalidateTaskQueries(queryClient, variables.taskId),
   })
 }
+
+/** مرفقات المهمة — راجعي task_service.attachments بالباك-إند. */
+export function useTaskAttachments(taskId: string | undefined) {
+  return useQuery({
+    queryKey: ['tasks', taskId, 'attachments'],
+    queryFn: () => tasksApi.fetchTaskAttachments(taskId as string),
+    enabled: !!taskId,
+  })
+}
+
+export function useUploadTaskAttachment() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, file }: { taskId: string; file: File }) =>
+      tasksApi.uploadTaskAttachment(taskId, file),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId, 'attachments'] }),
+  })
+}
+
+export function useDeleteTaskAttachment() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, documentId }: { taskId: string; documentId: string }) =>
+      tasksApi.deleteTaskAttachment(taskId, documentId),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: ['tasks', variables.taskId, 'attachments'] }),
+  })
+}

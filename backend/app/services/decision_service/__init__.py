@@ -59,6 +59,11 @@ Decision وحدها — just_rejected=True فقط إذا هذا الاستدعا
 يعمل كما هو — كل الأسماء العامة مُعاد تصديرها هنا.
 """
 
+from app.services.decision_service.attachments import (
+    add_attachment,
+    get_attachment_download,
+    list_attachments,
+)
 from app.services.decision_service.crud import (
     create_decision,
     delete_decision,
@@ -79,11 +84,14 @@ __all__ = [
     "DecisionInvalidStateError",
     "DecisionNotFoundError",
     "DecisionValidationError",
+    "add_attachment",
     "approve_decision",
     "cast_vote",
     "create_decision",
     "delete_decision",
+    "get_attachment_download",
     "get_decision",
+    "list_attachments",
     "list_decisions",
     "open_voting",
     "update_decision",

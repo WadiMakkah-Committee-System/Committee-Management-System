@@ -13,7 +13,14 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useCommittees } from '@/hooks/useCommittees'
-import { useCreateTask, useDeleteTask, usePrefetchTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
+import {
+  useCreateTask,
+  useDeleteTask,
+  usePrefetchTask,
+  useTasks,
+  useUpdateTask,
+  useUploadTaskAttachment,
+} from '@/hooks/useTasks'
 import { useAuthStore } from '@/store/authStore'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -87,6 +94,7 @@ export function TasksPage() {
   const createMutation = useCreateTask()
   const updateMutation = useUpdateTask()
   const deleteMutation = useDeleteTask()
+  const uploadAttachmentMutation = useUploadTaskAttachment()
   const { showToast } = useToast()
 
   const [search, setSearch] = useState('')
@@ -181,9 +189,17 @@ export function TasksPage() {
 
   function handleCreate(values: TaskFormSubmitValues) {
     setFormError(null)
-    createMutation.mutate(values, {
-      onSuccess: (created) => {
+    const { attachmentFile, ...payload } = values
+    createMutation.mutate(payload, {
+      onSuccess: async (created) => {
         setFormOpen(false)
+        if (attachmentFile) {
+          try {
+            await uploadAttachmentMutation.mutateAsync({ taskId: created.task_id, file: attachmentFile })
+          } catch (err) {
+            showToast(`تم إنشاء المهمة، لكن تعذّر رفع المرفق: ${extractErrorMessage(err)}`, 'error')
+          }
+        }
         showToast('تم إنشاء المهمة بنجاح', 'success')
         navigate(`/tasks/${created.task_id}`)
       },

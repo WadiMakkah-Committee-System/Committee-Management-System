@@ -1,6 +1,7 @@
 import { apiClient } from '@/lib/apiClient'
 import type {
   Decision,
+  DecisionAttachment,
   DecisionCreatePayload,
   DecisionOpenVotingPayload,
   DecisionUpdatePayload,
@@ -51,9 +52,15 @@ export async function openVoting(
   return data
 }
 
-export async function castVote(decisionId: string, optionId: string): Promise<Decision> {
+/** reason إلزامي فقط عند اختيار خيار "ممتنع" الثابت (option.is_abstain) — يُتحقَّق منه بالباك-إند. */
+export async function castVote(
+  decisionId: string,
+  optionId: string,
+  reason?: string,
+): Promise<Decision> {
   const { data } = await apiClient.post<Decision>(`/decisions/${decisionId}/vote`, {
     option_id: optionId,
+    reason: reason ?? null,
   })
   return data
 }
@@ -61,4 +68,41 @@ export async function castVote(decisionId: string, optionId: string): Promise<De
 export async function approveDecision(decisionId: string): Promise<Decision> {
   const { data } = await apiClient.post<Decision>(`/decisions/${decisionId}/approve`)
   return data
+}
+
+/**
+ * مرفق اختياري بالقرار (طلب صاحبة المشروع 2026-11-01) — رئيسة اللجنة
+ * عادةً فور الإنشاء. نفس نمط مرفقات الاجتماعات تمامًا (multipart، وتحميل
+ * عبر Blob لأن التنزيل يتطلب Authorization Bearer بالـheader).
+ */
+export async function fetchDecisionAttachments(decisionId: string): Promise<DecisionAttachment[]> {
+  const { data } = await apiClient.get<DecisionAttachment[]>(`/decisions/${decisionId}/attachments`)
+  return data
+}
+
+export async function uploadDecisionAttachment(
+  decisionId: string,
+  file: File,
+): Promise<DecisionAttachment> {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await apiClient.post<DecisionAttachment>(
+    `/decisions/${decisionId}/attachments`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )
+  return data
+}
+
+export async function fetchDecisionAttachmentBlob(
+  decisionId: string,
+  documentId: string,
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await apiClient.get(
+    `/decisions/${decisionId}/attachments/${documentId}/download`,
+    { responseType: 'blob' },
+  )
+  const disposition = String(response.headers['content-disposition'] ?? '')
+  const match = /filename="?([^"]+)"?/.exec(disposition)
+  return { blob: response.data as Blob, fileName: match?.[1] ?? 'attachment' }
 }

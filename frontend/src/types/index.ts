@@ -928,6 +928,8 @@ export interface DecisionVoteOption {
   option_id: string
   label: string
   is_approving: boolean
+  /** خيار "ممتنع" الثابت — يضيفه الباك-إند تلقائيًا لكل تصويت، وليس من كتابة رئيسة اللجنة. */
+  is_abstain: boolean
   sort_order: number
 }
 
@@ -940,6 +942,8 @@ export interface DecisionVoteOptionInput {
 export interface DecisionVote {
   voter: CommitteeMemberUser
   option: DecisionVoteOption
+  /** سبب الامتناع — يصل فقط لرئيسة اللجنة أو صاحب الصوت نفسه، وإلا null دائمًا. */
+  reason: string | null
   voted_at: string
 }
 
@@ -961,6 +965,8 @@ export interface Decision {
   assignees: CommitteeMemberUser[]
   vote_options: DecisionVoteOption[]
   votes: DecisionVote[]
+  /** من لم يصوّت بعد — لرئيسة اللجنة فقط، وإلا [] دائمًا. */
+  non_voters: CommitteeMemberUser[]
   created_at: string
   updated_at: string
 }
@@ -986,6 +992,17 @@ export interface DecisionUpdatePayload {
 export interface DecisionOpenVotingPayload {
   options: DecisionVoteOptionInput[]
   voting_deadline?: string | null
+}
+
+/** مرفق اختياري بقرار — بنفس نمط MeetingAttachment تمامًا، بلا kind (نوع واحد فقط). */
+export interface DecisionAttachment {
+  document_id: string
+  title: string
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  uploaded_by: CommitteeMemberUser
+  linked_at: string
 }
 
 /**
@@ -1048,6 +1065,17 @@ export interface TaskStatusUpdatePayload {
 
 export interface TaskReassignPayload {
   assignee_user_id: string
+}
+
+/** مرفق اختياري بمهمة — رئيسة اللجنة عند الإنشاء، أو المسؤول لاحقًا (يرفع/يعدّل/يحذف). */
+export interface TaskAttachment {
+  document_id: string
+  title: string
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  uploaded_by: CommitteeMemberUser
+  linked_at: string
 }
 
 /** سطر واحد بمسار المهمة الموحَّد (إعادة إسناد + تغييرات حالة/أولوية/بيانات) — مطابق لـ TaskActivityEntry بالباك-إند. */

@@ -85,6 +85,10 @@ class DecisionVoteCast(BaseModel):
     """التصويت لخيار محدَّد من خيارات هذا القرار تحديدًا (يُتحقَّق منه بطبقة الخدمة)."""
 
     option_id: uuid.UUID
+    # إلزامي فقط عند اختيار خيار "ممتنع" الثابت (is_abstain) — يُتحقَّق
+    # منه بطبقة الخدمة (decision_service.voting.cast_vote)، ويُتجاهل
+    # (يُخزَّن None) لأي خيار آخر.
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class DecisionVoteOptionOut(BaseModel):
@@ -93,6 +97,7 @@ class DecisionVoteOptionOut(BaseModel):
     option_id: uuid.UUID
     label: str
     is_approving: bool
+    is_abstain: bool
     sort_order: int
 
 
@@ -101,6 +106,9 @@ class DecisionVoteOut(BaseModel):
 
     voter: CommitteeMemberUserOut
     option: DecisionVoteOptionOut
+    # مقيَّد برئيسة اللجنة أو صاحب الصوت نفسه فقط — راجعي
+    # decision_service.access._redact_votes_if_unauthorized.
+    reason: str | None
     voted_at: datetime
 
 
@@ -123,5 +131,24 @@ class DecisionOut(BaseModel):
     assignees: list[CommitteeMemberUserOut]
     vote_options: list[DecisionVoteOptionOut]
     votes: list[DecisionVoteOut]
+    # من لم يصوّت بعد من أعضاء اللجنة (ورئيسها) — لرئيسة اللجنة فقط، وإلا
+    # [] دائمًا (راجعي access._redact_votes_if_unauthorized).
+    non_voters: list[CommitteeMemberUserOut] = []
     created_at: datetime
     updated_at: datetime
+
+
+class DecisionAttachmentOut(BaseModel):
+    """
+    ملف مرفق اختياري بقرار (تجميعة من Document + document_links، بنفس
+    نمط MeetingAttachmentOut بوحدة الاجتماعات بالضبط) — رئيسة اللجنة فقط
+    ترفقه، عادةً عند الإنشاء (راجعي decision_service.attachments).
+    """
+
+    document_id: uuid.UUID
+    title: str
+    file_name: str
+    mime_type: str
+    file_size_bytes: int
+    uploaded_by: CommitteeMemberUserOut
+    linked_at: datetime

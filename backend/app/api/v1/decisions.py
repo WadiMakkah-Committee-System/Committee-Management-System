@@ -6,7 +6,7 @@ app/services/decision_service.py للتفويض والاجتهادات المو�
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background import run_detached
@@ -14,7 +14,9 @@ from app.core.committee_period import CommitteePeriodError
 from app.core.dependencies import CurrentUser
 from app.core.socketio_server import sio
 from app.db.session import get_db, writes_on_read
+from app.schemas.committee import CommitteeMemberUserOut
 from app.schemas.decision import (
+    DecisionAttachmentOut,
     DecisionCreate,
     DecisionOpenVoting,
     DecisionOut,
@@ -200,7 +202,11 @@ async def cast_vote(
 ) -> DecisionOut:
     try:
         decision, just_rejected = await decision_service.cast_vote(
-            db, actor=current_user, decision_id=decision_id, option_id=payload.option_id
+            db,
+            actor=current_user,
+            decision_id=decision_id,
+            option_id=payload.option_id,
+            reason=payload.reason,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
@@ -225,3 +231,81 @@ async def approve_decision(
         notification_service.notify_decision_approved(decision, actor_user_id=current_user.user_id)
     )
     return DecisionOut.model_validate(decision)
+
+
+def _attachment_out(document, linked_at) -> DecisionAttachmentOut:
+    return DecisionAttachmentOut(
+        document_id=document.document_id,
+        title=document.title,
+        file_name=document.file_name,
+        mime_type=document.mime_type,
+        file_size_bytes=document.file_size_bytes,
+        uploaded_by=CommitteeMemberUserOut.model_validate(document.uploader),
+        linked_at=linked_at,
+    )
+
+
+@router.post(
+    "/{decision_id}/attachments",
+    response_model=DecisionAttachmentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_decision_attachment(
+    decision_id: uuid.UUID,
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> DecisionAttachmentOut:
+    """
+    مرفق اختياري بالقرار (طلب صاحبة المشروع 2026-11-01) — رئيسة اللجنة
+    عادةً، فور إنشاء القرار من الفرونت-إند (استدعاء منفصل، نفس نمط مرفقات
+    الاجتماعات). multipart/form-data لأن الملف يمر عبر الـBackend إلى
+    Supabase Storage.
+    """
+    content = await file.read()
+    try:
+        document, linked_at = await decision_service.add_attachment(
+            db,
+            actor=current_user,
+            decision_id=decision_id,
+            title=file.filename or "بدون عنوان",
+            file_name=file.filename or "unnamed",
+            mime_type=file.content_type or "application/octet-stream",
+            content=content,
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _attachment_out(document, linked_at)
+
+
+@router.get("/{decision_id}/attachments", response_model=list[DecisionAttachmentOut])
+async def list_decision_attachments(
+    decision_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> list[DecisionAttachmentOut]:
+    try:
+        rows = await decision_service.list_attachments(db, actor=current_user, decision_id=decision_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return [_attachment_out(document, linked_at) for document, linked_at in rows]
+
+
+@router.get("/{decision_id}/attachments/{document_id}/download")
+async def download_decision_attachment(
+    decision_id: uuid.UUID,
+    document_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        document, content = await decision_service.get_attachment_download(
+            db, actor=current_user, decision_id=decision_id, document_id=document_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return Response(
+        content=content,
+        media_type=document.mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{document.file_name}"'},
+    )

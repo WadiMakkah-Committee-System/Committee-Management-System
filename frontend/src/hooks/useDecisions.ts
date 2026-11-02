@@ -116,12 +116,20 @@ export function useOpenVoting() {
 export function useCastVote() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ decisionId, optionId }: { decisionId: string; optionId: string }) =>
-      decisionsApi.castVote(decisionId, optionId),
+    mutationFn: ({
+      decisionId,
+      optionId,
+      reason,
+    }: {
+      decisionId: string
+      optionId: string
+      /** إلزامي فقط عند اختيار خيار "ممتنع" الثابت (option.is_abstain). */
+      reason?: string
+    }) => decisionsApi.castVote(decisionId, optionId, reason),
     // تحديث متفائل: صوت المستخدم الحالي يظهر على الخيار المختار فورًا (يستبدل
     // صوته السابق إن وُجد) — بالتفاصيل وبكل القوائم (منها لوحة القرارات
     // داخل غرفة الاجتماع).
-    onMutate: ({ decisionId, optionId }) => {
+    onMutate: ({ decisionId, optionId, reason }) => {
       const me = useAuthStore.getState().user
       if (!me) return undefined
       return applyOptimistic(queryClient, [
@@ -143,7 +151,7 @@ export function useCastVote() {
                 ...d,
                 votes: [
                   ...d.votes.filter((v) => v.voter.user_id !== me.user_id),
-                  { voter, option, voted_at: new Date().toISOString() },
+                  { voter, option, reason: reason ?? null, voted_at: new Date().toISOString() },
                 ],
               }
             },
@@ -167,5 +175,24 @@ export function useApproveDecision() {
   return useMutation({
     mutationFn: (decisionId: string) => decisionsApi.approveDecision(decisionId),
     onSuccess: (_data, decisionId) => invalidateDecisionQueries(queryClient, decisionId),
+  })
+}
+
+/** مرفقات القرار — راجعي decision_service.attachments بالباك-إند. */
+export function useDecisionAttachments(decisionId: string | undefined) {
+  return useQuery({
+    queryKey: ['decisions', decisionId, 'attachments'],
+    queryFn: () => decisionsApi.fetchDecisionAttachments(decisionId as string),
+    enabled: !!decisionId,
+  })
+}
+
+export function useUploadDecisionAttachment() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ decisionId, file }: { decisionId: string; file: File }) =>
+      decisionsApi.uploadDecisionAttachment(decisionId, file),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: ['decisions', variables.decisionId, 'attachments'] }),
   })
 }

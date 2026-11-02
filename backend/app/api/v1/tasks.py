@@ -6,15 +6,17 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background import run_detached
 from app.core.committee_period import CommitteePeriodError
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
+from app.schemas.committee import CommitteeMemberUserOut
 from app.schemas.task import (
     TaskActivityEntry,
+    TaskAttachmentOut,
     TaskCreate,
     TaskOut,
     TaskReassign,
@@ -177,3 +179,98 @@ async def reassign_task(
         notification_service.notify_task_reassigned(task, actor_user_id=current_user.user_id)
     )
     return TaskOut.model_validate(task)
+
+
+def _attachment_out(document, linked_at) -> TaskAttachmentOut:
+    return TaskAttachmentOut(
+        document_id=document.document_id,
+        title=document.title,
+        file_name=document.file_name,
+        mime_type=document.mime_type,
+        file_size_bytes=document.file_size_bytes,
+        uploaded_by=CommitteeMemberUserOut.model_validate(document.uploader),
+        linked_at=linked_at,
+    )
+
+
+@router.post(
+    "/{task_id}/attachments",
+    response_model=TaskAttachmentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_task_attachment(
+    task_id: uuid.UUID,
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> TaskAttachmentOut:
+    """
+    مرفق اختياري بالمهمة (طلب صاحبة المشروع 2026-11-01) — رئيسة اللجنة
+    عند الإنشاء عادةً (استدعاء منفصل بعد POST /tasks، نفس نمط مرفقات
+    الاجتماعات)، أو المسؤول عن المهمة لاحقًا (يقدر يرفع أكثر من ملف).
+    multipart/form-data لأن الملف يمر عبر الـBackend إلى Supabase Storage.
+    """
+    content = await file.read()
+    try:
+        document, linked_at = await task_service.add_attachment(
+            db,
+            actor=current_user,
+            task_id=task_id,
+            title=file.filename or "بدون عنوان",
+            file_name=file.filename or "unnamed",
+            mime_type=file.content_type or "application/octet-stream",
+            content=content,
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return _attachment_out(document, linked_at)
+
+
+@router.get("/{task_id}/attachments", response_model=list[TaskAttachmentOut])
+async def list_task_attachments(
+    task_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> list[TaskAttachmentOut]:
+    try:
+        rows = await task_service.list_attachments(db, actor=current_user, task_id=task_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return [_attachment_out(document, linked_at) for document, linked_at in rows]
+
+
+@router.get("/{task_id}/attachments/{document_id}/download")
+async def download_task_attachment(
+    task_id: uuid.UUID,
+    document_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    try:
+        document, content = await task_service.get_attachment_download(
+            db, actor=current_user, task_id=task_id, document_id=document_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return Response(
+        content=content,
+        media_type=document.mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{document.file_name}"'},
+    )
+
+
+@router.delete(
+    "/{task_id}/attachments/{document_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_task_attachment(
+    task_id: uuid.UUID,
+    document_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        await task_service.delete_attachment(
+            db, actor=current_user, task_id=task_id, document_id=document_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc

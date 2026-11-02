@@ -36,6 +36,8 @@ from app.services.decision_service.loading import load_decision
 
 _REJECTION_REASON_NO_MAJORITY = "لم تتحقق نسبة الأغلبية المطلوبة (الخيارات المعلَّمة كموافقة لا تتجاوز 50% من الأصوات المسجّلة)"
 
+_ABSTAIN_LABEL = "ممتنع"  # راجعي رأس migration 0040 — نص الخيار الثابت المحجوز.
+
 
 # ============================== إغلاق التصويت (كسلي) ==============================
 
@@ -70,7 +72,13 @@ def _maybe_close_voting(decision: Decision, committee: Committee) -> bool:
 
     has_approving_option = any(opt.is_approving for opt in decision.vote_options)
     if has_approving_option:
-        total = len(votes_by_user)
+        # إضافة 2026-11-01 (خيار "ممتنع" الثابت): أصوات الامتناع لا تُحتسب
+        # بمقام نسبة الأغلبية أصلًا — معيار حوكمة شائع (الامتناع ≠ رفض،
+        # ولا ≠ موافقة، بل غير محتسَب إطلاقًا). لا تزال "ممتنع" تُحسب ضمن
+        # all_voted أعلاه (شارك فعليًا)، لكنها تُستبعد هنا فقط من حساب
+        # النسبة. لو امتنع الجميع: total=0 فتبقى majority_achieved=False
+        # (نفس مسار "لم تتحقق الأغلبية" العادي، بلا رسالة خاصة إضافية).
+        total = sum(1 for v in votes_by_user.values() if not v.option.is_abstain)
         approve_count = sum(1 for v in votes_by_user.values() if v.option.is_approving)
         majority_achieved = total > 0 and (approve_count / total) > 0.5
         if not majority_achieved:
@@ -116,6 +124,10 @@ async def open_voting(
     labels = [opt["label"].strip() for opt in options]
     if len(labels) != len(set(labels)):
         raise DecisionValidationError("لا يمكن تكرار نفس نص الخيار أكثر من مرة")
+    if _ABSTAIN_LABEL in labels:
+        # "ممتنع" خيار ثابت يضيفه الكود تلقائيًا (أدناه) — لا داعي ولا
+        # يصح أن تكتبه رئيسة اللجنة بنفسها ضمن options (تعارض/تكرار).
+        raise DecisionValidationError('"ممتنع" خيار ثابت يُضاف تلقائيًا — لا تكتبيه ضمن الخيارات')
 
     decision.status = DecisionStatus.voting
     decision.voting_opened_at = datetime.now(UTC)
@@ -128,6 +140,13 @@ async def open_voting(
         )
         for index, opt in enumerate(options)
     ]
+    # خيار "ممتنع" ثابت — يُضاف تلقائيًا لكل تصويت (طلب صاحبة المشروع
+    # 2026-11-01)، آخر الخيارات ترتيبًا دائمًا. is_approving=false دومًا
+    # (لا يُحتسب موافقة)، ومستبعد من مقام الأغلبية أصلًا (راجعي
+    # _maybe_close_voting أعلاه).
+    decision.vote_options.append(
+        DecisionVoteOption(label=_ABSTAIN_LABEL, is_approving=False, is_abstain=True, sort_order=len(options))
+    )
 
     await audit_service.log_action(
         db,
@@ -145,7 +164,7 @@ async def open_voting(
 
 
 async def cast_vote(
-    db: AsyncSession, *, actor: User, decision_id: uuid.UUID, option_id: uuid.UUID
+    db: AsyncSession, *, actor: User, decision_id: uuid.UUID, option_id: uuid.UUID, reason: str | None = None
 ) -> tuple[Decision, bool]:
     """
     FR-010: تصويت عضو اللجنة (بمن فيه رئيسها) لخيار محدَّد من خيارات هذا
@@ -168,15 +187,30 @@ async def cast_vote(
     if decision.status != DecisionStatus.voting or decision.voting_closed_at is not None:
         raise DecisionInvalidStateError("التصويت على هذا القرار مغلق حاليًا")
 
-    if not any(opt.option_id == option_id for opt in decision.vote_options):
+    chosen_option = next((opt for opt in decision.vote_options if opt.option_id == option_id), None)
+    if chosen_option is None:
         raise DecisionValidationError("هذا الخيار غير موجود ضمن خيارات هذا القرار")
+
+    # سبب الامتناع إلزامي فقط لخيار "ممتنع" الثابت (راجعي رأس migration
+    # 0040) — يُتجاهل (يُخزَّن None) لأي خيار آخر حتى لو أُرسل بالخطأ.
+    if chosen_option.is_abstain:
+        reason = (reason or "").strip() or None
+        if reason is None:
+            raise DecisionValidationError("ذكر سبب الامتناع إلزامي عند اختيار هذا الخيار")
+    else:
+        reason = None
 
     existing = next((v for v in decision.votes if v.user_id == actor.user_id), None)
     if existing is not None:
         existing.option_id = option_id
+        existing.reason = reason
         existing.voted_at = datetime.now(UTC)
     else:
-        db.add(DecisionVote(decision_id=decision_id, user_id=actor.user_id, option_id=option_id))
+        db.add(
+            DecisionVote(
+                decision_id=decision_id, user_id=actor.user_id, option_id=option_id, reason=reason
+            )
+        )
     # إعادة تحميل واحدة بعد flush (في الحالتين) تكفي: الأصوات بخياراتها
     # الحالية جاهزة لحساب الإغلاق وللاستجابة معًا — كانت إعادة تحميل ثانية
     # بعد commit لنفس البيانات (تحسين أداء 2026-10-24). تغيير خيار صوت

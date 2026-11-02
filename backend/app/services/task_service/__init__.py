@@ -41,6 +41,12 @@ committee.chair_user_id == actor.user_id مباشرة، وليس من قائمة
 """
 
 from app.services.task_service.activity import get_task_activity
+from app.services.task_service.attachments import (
+    add_attachment,
+    delete_attachment,
+    get_attachment_download,
+    list_attachments,
+)
 from app.services.task_service.crud import (
     create_task,
     delete_task,
@@ -61,10 +67,14 @@ __all__ = [
     "TaskInvalidStateError",
     "TaskNotFoundError",
     "TaskValidationError",
+    "add_attachment",
     "create_task",
+    "delete_attachment",
     "delete_task",
+    "get_attachment_download",
     "get_task",
     "get_task_activity",
+    "list_attachments",
     "list_tasks",
     "reassign_task",
     "update_status",
