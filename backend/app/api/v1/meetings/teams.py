@@ -1,0 +1,87 @@
+"""
+راوتات تكامل Microsoft Teams للاجتماعات عن بعد (migration 0041) — راجعي
+رأس app/services/meeting_service/teams.py لقواعد العمل كاملة.
+
+كل التفويض داخل طبقة الخدمة (نفس نمط بقية راوتات الاجتماعات): الصلاحية
+مرتبطة بلجنة الاجتماع تحديدًا (System Role أو Committee Role).
+"""
+
+import uuid
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.dependencies import CurrentUser
+from app.db.session import get_db
+from app.schemas.meeting import TeamsJoinOut, TeamsRecordingOut
+from app.services import meeting_service
+
+from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
+
+router = APIRouter(prefix="/meetings", tags=["meetings"])
+
+
+@router.get("/{meeting_id}/teams/join", response_model=TeamsJoinOut)
+async def get_teams_join_url(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> TeamsJoinOut:
+    """
+    رابط الانضمام لاجتماع Teams.
+
+    - Authentication: JWT إلزامي.
+    - Authorization: meetings.join على لجنة الاجتماع.
+    - 200: {join_url}.
+    - 403: لا يملك الصلاحية. 404: الاجتماع غير موجود.
+    - 409: اجتماع حضوري، أو غير مربوط بـTeams، أو انتهى.
+    """
+    try:
+        join_url = await meeting_service.get_teams_join_url(db, actor=current_user, meeting_id=meeting_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return TeamsJoinOut(join_url=join_url)
+
+
+@router.get("/{meeting_id}/teams/recordings", response_model=list[TeamsRecordingOut])
+async def list_teams_recordings(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[TeamsRecordingOut]:
+    """
+    قائمة تسجيلات Teams للاجتماع (مرتبة زمنيًا).
+
+    - Authorization: meetings.record_audio على لجنة الاجتماع.
+    - 200: قائمة (قد تكون فارغة: لم يُسجَّل، أو انتهت مدة احتفاظ Teams).
+    - 403 / 404 / 409 كما أعلاه. 502: فشل Microsoft Graph. 503: التكامل غير مهيّأ.
+    """
+    try:
+        recordings = await meeting_service.list_teams_recordings(db, actor=current_user, meeting_id=meeting_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return [TeamsRecordingOut(recording_id=r.artifact_id, created_at=r.created_at) for r in recordings]
+
+
+@router.get("/{meeting_id}/teams/recordings/{recording_id}/content")
+async def download_teams_recording(
+    meeting_id: uuid.UUID,
+    recording_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """
+    محتوى تسجيل Teams — يُبث عبر الباك-إند تدريجيًا (بلا تخزين نسخة عندنا،
+    وبلا تحميل الملف كاملًا بالذاكرة).
+
+    - Authorization: meetings.record_audio على لجنة الاجتماع.
+    - 200: الملف (video/mp4 عادة).
+    - 404: التسجيل غير موجود لهذا الاجتماع في Teams. بقية الرموز كما أعلاه.
+    """
+    try:
+        stream = await meeting_service.open_teams_recording(
+            db, actor=current_user, meeting_id=meeting_id, recording_id=recording_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    headers = {"Content-Disposition": f'attachment; filename="meeting-{meeting_id}.mp4"'}
+    if stream.content_length:
+        headers["Content-Length"] = stream.content_length
+    return StreamingResponse(stream.chunks, media_type=stream.content_type, headers=headers)

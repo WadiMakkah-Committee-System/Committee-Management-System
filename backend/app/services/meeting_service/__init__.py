@@ -48,6 +48,9 @@ Role (own/department/all، من دور المستخدم العام) **أو** ص�
 - attachments.py      المرفقات.
 - recordings.py       التسجيل الصوتي + مسودة الذكاء الاصطناعي.
 - extracted_items.py  البنود المستخرجة → مهام/قرارات.
+- teams.py            تكامل Microsoft Teams (migration 0041): مزامنة اجتماع
+                      Teams مع الإنشاء/التعديل/الحذف، رابط الانضمام، التسجيلات،
+                      والمسودة من التفريغ الرسمي.
 
 مسار الاستيراد لم يتغيّر: app.services.meeting_service.<الدالة> يعمل كما
 كان لكل الدوال والاستثناءات العامة (هذا الملف يعيد تصديرها).
@@ -91,6 +94,9 @@ from app.services.meeting_service.extracted_items import (
     list_extracted_items,
 )
 from app.services.meeting_service.loading import sync_meeting_status
+from app.services.meeting_service.teams import get_join_url as get_teams_join_url
+from app.services.meeting_service.teams import list_recordings as list_teams_recordings
+from app.services.meeting_service.teams import open_recording as open_teams_recording
 from app.services.meeting_service.recordings import (
     download_recording,
     generate_draft,
@@ -128,6 +134,9 @@ __all__ = [
     "get_draft",
     "extend_meeting",
     "get_latest_recording",
+    "get_teams_join_url",
+    "list_teams_recordings",
+    "open_teams_recording",
     "get_meeting",
     "join_meeting",
     "leave_meeting",

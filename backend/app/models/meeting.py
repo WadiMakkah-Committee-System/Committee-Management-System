@@ -149,6 +149,11 @@ class Meeting(Base):
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
 
+    @property
+    def has_teams_meeting(self) -> bool:
+        """هل للاجتماع اجتماع Microsoft Teams مرتبط (migration 0041)."""
+        return self.teams_meeting_id is not None
+
 
 class MeetingAgendaItem(Base):
     __tablename__ = "meeting_agenda_items"

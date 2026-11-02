@@ -97,6 +97,20 @@ class Settings(BaseSettings):
       AGORA_APP_CERTIFICATE: str = ""
       AGORA_TOKEN_TTL_SECONDS: int = 3600
 
+    # --- Microsoft Teams (الاجتماعات عن بعد — migration 0041، قرار لاما
+    # 2026-11-02 بالانتقال من Agora إلى Teams) ---
+    # بيانات تطبيق "Committee Management System" المسجّل بـEntra ID (Client
+    # Credentials عبر app.core.teams_client) — لا تصل للـFrontend أبدًا.
+    # اختيارية بقيمة فارغة (نفس نمط AGORA_*/GEMINI_*): لو أي منها فارغ يبقى
+    # التكامل معطّلًا ويُنشأ الاجتماع عن بعد بلا رابط Teams (بيئات التطوير).
+    # TEAMS_ORGANIZER_EMAIL: الحساب الذي تُنشأ الاجتماعات باسمه — يجب أن
+    # تشمله Application Access Policy بـTeams PowerShell. تغييره لاحقًا (مثلًا
+    # لحساب مخصص meetings@...) لا يكسر الاجتماعات القديمة (meetings.teams_organizer_id).
+      TEAMS_TENANT_ID: str = ""
+      TEAMS_CLIENT_ID: str = ""
+      TEAMS_CLIENT_SECRET: str = ""
+      TEAMS_ORGANIZER_EMAIL: str = ""
+
     # --- Google Gemini (تحويل تسجيل الاجتماع الصوتي إلى مسودة —
     # meetings.record_audio/draft.summarize، migration 0025) ---
     # GEMINI_API_KEY اختياري بقيمة افتراضية فارغة (نفس نمط CLAUDE_API_KEY/

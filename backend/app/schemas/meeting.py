@@ -180,6 +180,10 @@ class MeetingOut(BaseModel):
     agenda_items: list[MeetingAgendaItemOut]
     started_at: datetime | None
     ended_at: datetime | None
+    #: تكامل Teams (migration 0041): هل للاجتماع اجتماع Teams مرتبط — الواجهة
+    #: تعرض زر "انضمام عبر تيمز" بناءً عليه. الرابط نفسه لا يُعاد هنا عمدًا
+    #: (يُطلب من GET /meetings/{id}/teams/join بعد فحص meetings.join).
+    has_teams_meeting: bool
     created_at: datetime
     updated_at: datetime
 
@@ -234,6 +238,21 @@ class MeetingAttachmentOut(BaseModel):
     file_size_bytes: int
     uploaded_by: CommitteeMemberUserOut
     linked_at: datetime
+
+
+class TeamsJoinOut(BaseModel):
+    """استجابة GET /meetings/{id}/teams/join — رابط الانضمام لاجتماع Teams
+    (للمشاركين أصحاب meetings.join فقط — يُفحص بطبقة الخدمة)."""
+
+    join_url: str
+
+
+class TeamsRecordingOut(BaseModel):
+    """عنصر قائمة GET /meetings/{id}/teams/recordings — تسجيل Teams واحد.
+    المحتوى يُطلب من .../teams/recordings/{recording_id}/content."""
+
+    recording_id: str
+    created_at: datetime | None
 
 
 class MeetingJoinOut(BaseModel):

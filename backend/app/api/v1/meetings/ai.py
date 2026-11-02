@@ -77,6 +77,7 @@ def _draft_out(
         draft_id=draft.draft_id,
         meeting_id=draft.meeting_id,
         status=draft.status.value,
+        source=draft.source.value,
         error_message=draft.error_message,
         full_transcript=draft.full_transcript if can_view_transcript else None,
         summary=draft.summary if can_view_summary else None,
