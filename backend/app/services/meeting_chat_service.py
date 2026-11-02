@@ -1,24 +1,25 @@
 """
 الهدف:
-منطق العمل لـ"محادثة الاجتماع" — راجعي رأس
-db/migrations/0026_meeting_realtime.sql للتصميم الكامل. التفويض: نفس
-صلاحية الانضمام للاجتماع (meetings.join) بالضبط — لا صلاحية منفصلة
-للمحادثة (قرار مقصود: من يقدر يدخل الغرفة يقدر يكتب فيها). نفس نمط
-التحقق الهجين (System Role scope أو Committee Role) المكرَّر بكل وحدة
-بهذا المشروع (meeting_service.py وdecision_service.py) — مكرَّر هنا
-عمدًا بدل استيراد دوال خاصة (_underscore) من meeting_service، اتساقًا مع
-قرار decision_service.py نفسه بعدم فعل ذلك.
+فحوص الوصول لقناة الاجتماع اللحظية (Socket.IO — راجعي
+app/core/socketio_server.py): من يقدر يتصل بغرفة الاجتماع (التواجد، رفع
+اليد، بند المناقشة الحالي)، ومن يقدر يدير بند المناقشة. التفويض: نفس
+صلاحية الانضمام للاجتماع (meetings.join) — نفس نمط التحقق الهجين (System
+Role scope أو Committee Role) المكرَّر بكل وحدة بهذا المشروع.
+
+تحديث 2026-11-02 (قرار لاما): أُزيلت "محادثة الاجتماع" النصية الخاصة
+بالمنصة (list_messages/send_message، REST /chat/messages، حدث chat.send)
+— الأعضاء يستخدمون شات Microsoft Teams داخل الاجتماع نفسه. جدول
+meeting_chat_messages يبقى بقاعدة البيانات (رسائل قديمة) بلا استخدام.
+اسم الملف بقي كما هو لتفادي تغيير مسارات الاستيراد القائمة.
 """
 
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models.committee import Committee
 from app.models.meeting import Meeting
-from app.models.meeting_chat import MeetingChatMessage
 from app.models.user import User
 from app.services import committee_service
 
@@ -92,57 +93,3 @@ async def require_agenda_manage_access(
     if not await _has_access(db, actor, committee, "meetings.agenda.item.update"):
         raise MeetingChatForbiddenError("ليست لديك صلاحية إدارة بنود هذا الاجتماع")
     return meeting
-
-
-async def list_messages(
-    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, limit: int = 100
-) -> list[MeetingChatMessage]:
-    await require_realtime_access(db, actor=actor, meeting_id=meeting_id)
-    result = await db.execute(
-        select(MeetingChatMessage)
-        .where(MeetingChatMessage.meeting_id == meeting_id)
-        .order_by(MeetingChatMessage.created_at.asc())
-        .limit(limit)
-    )
-    return list(result.scalars().all())
-
-
-async def send_message(
-    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, body: str
-) -> MeetingChatMessage:
-    """يُستدعى من داخل راوت WebSocket (meeting_live_socket) عند type=chat.send —
-    وليس عبر REST. يحفظ الرسالة ويُرجعها؛ البث لبقية المشاركين مسؤولية
-    الراوت نفسه (عبر app.core.meeting_realtime.connection_manager) بعد
-    نجاح هذا الاستدعاء.
-
-    إصلاح 2026-09-13 (بلاغ لاما — لايف: رسالة الدردشة "ما توصل ولا
-    تنحفظ"): كانت تُحفَظ فعليًا (commit ينجح)، لكن db.refresh(message)
-    لا يُعيد تحميل العلاقات (relationships) — فقط أعمدة الصف نفسه.
-    MeetingChatMessage.sender معرَّفة lazy="selectin" (راجعي
-    app/models/meeting_chat.py)، وهذا يعمل تلقائيًا فقط ضمن SELECT فعلي
-    يحمّل الصف، لا refresh() لكائن مُنشأ محليًا للتو. النتيجة: socketio_server.
-    chat_send يحاول MeetingChatMessageOut.model_validate(message) *بعد*
-    إغلاق جلسة async with — أي وصول لـmessage.sender عندها يفشل (الكائن
-    detached)، فيُرمى استثناء غير مُلتقَط داخل معالج chat.send، والبث
-    ("chat.message") لا يصل لأحد أبدًا — لا للمُرسِل نفسه ولا لبقية
-    الحاضرين — رغم أن الرسالة محفوظة فعليًا بقاعدة البيانات (تظهر فقط
-    عبر REST History عند إعادة فتح الدردشة لاحقًا). الحل: إعادة تحميل
-    الصف بـSELECT صريح مع selectinload(sender) بدل refresh() — نفس نمط
-    التحميل الصريح المطبَّق بكل الملف تقريبًا (meeting_service/
-    committee_service) بدل الاعتماد على تحميل ضمني بعد انتهاء الجلسة."""
-    await require_realtime_access(db, actor=actor, meeting_id=meeting_id)
-
-    trimmed = body.strip()
-    if not trimmed:
-        raise ValueError("نص الرسالة لا يمكن أن يكون فارغًا")
-
-    message = MeetingChatMessage(meeting_id=meeting_id, sender_id=actor.user_id, body=trimmed[:2000])
-    db.add(message)
-    await db.commit()
-
-    result = await db.execute(
-        select(MeetingChatMessage)
-        .where(MeetingChatMessage.message_id == message.message_id)
-        .options(selectinload(MeetingChatMessage.sender))
-    )
-    return result.scalar_one()

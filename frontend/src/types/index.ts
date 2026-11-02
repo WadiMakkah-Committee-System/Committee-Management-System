@@ -674,22 +674,12 @@ export interface MeetingAttachment {
 }
 
 /**
- * محادثة الاجتماع + القناة اللحظية (WebSocket) — راجعي رأس
- * db/migrations/0026_meeting_realtime.sql وhooks/useMeetingRealtime.ts
- * للتصميم الكامل (قرار موثّق مع لاما 2026-09-06: WebSocket حقيقي بدل
- * Polling لهذه القناة تحديدًا).
+ * القناة اللحظية للاجتماع (Socket.IO) — راجعي hooks/useMeetingRealtime.ts.
+ * المحادثة النصية أُزيلت 2026-11-02 (قرار لاما): الأعضاء يستخدمون شات
+ * Microsoft Teams داخل الاجتماع.
  */
-export interface MeetingChatMessage {
-  message_id: string
-  meeting_id: string
-  body: string
-  sender: CommitteeMemberUser
-  created_at: string
-}
-
-/** أحداث البث القادمة عبر WebSocket من meeting_live_socket بالباك-إند — كلها عابرة (غير مخزَّنة) عدا chat.message. */
+/** أحداث البث القادمة عبر Socket.IO من الباك-إند — كلها عابرة (غير مخزَّنة). */
 export type MeetingRealtimeEvent =
-  | { type: 'chat.message'; message: MeetingChatMessage }
   | { type: 'hand.raised'; user_id: string; full_name: string }
   | { type: 'hand.lowered'; user_id: string }
   | { type: 'agenda.discussing'; agenda_item_id: string; title: string }

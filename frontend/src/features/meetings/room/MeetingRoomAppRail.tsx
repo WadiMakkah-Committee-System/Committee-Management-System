@@ -1,4 +1,4 @@
-import { Home, LogOut, MessageSquare, Video } from 'lucide-react'
+import { Home, LogOut, Video } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
 
@@ -22,25 +22,17 @@ import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
  * هنا. "الرئيسية" و"خروج" كلاهما يقودان فعليًا لنفس تدفق "مغادرة
  * الاجتماع" الحقيقي (تأكيد ثم إغلاق) — بلا لوحة تحكم رئيسية مبنية بعد
  * بهذا التطبيق أصلًا فلا معنى لتنقّل وهمي لصفحة غير موجودة.
+ *
+ * تحديث 2026-11-02 (قرار لاما): حُذف زر "المحادثة" — الأعضاء يستخدمون شات
+ * Microsoft Teams داخل الاجتماع نفسه بدل محادثة المنصة.
  */
-export function MeetingRoomAppRail({
-  onExitClick,
-  onChatClick,
-  chatActive,
-  hasUnreadChat,
-}: {
-  onExitClick: () => void
-  onChatClick: () => void
-  chatActive: boolean
-  hasUnreadChat: boolean
-}) {
+export function MeetingRoomAppRail({ onExitClick }: { onExitClick: () => void }) {
   return (
     <nav className="flex w-[72px] shrink-0 flex-col items-center gap-1 bg-sidebar-bg py-4">
       <img src={wadiMakkahMark} alt="شعار وادي مكة" className="mb-3 h-8 w-auto shrink-0" />
 
       <RailButton icon={Home} label="الرئيسية" onClick={onExitClick} />
       <RailButton icon={Video} label="غرفة الاجتماع" active />
-      <RailButton icon={MessageSquare} label="المحادثة" active={chatActive} badge={hasUnreadChat} onClick={onChatClick} />
 
       <div className="flex-1" />
 

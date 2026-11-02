@@ -3,8 +3,9 @@
 قناة الاجتماع/المحضر اللحظية — Socket.IO بدل WebSocket الخام (app/core/
 meeting_realtime.py سابقًا). قرار لاما 2026-09-10: تبديل طبقة النقل
 لواحدة أنضج (إعادة اتصال تلقائية + Rooms جاهزة بدل connection_manager
-اليدوي) — نفس بالضبط المنطق/الأحداث القديمة (محادثة + رفع يد + بند
-أجندة قيد المناقشة + تعاون تحرير المحضر)، فقط بآلية نقل مختلفة.
+اليدوي) — نفس بالضبط المنطق/الأحداث القديمة (رفع يد + بند أجندة قيد
+المناقشة + تعاون تحرير المحضر)، فقط بآلية نقل مختلفة. (المحادثة النصية
+أُزيلت 2026-11-02 — الأعضاء يستخدمون شات Microsoft Teams.)
 
 تنويه صريح موثّق مع لاما: هذا التحويل *لا* يحل مشكلة تعليق جلسات DB
 بطلبات REST العادية (GET/PATCH على /meetings، /committees، ...) —
@@ -45,7 +46,6 @@ from app.core.redis_client import is_session_valid, touch_session
 from app.core.security import InvalidTokenError, decode_token
 from app.db.session import AsyncSessionLocal
 from app.models.user import User, UserStatus
-from app.schemas.meeting_chat import MeetingChatMessageOut
 from app.services import meeting_chat_service, user_service
 from app.services.meeting_chat_service import MeetingChatForbiddenError, MeetingChatNotFoundError
 
@@ -139,7 +139,7 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
     # "Note: this method is a coroutine") — استدعاؤه بدون await كان يُنشئ
     # كائن coroutine ولا يُنفَّذه إطلاقًا، أي هذا الـsid لم يكن ينضم لغرفة
     # الاجتماع فعليًا رغم نجاح connect() ورجوع True. الأثر: presence.joined/
-    # chat.message/hand.raised/agenda.discussing/minutes.updated —
+    # hand.raised/agenda.discussing/minutes.updated —
     # كل بث لاحق عبر room=room (وكلها تمر بنفس هذا المسار) كان لا يصل أبدًا
     # لهذا الاتصال تحديدًا (بينما الرسائل المباشرة to=sid، مثل presence.roster
     # أعلاه، كانت تصل بشكل طبيعي لأنها لا تعتمد على عضوية الغرفة). الإصلاح:
@@ -184,55 +184,6 @@ async def _session_user_and_room(sid: str) -> tuple[User, str] | None:
     if not user or not meeting_id:
         return None
     return user, meeting_id
-
-
-# إصلاح 2026-09-14 (بلاغ لاما — "أرسل رسالة، تختفي من الحقل، ما تظهر
-# بالدردشة، ما أدري وصلت ولا لا"): المعالج القديم كان بلا Acknowledgment
-# إطلاقًا (Socket.IO يدعم إرجاع قيمة من المعالج تصل تلقائيًا كـ callback
-# بجهة العميل — socket.emit(event, payload, callback) بدل emit عادي بلا
-# رد) — فالفرونت (useMeetingRealtime.ts::send) كان ينادي socket.emit
-# بلا أي callback إطلاقًا، أي حتى لو أُرجعت قيمة هنا، ما أحد يستقبلها.
-# الأخطر: كان يُمسك ValueError فقط ثم return صامتة — أي استثناء آخر
-# (MeetingChatForbiddenError/MeetingChatNotFoundError من
-# require_realtime_access داخل send_message، أو أي خطأ DB/تسلسل غير
-# متوقع) يخرج من المعالج بلا معالجة؛ python-socketio يبتلعه داخليًا
-# (يسجّله بـstderr فقط) بلا أي إشعار للعميل — فتبدو الرسالة "اختفت
-# بصمت" رغم عدم حفظها إطلاقًا. الحل: (1) إرجاع dict ack من كل مسار
-# (نجاح/فشل) ليصل كـcallback حقيقي للمرسل تحديدًا (لا بث)، (2) الإمساك
-# بكل فئات الفشل المعروفة صراحة (تحقق/صلاحية/عدم-وجود) مع رسالة عربية
-# واضحة لكل حالة، (3) لوغ فعلي (logger.exception) لأي خطأ غير متوقع بدل
-# ابتلاعه، بدل try/except عام صامت. البث لبقية أعضاء الغرفة (بما فيها
-# المرسل نفسه، لأنه منضم لنفس الغرفة) يبقى كما هو تمامًا عند النجاح
-# فقط — هذا الجزء لم يتغير، كان يعمل صحيحًا أصلًا.
-@sio.on("chat.send")
-async def chat_send(sid: str, data: dict[str, Any] | None) -> dict[str, Any]:
-    resolved = await _session_user_and_room(sid)
-    if resolved is None:
-        return {"ok": False, "error": "انتهت صلاحية جلسة الاتصال — أعيدي تحميل الصفحة."}
-    user, meeting_id = resolved
-    body = str((data or {}).get("body", "")).strip()
-    if not body:
-        return {"ok": False, "error": "نص الرسالة لا يمكن أن يكون فارغًا."}
-    try:
-        async with AsyncSessionLocal() as db:
-            message = await meeting_chat_service.send_message(
-                db, actor=user, meeting_id=uuid.UUID(meeting_id), body=body
-            )
-    except ValueError as exc:
-        return {"ok": False, "error": str(exc) or "نص الرسالة غير صالح."}
-    except (MeetingChatForbiddenError, MeetingChatNotFoundError) as exc:
-        return {"ok": False, "error": str(exc)}
-    except Exception:
-        logger.exception(
-            "chat.send: فشل غير متوقع بحفظ رسالة الدردشة — meeting_id=%s user_id=%s",
-            meeting_id,
-            user.user_id,
-        )
-        return {"ok": False, "error": "تعذر إرسال الرسالة بسبب خطأ بالخادم — حاولي مجددًا."}
-
-    payload = {"message": MeetingChatMessageOut.model_validate(message).model_dump(mode="json")}
-    await sio.emit("chat.message", payload, room=_room(meeting_id))
-    return {"ok": True, "message": payload["message"]}
 
 
 @sio.on("hand.raise")

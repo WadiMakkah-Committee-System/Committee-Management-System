@@ -4,13 +4,13 @@ import { io, type Socket } from 'socket.io-client'
 import { decisionsKeys } from '@/hooks/useDecisions'
 import { API_BASE_URL } from '@/lib/apiClient'
 import { useAuthStore } from '@/store/authStore'
-import type { MeetingChatMessage } from '@/types'
 
 /**
  * القناة اللحظية لغرفة الاجتماع — Socket.IO (قرار لاما 2026-09-10، بدّل
  * WebSocket الخام السابق — راجعي app/core/socketio_server.py بالباك-إند
- * للتصميم الكامل الجديد ومعالجات الأحداث). محادثة + رفع اليد + بث "بند
- * الأجندة قيد المناقشة الآن" — كلها عبر نفس الاتصال، بنفس الأحداث
+ * للتصميم الكامل الجديد ومعالجات الأحداث). رفع اليد + بث "بند الأجندة
+ * قيد المناقشة الآن" + التواجد — كلها عبر نفس الاتصال (المحادثة النصية
+ * أُزيلت 2026-11-02: الأعضاء يستخدمون شات Microsoft Teams)، بنفس الأحداث
  * بالضبط (الاسم الآن اسم حدث Socket.IO نفسه بدل حقل "type" بالحمولة).
  *
  * المصادقة: التوكن يمر عبر خيار Socket.IO "auth" (دالة تُستدعى قبل كل
@@ -52,7 +52,6 @@ export interface LiveActivityEvent {
 
 export function useMeetingRealtime(meetingId: string | undefined) {
   const [status, setStatus] = useState<MeetingConnectionStatus>('connecting')
-  const [liveMessages, setLiveMessages] = useState<MeetingChatMessage[]>([])
   const [raisedHands, setRaisedHands] = useState<RaisedHand[]>([])
   const [discussingAgendaItem, setDiscussingAgendaItem] = useState<{ id: string; title: string } | null>(
     null,
@@ -93,10 +92,6 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     socket.on('connect_error', (err) => {
       console.info(`[useMeetingRealtime] Socket.IO connect_error — ${err.message}`)
       setStatus('closed')
-    })
-
-    socket.on('chat.message', (payload: { message: MeetingChatMessage }) => {
-      setLiveMessages((prev) => [...prev, payload.message])
     })
 
     socket.on('hand.raised', (payload: { user_id: string; full_name: string }) => {
@@ -161,76 +156,6 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     socketRef.current?.emit(event, payload)
   }, [])
 
-  // إصلاح 2026-09-14 (بلاغ لاما — رسالة الدردشة "تختفي، ما أدري وصلت ولا
-  // لا"): send() أعلاه (لا تزال تُستخدم لأحداث بلا حاجة لتأكيد: رفع/خفض
-  // اليد، بث بند الأجندة قيد المناقشة) كانت نفسها المستخدَمة سابقًا
-  // لإرسال الدردشة أيضًا — emit عادي بلا أي انتظار لرد، فمهما حدث بجهة
-  // الخادم (نجاح، رفض صلاحية، خطأ DB) الفرونت لا يعرف شيئًا إطلاقًا.
-  // sendChatMessage الآن تستخدم emitWithAck (socket.io-client v4.5+، مع
-  // .timeout() لتفادي انتظار أبدي لو الاتصال ميت فعليًا لكن لم يُطلق
-  // حدث disconnect بعد) وتُرجع Promise حقيقي بنتيجة الإرسال، ليقرر
-  // ChatPanel.tsx بناءً عليها: مسح الحقل فقط عند النجاح الفعلي، وإظهار
-  // خطأ واضح للمستخدم عند الفشل بدل صمت الواجهة. الخادم (socketio_server.
-  // py::chat_send) يُرجع الآن {ok, error?} أو {ok, message} من كل مسار —
-  // راجعي تعليقه المقابل هناك.
-  const sendChatMessage = useCallback(
-    async (body: string): Promise<{ ok: boolean; error?: string }> => {
-      const socket = socketRef.current
-      if (!socket || !socket.connected) {
-        return { ok: false, error: 'لا يوجد اتصال بقناة الدردشة حاليًا — تحققي من الاتصال وحاولي مجددًا.' }
-      }
-
-      // إصلاح 2026-09-14 (بلاغ لاما الثاني — تظهر "انتهت قناة الاتصال"
-      // رغم أن الرسالة تصل فعليًا لبقية المشاركين): تبيّن أن emitWithAck
-      // وحدها قد تنتهي مهلتها (أو ترفض) حتى لو نجح الحفظ والبث فعليًا على
-      // الخادم — فقط حزمة الـack بعينها ضاعت/تأخرت على اتصال غير مستقر
-      // (لا الإرسال نفسه). الحل: عند فشل/انتهاء مهلة الـack تحديدًا، قبل
-      // الجزم بالفشل نمنح بثّ "chat.message" ذاته مهلة أخيرة قصيرة —
-      // المرسل نفسه عضو بغرفة الاجتماع فيستقبل بثّ رسالته هو أيضًا، فوصول
-      // رسالة بنفس نصّه ومرسِلها إثبات استقلالي على النجاح الفعلي حتى لو
-      // ضاع ردّ الـack بعينه. لا تُستخدم إلا بمسار timeout/الاستثناء
-      // فقط — رفض الخادم الصريح (ack.ok === false) يبقى نهائيًا وفوريًا
-      // كما هو، فهو ليس حالة غموض.
-      const myUserId = useAuthStore.getState().user?.user_id
-      let broadcastHandler: ((payload: { message: MeetingChatMessage }) => void) | null = null
-      const broadcastConfirmed = new Promise<true>((resolve) => {
-        broadcastHandler = (payload) => {
-          if (payload.message.body === body && payload.message.sender.user_id === myUserId) resolve(true)
-        }
-        socket.on('chat.message', broadcastHandler)
-      })
-
-      try {
-        const ack = (await socket.timeout(8000).emitWithAck('chat.send', { body })) as
-          | { ok: true; message: MeetingChatMessage }
-          | { ok: false; error?: string }
-          | undefined
-        if (!ack) {
-          return { ok: false, error: 'لم يصل رد من الخادم — حاولي مجددًا.' }
-        }
-        if (!ack.ok) {
-          return { ok: false, error: ack.error || 'تعذر إرسال الرسالة.' }
-        }
-        return { ok: true }
-      } catch (err) {
-        // socket.timeout(...) يرفض الـPromise لو انقضت المهلة بلا رد —
-        // قبل إظهار خطأ للمستخدمة، تحققي أولًا هل وصل بثّ رسالتها فعليًا.
-        console.error(
-          '[useMeetingRealtime] chat.send: لم يصل رد (timeout/خطأ اتصال) — بانتظار تأكيد البث كإثبات بديل...',
-          err,
-        )
-        const confirmedViaBroadcast = await Promise.race([
-          broadcastConfirmed,
-          new Promise<false>((resolve) => setTimeout(() => resolve(false), 1500)),
-        ])
-        if (confirmedViaBroadcast) return { ok: true }
-        return { ok: false, error: 'انتهت مهلة انتظار رد الخادم — تحققي من الاتصال وحاولي مجددًا.' }
-      } finally {
-        if (broadcastHandler) socket.off('chat.message', broadcastHandler)
-      }
-    },
-    [],
-  )
   const raiseHand = useCallback(() => send('hand.raise'), [send])
   const lowerHand = useCallback(() => send('hand.lower'), [send])
   // إصلاح 2026-09-14 (بلاغ لاما — رئيس اللجنة يضغط "بدء المناقشة" ولا
@@ -264,12 +189,10 @@ export function useMeetingRealtime(meetingId: string | undefined) {
 
   return {
     status,
-    liveMessages,
     raisedHands,
     discussingAgendaItem,
     activityEvents,
     onlineUserIds,
-    sendChatMessage,
     raiseHand,
     lowerHand,
     announceDiscussing,
