@@ -637,6 +637,15 @@ export interface MeetingCreatePayload {
 }
 
 /** استجابة GET /meetings/{id}/teams/join — رابط الانضمام لاجتماع Teams (للمشاركين فقط). */
+/** استجابة POST /meetings/{id}/teams/call-token (تجربة الانضمام المدمج عبر
+ * Azure Communication Services) — تُمرَّر لـ@azure/communication-calling. */
+export interface TeamsCallTokenResponse {
+  token: string
+  expires_on: string
+  join_url: string
+  display_name: string
+}
+
 export interface TeamsJoinResponse {
   join_url: string
 }

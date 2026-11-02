@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
-from app.schemas.meeting import TeamsJoinOut, TeamsRecordingOut
+from app.schemas.meeting import TeamsCallTokenOut, TeamsJoinOut, TeamsRecordingOut
 from app.services import meeting_service
 
 from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
@@ -40,6 +40,30 @@ async def get_teams_join_url(
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     return TeamsJoinOut(join_url=join_url)
+
+
+@router.post("/{meeting_id}/teams/call-token", response_model=TeamsCallTokenOut)
+async def get_teams_call_token(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> TeamsCallTokenOut:
+    """
+    تجربة (poc/acs-teams-embed): بيانات الانضمام لاجتماع Teams من داخل واجهة
+    المنصة عبر Azure Communication Services.
+
+    - Authentication: JWT إلزامي. Authorization: meetings.join على لجنة الاجتماع.
+    - 200: {token, expires_on, join_url, display_name}.
+    - 403 / 404 / 409 كما بـ/teams/join. 502: فشل ACS. 503: ACS غير مهيّأ.
+    POST (لا GET) لأن كل طلب ينشئ هوية ACS جديدة (ليس عملية قراءة).
+    """
+    try:
+        token, join_url, display_name = await meeting_service.get_teams_call_token(
+            db, actor=current_user, meeting_id=meeting_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return TeamsCallTokenOut(
+        token=token.token, expires_on=token.expires_on, join_url=join_url, display_name=display_name
+    )
 
 
 @router.get("/{meeting_id}/teams/recordings", response_model=list[TeamsRecordingOut])

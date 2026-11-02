@@ -247,6 +247,17 @@ class TeamsJoinOut(BaseModel):
     join_url: str
 
 
+class TeamsCallTokenOut(BaseModel):
+    """استجابة POST /meetings/{id}/teams/call-token (تجربة الانضمام المدمج):
+    token لـ@azure/communication-calling، join_url رابط اجتماع Teams،
+    display_name الاسم الظاهر للمشارك داخل الاجتماع."""
+
+    token: str
+    expires_on: datetime
+    join_url: str
+    display_name: str
+
+
 class TeamsRecordingOut(BaseModel):
     """عنصر قائمة GET /meetings/{id}/teams/recordings — تسجيل Teams واحد.
     المحتوى يُطلب من .../teams/recordings/{recording_id}/content."""

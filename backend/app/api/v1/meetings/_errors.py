@@ -7,7 +7,7 @@ from fastapi import (
     status,
 )
 
-from app.core import storage_client, teams_client
+from app.core import acs_client, storage_client, teams_client
 from app.services.meeting_minutes_service import (
     MinutesForbiddenError,
     MinutesInvalidStateError,
@@ -73,6 +73,8 @@ _SERVICE_ERRORS = (
     CommitteePeriodError,
     # تكامل Microsoft Teams (migration 0041) — راجعي app/core/teams_client.py.
     teams_client.TeamsError,
+    # تجربة الانضمام المدمج عبر Azure Communication Services.
+    acs_client.AcsError,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,6 +92,17 @@ def _handle_errors(exc: Exception) -> Exception:
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if isinstance(exc, teams_client.TeamsError):
         return _teams_error_to_http(exc)
+    if isinstance(exc, acs_client.AcsError):
+        logger.warning("Azure Communication Services error: %s", exc)
+        if isinstance(exc, acs_client.AcsNotConfiguredError):
+            return HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="الانضمام من داخل المنصة غير مُهيّأ بعد (ACS_CONNECTION_STRING) — استخدم فتح في تيمز",
+            )
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="تعذّر تجهيز الاتصال بالاجتماع، حاول مرة أخرى بعد قليل",
+        )
     if isinstance(exc, storage_client.StorageError):
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="تعذّر رفع الملف، حاول مرة أخرى"

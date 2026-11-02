@@ -12,6 +12,8 @@ import { MeetingRoomAppRail } from './room/MeetingRoomAppRail'
 import { MeetingRoomSidebar, type RoomPanelKey } from './room/MeetingRoomSidebar'
 import { MeetingRoomHeader } from './room/MeetingRoomHeader'
 import { TeamsMeetingStage } from './room/TeamsMeetingStage'
+import { EmbeddedTeamsStage } from './room/EmbeddedTeamsStage'
+import { useTeamsEmbeddedCall } from './room/useTeamsEmbeddedCall'
 import { MeetingControls } from './room/MeetingControls'
 import { ParticipantsPanel } from './room/panels/ParticipantsPanel'
 import { AgendaPanel } from './room/panels/AgendaPanel'
@@ -63,6 +65,9 @@ export function MeetingRoom({
   // بنطاق 'all' فعليًا.
   const { data: committees } = useCommittees()
   const realtime = useMeetingRealtime(meetingId)
+  // تجربة الانضمام المدمج (Azure Communication Services): فيديو اجتماع Teams
+  // داخل الغرفة نفسها بدل فتح تطبيق تيمز — راجعي useTeamsEmbeddedCall.ts.
+  const embeddedCall = useTeamsEmbeddedCall(meetingId)
 
   const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
@@ -112,8 +117,9 @@ export function MeetingRoom({
 
   // المغادرة هنا تُغلق غرفة النظام فقط — نافذة تيمز مستقلة يغادرها
   // المستخدم من تيمز نفسه (لا يوجد اتصال وسائط بالمتصفح لإنهائه بعد Agora).
-  function handleConfirmLeave() {
+  async function handleConfirmLeave() {
     setConfirmLeaveOpen(false)
+    await embeddedCall.leave()
     onClose()
   }
 
@@ -285,12 +291,33 @@ export function MeetingRoom({
                 </div>
               )}
 
-              <TeamsMeetingStage meeting={meeting} canRecord={canRecord} />
+              {meeting.has_teams_meeting ? (
+                <EmbeddedTeamsStage
+                  meeting={meeting}
+                  call={embeddedCall}
+                  localName={currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'أنت'}
+                  canRecord={canRecord}
+                />
+              ) : (
+                <TeamsMeetingStage meeting={meeting} canRecord={canRecord} />
+              )}
 
               <MeetingControls
                 handRaised={iRaisedHand}
                 onToggleHand={() => (iRaisedHand ? realtime.lowerHand() : realtime.raiseHand())}
                 onLeave={() => setConfirmLeaveOpen(true)}
+                media={
+                  embeddedCall.phase === 'connected'
+                    ? {
+                        micMuted: embeddedCall.micMuted,
+                        cameraOn: embeddedCall.cameraOn,
+                        screenSharing: embeddedCall.screenSharing,
+                        onToggleMic: () => void embeddedCall.toggleMic(),
+                        onToggleCamera: () => void embeddedCall.toggleCamera(),
+                        onToggleScreenShare: () => void embeddedCall.toggleScreenShare(),
+                      }
+                    : undefined
+                }
               />
             </div>
           </div>
