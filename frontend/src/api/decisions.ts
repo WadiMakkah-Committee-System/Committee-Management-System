@@ -1,4 +1,5 @@
 import { apiClient } from '@/lib/apiClient'
+import { fileNameFromDisposition } from '@/lib/utils'
 import type {
   Decision,
   DecisionAttachment,
@@ -102,7 +103,9 @@ export async function fetchDecisionAttachmentBlob(
     `/decisions/${decisionId}/attachments/${documentId}/download`,
     { responseType: 'blob' },
   )
+  // fileNameFromDisposition (وليس استخراج يدوي ساذج): الباك-إند يرسل
+  // filename*=UTF-8'' للاسم العربي الفعلي (إصلاح 2026-11-02 بعد خلل
+  // UnicodeEncodeError بالرأس) — نفس أسلوب تحميل مرفقات الاجتماعات/المحضر.
   const disposition = String(response.headers['content-disposition'] ?? '')
-  const match = /filename="?([^"]+)"?/.exec(disposition)
-  return { blob: response.data as Blob, fileName: match?.[1] ?? 'attachment' }
+  return { blob: response.data as Blob, fileName: fileNameFromDisposition(disposition, 'attachment') }
 }
