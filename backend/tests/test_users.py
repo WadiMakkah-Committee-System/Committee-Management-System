@@ -605,3 +605,45 @@ async def test_me_returns_permission_scopes_matching_role(
         "committees.request.create",
         "committees.request.update",
     }
+
+
+async def test_create_user_emails_login_credentials(
+    client: AsyncClient,
+    auth_headers,
+    roles_by_name: dict[str, str],
+    super_admin_user: User,
+    monkeypatch,
+) -> None:
+    """طلب لاما 2026-11-02: إنشاء مستخدم يدويًا يرسل بيانات الدخول لبريده
+    تلقائيًا (نفس رسالة رفع ملف المستخدمين) — والفشل بالتحقق لا يرسل شيئًا."""
+    import asyncio
+
+    from app.core import background
+    from app.services import notification_service
+
+    sent: list[tuple] = []
+
+    async def fake_notify(accounts, *, login_url):
+        sent.extend(accounts)
+
+    monkeypatch.setattr(notification_service, "notify_imported_users_credentials", fake_notify)
+
+    payload = {
+        "first_name": "نورة",
+        "middle_name": "علي",
+        "last_name": "الحربي",
+        "username": "noura_h",
+        "email": "noura@example.com",
+        "password": "StrongPass1",
+        "role_id": roles_by_name["admin"],
+    }
+    response = await client.post("/api/v1/users", json=payload, headers=auth_headers)
+    assert response.status_code == 201, response.text
+
+    duplicate = await client.post("/api/v1/users", json=payload, headers=auth_headers)
+    assert duplicate.status_code == 400, duplicate.text
+
+    pending = list(background._pending_tasks)
+    if pending:
+        await asyncio.wait(pending, timeout=10)
+    assert sent == [("noura@example.com", "نورة", "noura_h", "StrongPass1")]
