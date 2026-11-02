@@ -8,6 +8,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel
 
+from app.models.decision import DecisionStatus
+from app.models.task import TaskStatus
 from app.schemas.meeting import MeetingAttachmentOut
 
 
@@ -22,6 +24,20 @@ class MeetingBriefOut(BaseModel):
     meeting_id: uuid.UUID
     title: str
     scheduled_at: datetime
+
+
+class TaskBriefOut(BaseModel):
+    task_id: uuid.UUID
+    title: str
+    status: TaskStatus
+    created_at: datetime
+
+
+class DecisionBriefOut(BaseModel):
+    decision_id: uuid.UUID
+    title: str
+    status: DecisionStatus
+    created_at: datetime
 
 
 class BundleAttachmentOut(MeetingAttachmentOut):

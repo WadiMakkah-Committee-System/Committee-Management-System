@@ -6,9 +6,13 @@
 - GET /documents/committee-attachments/committees            → لجاني
 - GET /documents/committee-attachments/committees/{id}/meetings → أسماء اجتماعات اللجنة
 - GET /documents/committee-attachments/meetings/{id}          → مرفقات اجتماع + حالة محضره
+- GET /documents/committee-attachments/committees/{id}/tasks     → أسماء مهام اللجنة (إضافة 2026-11-02)
+- GET /documents/committee-attachments/committees/{id}/decisions → أسماء قرارات اللجنة (إضافة 2026-11-02)
 
 التنزيل يستخدم النقاط القائمة: /meetings/{id}/attachments/{doc}/download
-للمرفقات، و/meetings/{id}/minutes/pdf للمحضر.
+للمرفقات، و/meetings/{id}/minutes/pdf للمحضر. مرفقات المهام/القرارات نفسها
+تستخدم GET /tasks/{id}/attachments و/decisions/{id}/attachments الموجودتين
+أصلًا (لا نقطة جديدة لمستوى المرفقات نفسه).
 
 الصلاحيات: بوابة عرض الوثائق (نفس صفحة الوثائق) + فحوص اللجنة بطبقة الخدمة
 (راجعي services/committee_attachments_service.py).
@@ -29,8 +33,10 @@ from app.db.session import get_db
 from app.schemas.committee_attachments import (
     BundleAttachmentOut,
     CommitteeBriefOut,
+    DecisionBriefOut,
     MeetingBriefOut,
     MeetingBundleOut,
+    TaskBriefOut,
 )
 from app.services import committee_attachments_service
 
@@ -60,6 +66,36 @@ async def list_attachment_committee_meetings(
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     return [MeetingBriefOut(**vars(m)) for m in meetings]
+
+
+@router.get("/committees/{committee_id}/tasks", response_model=list[TaskBriefOut])
+async def list_attachment_committee_tasks(
+    committee_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[TaskBriefOut]:
+    """بعد اختيار "مرفقات المهام": أسماء مهام اللجنة وحالتها فقط."""
+    await _require_documents_view_access(db, current_user)
+    try:
+        tasks = await committee_attachments_service.list_committee_tasks_brief(
+            db, actor=current_user, committee_id=committee_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return [TaskBriefOut(**vars(t)) for t in tasks]
+
+
+@router.get("/committees/{committee_id}/decisions", response_model=list[DecisionBriefOut])
+async def list_attachment_committee_decisions(
+    committee_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[DecisionBriefOut]:
+    """بعد اختيار "مرفقات القرارات": أسماء قرارات اللجنة وحالتها فقط."""
+    await _require_documents_view_access(db, current_user)
+    try:
+        decisions = await committee_attachments_service.list_committee_decisions_brief(
+            db, actor=current_user, committee_id=committee_id
+        )
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return [DecisionBriefOut(**vars(d)) for d in decisions]
 
 
 @router.get("/meetings/{meeting_id}", response_model=MeetingBundleOut)

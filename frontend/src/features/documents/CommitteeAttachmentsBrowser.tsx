@@ -7,33 +7,51 @@ import {
   Download,
   FileText,
   FolderOpen,
+  Gavel,
   ListTodo,
   Paperclip,
   ScrollText,
   Users2,
 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
+import { DecisionStatusBadge, TaskStatusBadge } from '@/components/ui/StatusBadge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { CardSkeleton } from '@/components/ui/Skeleton'
 import { Spinner } from '@/components/ui/Spinner'
 import { useToast } from '@/components/ui/Toast'
+import { fetchDecisionAttachmentBlob } from '@/api/decisions'
+import { fetchTaskAttachmentBlob } from '@/api/tasks'
 import {
+  useAttachmentCommitteeDecisions,
   useAttachmentCommitteeMeetings,
+  useAttachmentCommitteeTasks,
   useAttachmentCommittees,
   useAttachmentMeetingBundle,
   useDownloadMinutesPdf,
 } from '@/hooks/useCommitteeAttachments'
+import { useDecisionAttachments } from '@/hooks/useDecisions'
 import { useDownloadMeetingAttachment, useOpenMeetingAttachment } from '@/hooks/useMeetings'
+import { useTaskAttachments } from '@/hooks/useTasks'
 import { cardToneClass, cn, extractErrorMessage, formatDate, formatDateTime, formatFileSize } from '@/lib/utils'
 import type {
   CommitteeAttachmentsBundleFile,
   CommitteeAttachmentsCommittee,
+  CommitteeAttachmentsDecision,
   CommitteeAttachmentsMeeting,
+  CommitteeAttachmentsTask,
+  DecisionAttachment,
   MeetingMinutesStage,
+  TaskAttachment,
 } from '@/types'
 
-type Section = 'meetings' | 'tasks'
+type Section = 'meetings' | 'tasks' | 'decisions'
+
+const SECTION_LABELS: Record<Section, string> = {
+  meetings: 'مرفقات الاجتماعات',
+  tasks: 'مرفقات المهام',
+  decisions: 'مرفقات القرارات',
+}
 
 const MINUTES_STAGE_LABELS: Record<MeetingMinutesStage, string> = {
   none: 'لم يبدأ',
@@ -46,51 +64,64 @@ const MINUTES_STAGE_LABELS: Record<MeetingMinutesStage, string> = {
 
 /**
  * الهدف:
- * تصنيف "مرفقات اللجنة" بصفحة الوثائق (طلب لاما 2026-11-01): تصفّح هرمي
- * لجنة ← قسم (مرفقات الاجتماعات / مرفقات المهام) ← اجتماع ← مرفقاته ومحضره.
+ * تصنيف "مرفقات اللجنة" بصفحة الوثائق (طلب لاما 2026-11-01، ووسّعته طلب
+ * لجين 2026-11-02): تصفّح هرمي لجنة ← قسم (اجتماعات/مهام/قرارات) ←
+ * عنصر ← مرفقاته (+ محضر الاجتماع لقسم الاجتماعات).
  *
- * الأداء (شرط لاما الصريح): كل مستوى يجلب بياناته فقط لما يُفتح —
+ * الأداء (شرط لجين الصريح، نفس شرط لاما الأصلي بالضبط: "لا تجيب بيانات
+ * أنا لسه ما طلبتها"): كل مستوى يجلب بياناته فقط لما يُفتح —
  * - فتح التصنيف: طلب اللجان فقط.
- * - اختيار لجنة: لا طلب إطلاقًا (القسمان ثابتان بالواجهة).
- * - "مرفقات الاجتماعات": أسماء الاجتماعات فقط. "مرفقات المهام": لا طلب (فاضي حاليًا).
- * - اختيار اجتماع: مرفقاته + حالة المحضر. ملف المحضر نفسه يُولَّد عند الضغط فقط.
+ * - اختيار لجنة: لا طلب إطلاقًا (الأقسام ثابتة بالواجهة).
+ * - فتح قسم: أسماء عناصره فقط (اجتماعات/مهام/قرارات — عمود العنوان
+ *   والحالة/الموعد فقط، بلا مرفقات).
+ * - اختيار عنصر: مرفقاته فقط — ونفس نقاط GET /tasks/{id}/attachments و
+ *   /decisions/{id}/attachments الموجودتين أصلًا لصفحتي تفاصيل المهمة/
+ *   القرار (لا نقطة جديدة لمستوى المرفقات نفسه).
  * الرجوع بالمسار (breadcrumb) يعيد استخدام الكاش (staleTime دقيقة) بلا طلب جديد.
  */
 export function CommitteeAttachmentsBrowser() {
   const [committee, setCommittee] = useState<CommitteeAttachmentsCommittee | null>(null)
   const [section, setSection] = useState<Section | null>(null)
   const [meeting, setMeeting] = useState<CommitteeAttachmentsMeeting | null>(null)
+  const [task, setTask] = useState<CommitteeAttachmentsTask | null>(null)
+  const [decision, setDecision] = useState<CommitteeAttachmentsDecision | null>(null)
+
+  function resetToCommittee() {
+    setCommittee(null)
+    setSection(null)
+    setMeeting(null)
+    setTask(null)
+    setDecision(null)
+  }
+
+  function resetToSection() {
+    setSection(null)
+    setMeeting(null)
+    setTask(null)
+    setDecision(null)
+  }
+
+  const selectedItemTitle = meeting?.title ?? task?.title ?? decision?.title ?? null
 
   const crumbs: { label: string; onClick?: () => void }[] = [
-    {
-      label: 'لجاني',
-      onClick: committee
-        ? () => {
-            setCommittee(null)
-            setSection(null)
-            setMeeting(null)
-          }
-        : undefined,
-    },
+    { label: 'لجاني', onClick: committee ? resetToCommittee : undefined },
   ]
   if (committee) {
-    crumbs.push({
-      label: committee.name,
-      onClick: section
-        ? () => {
-            setSection(null)
-            setMeeting(null)
-          }
-        : undefined,
-    })
+    crumbs.push({ label: committee.name, onClick: section ? resetToSection : undefined })
   }
   if (section) {
     crumbs.push({
-      label: section === 'meetings' ? 'مرفقات الاجتماعات' : 'مرفقات المهام',
-      onClick: meeting ? () => setMeeting(null) : undefined,
+      label: SECTION_LABELS[section],
+      onClick: selectedItemTitle
+        ? () => {
+            setMeeting(null)
+            setTask(null)
+            setDecision(null)
+          }
+        : undefined,
     })
   }
-  if (meeting) crumbs.push({ label: meeting.title })
+  if (selectedItemTitle) crumbs.push({ label: selectedItemTitle })
 
   return (
     <div className="flex flex-col gap-4">
@@ -117,16 +148,22 @@ export function CommitteeAttachmentsBrowser() {
         <CommitteesLevel onSelect={setCommittee} />
       ) : !section ? (
         <SectionsLevel onSelect={setSection} />
+      ) : section === 'meetings' ? (
+        !meeting ? (
+          <MeetingsLevel committeeId={committee.committee_id} onSelect={setMeeting} />
+        ) : (
+          <MeetingLevel meetingId={meeting.meeting_id} />
+        )
       ) : section === 'tasks' ? (
-        <EmptyState
-          icon={<ListTodo size={26} />}
-          title="لا توجد مرفقات مهام بعد"
-          description="مرفقات مهام اللجنة ستظهر هنا"
-        />
-      ) : !meeting ? (
-        <MeetingsLevel committeeId={committee.committee_id} onSelect={setMeeting} />
+        !task ? (
+          <TasksLevel committeeId={committee.committee_id} onSelect={setTask} />
+        ) : (
+          <TaskBundleLevel taskId={task.task_id} />
+        )
+      ) : !decision ? (
+        <DecisionsLevel committeeId={committee.committee_id} onSelect={setDecision} />
       ) : (
-        <MeetingLevel meetingId={meeting.meeting_id} />
+        <DecisionBundleLevel decisionId={decision.decision_id} />
       )}
     </div>
   )
@@ -259,6 +296,13 @@ function SectionsLevel({ onSelect }: { onSelect: (s: Section) => void }) {
         subtitle="ملفات مهام اللجنة"
         onClick={() => onSelect('tasks')}
       />
+      <FolderCard
+        index={2}
+        icon={<Gavel size={18} />}
+        title="مرفقات القرارات"
+        subtitle="ملفات قرارات اللجنة"
+        onClick={() => onSelect('decisions')}
+      />
     </LevelGrid>
   )
 }
@@ -292,6 +336,66 @@ function MeetingsLevel({
           title={m.title}
           subtitle={formatDateTime(m.scheduled_at)}
           onClick={() => onSelect(m)}
+        />
+      ))}
+    </LevelGrid>
+  )
+}
+
+function TasksLevel({
+  committeeId,
+  onSelect,
+}: {
+  committeeId: string
+  onSelect: (t: CommitteeAttachmentsTask) => void
+}) {
+  const { data, isLoading, isError, refetch } = useAttachmentCommitteeTasks(committeeId)
+  if (isLoading) return <LevelSkeleton />
+  if (isError) return <ErrorState onRetry={() => refetch()} />
+  if (!data || data.length === 0) {
+    return <EmptyState icon={<ListTodo size={26} />} title="لا توجد مهام" description="ما فيه مهام لهذي اللجنة بعد" />
+  }
+  return (
+    <LevelGrid>
+      {data.map((t, i) => (
+        <FolderCard
+          key={t.task_id}
+          index={i}
+          icon={<FolderOpen size={18} />}
+          title={t.title}
+          subtitle={formatDate(t.created_at)}
+          badge={<TaskStatusBadge status={t.status} />}
+          onClick={() => onSelect(t)}
+        />
+      ))}
+    </LevelGrid>
+  )
+}
+
+function DecisionsLevel({
+  committeeId,
+  onSelect,
+}: {
+  committeeId: string
+  onSelect: (d: CommitteeAttachmentsDecision) => void
+}) {
+  const { data, isLoading, isError, refetch } = useAttachmentCommitteeDecisions(committeeId)
+  if (isLoading) return <LevelSkeleton />
+  if (isError) return <ErrorState onRetry={() => refetch()} />
+  if (!data || data.length === 0) {
+    return <EmptyState icon={<Gavel size={26} />} title="لا توجد قرارات" description="ما فيه قرارات لهذي اللجنة بعد" />
+  }
+  return (
+    <LevelGrid>
+      {data.map((d, i) => (
+        <FolderCard
+          key={d.decision_id}
+          index={i}
+          icon={<FolderOpen size={18} />}
+          title={d.title}
+          subtitle={formatDate(d.created_at)}
+          badge={<DecisionStatusBadge status={d.status} />}
+          onClick={() => onSelect(d)}
         />
       ))}
     </LevelGrid>
@@ -415,5 +519,120 @@ function MeetingLevel({ meetingId }: { meetingId: string }) {
           </>
         ))}
     </div>
+  )
+}
+
+/**
+ * سطر مرفق عام لمهمة/قرار — نفس شكل TaskAttachment وDecisionAttachment
+ * بالضبط (بلا kind/agenda_item_id مثل مرفقات الاجتماع)، فنوع واحد يكفي
+ * الاثنين. التحميل Blob مباشر (نفس نمط صفحتي تفاصيل المهمة/القرار).
+ */
+function AttachmentFileRow({
+  file,
+  onDownload,
+}: {
+  file: TaskAttachment | DecisionAttachment
+  onDownload: () => void
+}) {
+  return (
+    <li
+      key={file.document_id}
+      className="flex items-center justify-between gap-3 border-b border-border-default py-2 last:border-0"
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <FileText size={14} className="shrink-0 text-text-muted" />
+        <div className="min-w-0">
+          <p className="truncate text-sm text-text-primary">{file.title}</p>
+          <p className="text-[11px] text-text-muted">
+            {formatFileSize(file.file_size_bytes)} · {file.uploaded_by.first_name} {file.uploaded_by.last_name}
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onDownload}
+        className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
+        aria-label="تحميل المرفق"
+        title="تحميل"
+      >
+        <Download size={14} />
+      </button>
+    </li>
+  )
+}
+
+function TaskBundleLevel({ taskId }: { taskId: string }) {
+  const { showToast } = useToast()
+  const { data, isLoading, isError, refetch } = useTaskAttachments(taskId)
+
+  if (isLoading) return <LevelSkeleton />
+  if (isError) return <ErrorState onRetry={() => refetch()} />
+  if (!data || data.length === 0) {
+    return (
+      <EmptyState icon={<Paperclip size={26} />} title="لا توجد مرفقات" description="ما فيه ملفات مرفوعة لهذي المهمة" />
+    )
+  }
+
+  async function handleDownload(documentId: string) {
+    try {
+      const { blob, fileName } = await fetchTaskAttachmentBlob(taskId, documentId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      showToast(extractErrorMessage(err), 'error')
+    }
+  }
+
+  return (
+    <Card className="flex flex-col gap-1">
+      <h3 className="text-sm font-bold text-text-secondary">مرفقات المهمة</h3>
+      <ul>
+        {data.map((file) => (
+          <AttachmentFileRow key={file.document_id} file={file} onDownload={() => handleDownload(file.document_id)} />
+        ))}
+      </ul>
+    </Card>
+  )
+}
+
+function DecisionBundleLevel({ decisionId }: { decisionId: string }) {
+  const { showToast } = useToast()
+  const { data, isLoading, isError, refetch } = useDecisionAttachments(decisionId)
+
+  if (isLoading) return <LevelSkeleton />
+  if (isError) return <ErrorState onRetry={() => refetch()} />
+  if (!data || data.length === 0) {
+    return (
+      <EmptyState icon={<Paperclip size={26} />} title="لا توجد مرفقات" description="ما فيه ملفات مرفوعة لهذا القرار" />
+    )
+  }
+
+  async function handleDownload(documentId: string) {
+    try {
+      const { blob, fileName } = await fetchDecisionAttachmentBlob(decisionId, documentId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      showToast(extractErrorMessage(err), 'error')
+    }
+  }
+
+  return (
+    <Card className="flex flex-col gap-1">
+      <h3 className="text-sm font-bold text-text-secondary">مرفقات القرار</h3>
+      <ul>
+        {data.map((file) => (
+          <AttachmentFileRow key={file.document_id} file={file} onDownload={() => handleDownload(file.document_id)} />
+        ))}
+      </ul>
+    </Card>
   )
 }
