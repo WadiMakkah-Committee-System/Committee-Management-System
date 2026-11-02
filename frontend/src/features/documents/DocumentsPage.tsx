@@ -8,6 +8,7 @@ import {
   Globe2,
   LayoutGrid,
   Layers,
+  Paperclip,
   Pencil,
   Plus,
   Trash2,
@@ -39,6 +40,7 @@ import { StatCard } from '@/components/ui/StatCard'
 import { useToast } from '@/components/ui/Toast'
 import { DocumentFormModal, type DocumentFormSubmitValues } from './DocumentFormModal'
 import { DocumentCategoriesModal } from './DocumentCategoriesModal'
+import { CommitteeAttachmentsBrowser } from './CommitteeAttachmentsBrowser'
 import { cardToneClass, cn, extractErrorMessage, formatDate, formatFileSize } from '@/lib/utils'
 import type { Document, DocumentScopeFilter } from '@/types'
 
@@ -50,12 +52,20 @@ import type { Document, DocumentScopeFilter } from '@/types'
  * أو مشاركة الرابط، ويطابق GET /documents?scope= بالباك-إند تمامًا
  * (راجعي DocumentScopeFilter بـtypes/index.ts وdocument_service.py).
  */
-const SCOPE_FILTER_OPTIONS: { value: DocumentScopeFilter | 'all'; label: string; icon: typeof Globe2 }[] = [
+/**
+ * 'committee_attachments' (2026-11-01): تصنيف "مرفقات اللجنة" — ليس فلترًا
+ * على GET /documents بل متصفح مستقل (CommitteeAttachmentsBrowser) لمرفقات
+ * الاجتماعات ومحاضرها؛ بتفعيله لا تُجلب قائمة الوثائق أصلًا.
+ */
+type ScopeTab = DocumentScopeFilter | 'all' | 'committee_attachments'
+
+const SCOPE_FILTER_OPTIONS: { value: ScopeTab; label: string; icon: typeof Globe2 }[] = [
   { value: 'all', label: 'الكل', icon: LayoutGrid },
   { value: 'public', label: 'عامة', icon: Globe2 },
   { value: 'department', label: 'إدارتي', icon: Building2 },
   { value: 'committee', label: 'لجاني', icon: Users2 },
   { value: 'shared', label: 'مشاركة معي', icon: UserRound }, // تسمية أوضح (بلاغ 2026-09-14) بدل "شورك معي"
+  { value: 'committee_attachments', label: 'مرفقات اللجنة', icon: Paperclip },
 ]
 
 /** أيقونة "قسم" الوثيقة لشارة كل بطاقة — نفس مجموعة أيقونات DocumentScope بـDocumentFormModal. */
@@ -95,15 +105,18 @@ export function DocumentsPage() {
   const [categoryFilter, setCategoryFilter] = useState('')
 
   const scopeFilterParam = searchParams.get('scope')
-  const scopeFilter: DocumentScopeFilter | 'all' =
+  const scopeTab: ScopeTab =
     scopeFilterParam === 'public' ||
     scopeFilterParam === 'department' ||
     scopeFilterParam === 'committee' ||
-    scopeFilterParam === 'shared'
+    scopeFilterParam === 'shared' ||
+    scopeFilterParam === 'committee_attachments'
       ? scopeFilterParam
       : 'all'
+  const showCommitteeAttachments = scopeTab === 'committee_attachments'
+  const scopeFilter: DocumentScopeFilter | 'all' = showCommitteeAttachments ? 'all' : scopeTab
 
-  function setScopeFilter(value: DocumentScopeFilter | 'all') {
+  function setScopeFilter(value: ScopeTab) {
     const next = new URLSearchParams(searchParams)
     if (value === 'all') next.delete('scope')
     else next.set('scope', value)
@@ -115,11 +128,14 @@ export function DocumentsPage() {
     return () => clearTimeout(timeout)
   }, [search])
 
-  const { data: documents, isLoading, isError, refetch } = useDocuments({
-    q: debouncedSearch || undefined,
-    category_id: categoryFilter || undefined,
-    scope: scopeFilter === 'all' ? undefined : scopeFilter,
-  })
+  const { data: documents, isLoading, isError, refetch } = useDocuments(
+    {
+      q: debouncedSearch || undefined,
+      category_id: categoryFilter || undefined,
+      scope: scopeFilter === 'all' ? undefined : scopeFilter,
+    },
+    { enabled: !showCommitteeAttachments },
+  )
   const { data: categories } = useDocumentCategories()
   // إدارات ولجان الرفع مُصفَّاة مسبقًا حسب مبدأ أقل صلاحية ممكنة (راجعي
   // DocumentFormModal وdocument_service.get_publish_targets) — وليست
@@ -170,6 +186,9 @@ export function DocumentsPage() {
       SCOPE_FILTER_OPTIONS.filter(({ value }) => {
         if (value === 'department') return !!user?.role?.is_super_admin || !!user?.dep_id
         if (value === 'committee') return !!user?.has_any_committee_membership
+        // مرفقات اللجنة: عضو لجنة، أو من يعرض اللجان نظاميًا (الباك-إند يفلتر النطاق).
+        if (value === 'committee_attachments')
+          return !!user?.has_any_committee_membership || (user?.permissions ?? []).includes('committees.view')
         return true
       }),
     [user],
@@ -179,11 +198,11 @@ export function DocumentsPage() {
   // رابط قديم محفوظ، أو تغيّرت عضويته)، نرجّعها "الكل" تلقائيًا بدل ترك
   // فلتر فعّال بدون زر ظاهر له.
   useEffect(() => {
-    if (scopeFilter !== 'all' && !visibleScopeFilterOptions.some((o) => o.value === scopeFilter)) {
+    if (scopeTab !== 'all' && !visibleScopeFilterOptions.some((o) => o.value === scopeTab)) {
       setScopeFilter('all')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeFilter, visibleScopeFilterOptions])
+  }, [scopeTab, visibleScopeFilterOptions])
 
   function openCreateForm() {
     setEditingDoc(null)
@@ -266,31 +285,36 @@ export function DocumentsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <StatCard label="عدد الوثائق" value={documents?.length ?? 0} icon={<FileText size={20} />} tone="brand" />
-        <StatCard
-          label="وثائق عامة"
-          value={documents?.filter((d) => d.is_public).length ?? 0}
-          icon={<Globe2 size={20} />}
-          tone="teal"
-        />
-      </div>
-
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <SearchInput value={search} onChange={setSearch} placeholder="ابحث بعنوان الوثيقة أو وصفها..." />
-        <div className="sm:w-64">
-          <Select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            placeholder="كل التصنيفات"
-            options={categoryOptions}
+      {/* مرفقات اللجنة: لا إحصاءات ولا بحث/تصنيف وثائق — متصفح مستقل بالأسفل. */}
+      {!showCommitteeAttachments && (
+        <>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <StatCard label="عدد الوثائق" value={documents?.length ?? 0} icon={<FileText size={20} />} tone="brand" />
+          <StatCard
+            label="وثائق عامة"
+            value={documents?.filter((d) => d.is_public).length ?? 0}
+            icon={<Globe2 size={20} />}
+            tone="teal"
           />
         </div>
-      </div>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <SearchInput value={search} onChange={setSearch} placeholder="ابحث بعنوان الوثيقة أو وصفها..." />
+          <div className="sm:w-64">
+            <Select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              placeholder="كل التصنيفات"
+              options={categoryOptions}
+            />
+          </div>
+        </div>
+        </>
+      )}
 
       <div className="flex flex-wrap gap-1.5 rounded-sm border border-border-default bg-bg-surface p-1.5">
         {visibleScopeFilterOptions.map(({ value, label, icon: Icon }) => {
-          const active = scopeFilter === value
+          const active = scopeTab === value
           return (
             <button
               key={value}
@@ -310,7 +334,9 @@ export function DocumentsPage() {
         })}
       </div>
 
-      {isLoading ? (
+      {showCommitteeAttachments ? (
+        <CommitteeAttachmentsBrowser />
+      ) : isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <CardSkeleton key={i} />

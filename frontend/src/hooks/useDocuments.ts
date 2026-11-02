@@ -16,10 +16,12 @@ function invalidateDocumentsList(queryClient: ReturnType<typeof useQueryClient>)
   queryClient.invalidateQueries({ queryKey: documentsKeys.all })
 }
 
-export function useDocuments(params: documentsApi.ListDocumentsParams = {}) {
+export function useDocuments(params: documentsApi.ListDocumentsParams = {}, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: documentsKeys.list(params),
     queryFn: () => documentsApi.fetchDocuments(params),
+    // enabled=false بتبويب "مرفقات اللجنة": لا نجلب قائمة الوثائق وهي غير معروضة.
+    enabled: options.enabled ?? true,
   })
 }
 

@@ -19,6 +19,7 @@ get_committee_role_permission_codes) — أكواد الصلاحيات (minutes.
 استخدام فعلي لها.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -916,3 +917,48 @@ async def sign_minutes(
     result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
     return result
+
+
+async def get_minutes_pdf(db: AsyncSession, *, meeting_id: uuid.UUID, actor: User) -> tuple[str, bytes]:
+    """
+    الهدف: ملف PDF للمحضر (تصنيف "مرفقات اللجنة" بالوثائق — طلب لاما 2026-11-01).
+
+    المدخلات: meeting_id + actor. يتطلب minutes.view (نفس صلاحية عرض المحضر).
+    المخرجات: (اسم الملف، محتوى PDF). يُولَّد لحظيًا من البيانات المخزَّنة
+    (لا يُخزَّن — المحضر يتغير حتى اكتماله، فالملف دائمًا آخر نسخة).
+    الأخطاء: MinutesNotFoundError (404) لو لم يُنشأ محضر للاجتماع بعد —
+    عمدًا لا ننشئه هنا (قراءة بحتة، بخلاف get_minutes_detail).
+
+    الاستعلامات: اجتماع + لجنة + رئيس + مشاركون (2) + المحضر بتوقيعاته (1)
+    + أكواد دور اللجنة عند الحاجة فقط (0-1).
+    """
+    # استيراد كسول: reportlab يُحمَّل فقط عند أول طلب PDF، لا مع تشغيل التطبيق.
+    from app.services.minutes_pdf_service import (
+        MinutesPdfData,
+        MinutesPdfSignature,
+        build_minutes_pdf,
+    )
+
+    meeting, committee = await _load_meeting_and_committee(db, meeting_id, with_participants=True)
+    if not await CommitteeAccess(db, actor).has(committee, "minutes.view"):
+        raise MinutesForbiddenError("ليست لديك صلاحية لعرض محضر هذا الاجتماع")
+    minutes = await _load_minutes_or_404(db, meeting_id)
+
+    data = MinutesPdfData(
+        committee_name=committee.name,
+        meeting_title=meeting.title,
+        scheduled_at=meeting.scheduled_at,
+        scheduled_end_at=meeting.scheduled_end_at,
+        mode=meeting.mode.value,
+        location=meeting.location,
+        stage=minutes.stage.value,
+        participants=[p.full_name for p in meeting.participants],
+        sections=list(minutes.sections or []),
+        signatures=[
+            MinutesPdfSignature(name=s.user.full_name, signed_at=s.signed_at, image_base64=s.signature_image)
+            for s in minutes.signatures
+        ],
+    )
+    # بناء الـPDF عمل CPU متزامن (~50-200ms) — بخيط منفصل حتى لا يوقف حلقة الأحداث.
+    content = await asyncio.to_thread(build_minutes_pdf, data)
+    return f"محضر - {meeting.title}.pdf", content

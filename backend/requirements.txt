@@ -22,6 +22,13 @@ python-docx==1.1.2
 # (XML bomb / XXE) — توصية openpyxl الرسمية لأي ملف غير موثوق.
 openpyxl==3.1.5
 defusedxml==0.7.1
+# محضر الاجتماع PDF (تصنيف "مرفقات اللجنة" — 2026-11-01، بموافقة لاما):
+# reportlab يولّد الـPDF، وهو لا يشكّل العربي ولا يرتّبه من اليمين لليسار
+# بنفسه — arabic-reshaper يصل الحروف، وpython-bidi يرتّب السطر بصريًا.
+# الخط IBM Plex Sans Arabic مضمّن بـapp/assets/fonts (رخصة OFL).
+reportlab==4.2.5
+arabic-reshaper==3.0.0
+python-bidi==0.6.6
 
 # Dev / testing (تُشغّل مقابل PostgreSQL محلي حقيقي - الـ schema يعتمد على
 # ميزات خاصة بـ Postgres: UUID, ENUM, JSONB, Partial Unique Index)

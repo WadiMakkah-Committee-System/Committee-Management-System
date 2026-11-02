@@ -1,4 +1,5 @@
 import { apiClient } from '@/lib/apiClient'
+import { fileNameFromDisposition } from '@/lib/utils'
 import type { MeetingDraft, MeetingRecording } from '@/types'
 
 /**
@@ -40,8 +41,7 @@ export async function fetchMeetingRecordingBlob(
     responseType: 'blob',
   })
   const disposition = String(response.headers['content-disposition'] ?? '')
-  const match = /filename="?([^"]+)"?/.exec(disposition)
-  return { blob: response.data as Blob, fileName: match?.[1] ?? 'recording' }
+  return { blob: response.data as Blob, fileName: fileNameFromDisposition(disposition, 'recording') }
 }
 
 export async function fetchMeetingRecording(meetingId: string): Promise<MeetingRecording | null> {

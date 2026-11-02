@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AxiosError } from 'axios'
-import { cn, extractErrorMessage, getInitials, roleLabel } from './utils'
+import { cn, extractErrorMessage, fileNameFromDisposition, getInitials, roleLabel } from './utils'
 
 describe('cn', () => {
   it('يدمج classes الصحيحة ويتجاهل القيم الفارغة', () => {
@@ -55,5 +55,16 @@ describe('extractErrorMessage', () => {
 
   it('يرجع رسالة افتراضية عند خطأ غير معروف', () => {
     expect(extractErrorMessage('شيء غريب')).toBe('حدث خطأ غير متوقع، حاول مرة أخرى')
+  })
+})
+
+describe('fileNameFromDisposition', () => {
+  it('يفضّل الاسم العربي من filename* على البديل اللاتيني', () => {
+    const header = `attachment; filename="document.pdf"; filename*=UTF-8''${encodeURIComponent('محضر - الاجتماع.pdf')}`
+    expect(fileNameFromDisposition(header, 'x')).toBe('محضر - الاجتماع.pdf')
+  })
+  it('يرجع لـfilename العادي ثم للبديل', () => {
+    expect(fileNameFromDisposition('attachment; filename="a.txt"', 'x')).toBe('a.txt')
+    expect(fileNameFromDisposition('', 'x')).toBe('x')
   })
 })
