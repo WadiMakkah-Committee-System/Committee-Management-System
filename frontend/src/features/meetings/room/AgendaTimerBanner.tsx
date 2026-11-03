@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ClipboardList, Timer } from 'lucide-react'
+import { ClipboardList, Square, Timer } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { DiscussingAgendaItem } from '@/hooks/useMeetingRealtime'
 
@@ -18,8 +18,11 @@ function formatClock(totalSeconds: number): string {
  * عدّاد تنازلي يشوفه الكل لو الرئيس اختار مؤقت — يتلون أصفر بآخر دقيقة،
  * وأحمر لما يخلص ("تجاوز الوقت +mm:ss"). تنبيهي فقط، ما يوقف النقاش.
  * بدون مؤقت ⇒ يعرض الوقت المنقضي على البند.
+ *
+ * onStop (رئيس اللجنة فقط — بلاغ لاما 2026-11-03): زر "إيقاف المناقشة" جنب
+ * العدّاد، بدل ما يضطر يبدأ بند ثاني عشان يوقف الحالي.
  */
-export function AgendaTimerBanner({ item }: { item: DiscussingAgendaItem }) {
+export function AgendaTimerBanner({ item, onStop }: { item: DiscussingAgendaItem; onStop?: () => void }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -60,6 +63,15 @@ export function AgendaTimerBanner({ item }: { item: DiscussingAgendaItem }) {
           <Timer size={11} /> {formatClock(elapsed)}
         </span>
       ) : null}
+      {onStop && (
+        <button
+          type="button"
+          onClick={onStop}
+          className="flex shrink-0 items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/20"
+        >
+          <Square size={10} className="fill-current" /> إيقاف المناقشة
+        </button>
+      )}
     </div>
   )
 }

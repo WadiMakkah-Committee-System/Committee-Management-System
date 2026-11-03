@@ -57,6 +57,7 @@ from app.services.meeting_service.agenda import add_agenda_item, delete_agenda_i
 from app.services.meeting_service.attachments import (
     add_agenda_item_attachments,
     add_attachment,
+    attachment_permissions,
     delete_attachment,
     get_attachment_download,
     list_attachments,
@@ -138,6 +139,7 @@ __all__ = [
     "open_teams_recording",
     "get_meeting",
     "list_attachments",
+    "attachment_permissions",
     "query_meeting_attachments",
     "list_extracted_items",
     "list_meetings",

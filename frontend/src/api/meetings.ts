@@ -197,6 +197,16 @@ export async function deleteAgendaItem(agendaItemId: string): Promise<void> {
   await apiClient.delete(`/meetings/agenda-items/${agendaItemId}`)
 }
 
+/** GET /meetings/{id}/attachments/permissions — هل يقدر المستخدم يضيف/يحذف مرفقات الاجتماع. */
+export async function fetchMeetingAttachmentPermissions(
+  meetingId: string,
+): Promise<{ can_add: boolean; can_delete: boolean }> {
+  const { data } = await apiClient.get<{ can_add: boolean; can_delete: boolean }>(
+    `/meetings/${meetingId}/attachments/permissions`,
+  )
+  return data
+}
+
 /**
  * مرفقات الاجتماع — أول استخدام فعلي لـdocument_links بالباك-إند (راجعي
  * رأس db/migrations/0021). الرفع multipart/form-data (وليس JSON)، بنفس

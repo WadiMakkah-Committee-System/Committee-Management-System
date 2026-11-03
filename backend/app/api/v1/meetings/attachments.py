@@ -19,6 +19,7 @@ from app.schemas.committee import CommitteeMemberUserOut
 from app.schemas.meeting import (
     MeetingAttachmentKind,
     MeetingAttachmentOut,
+    MeetingAttachmentPermissionsOut,
 )
 from app.core.background import run_detached
 from app.services import meeting_service, notification_service
@@ -93,6 +94,22 @@ async def list_meeting_attachments(
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     return [_attachment_out(document, k, linked_at, item_id) for document, k, linked_at, item_id in rows]
+
+
+@router.get("/{meeting_id}/attachments/permissions", response_model=MeetingAttachmentPermissionsOut)
+async def get_meeting_attachment_permissions(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> MeetingAttachmentPermissionsOut:
+    """
+    صلاحيات المستخدم على مرفقات الاجتماع (لإظهار/إخفاء "إضافة"/"حذف" بالواجهة).
+    - Authorization: meetings.attachments.view. 200: {can_add, can_delete}.
+    - الفحص الفعلي يبقى بنقاط الإضافة/الحذف نفسها — هذا للعرض فقط.
+    """
+    try:
+        flags = await meeting_service.attachment_permissions(db, actor=current_user, meeting_id=meeting_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return MeetingAttachmentPermissionsOut(**flags)
 
 
 @router.get("/{meeting_id}/attachments/{document_id}/download")

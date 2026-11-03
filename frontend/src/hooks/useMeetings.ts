@@ -240,6 +240,16 @@ export function useMeetingAttachments(meetingId: string | undefined, kind?: Meet
   })
 }
 
+/** صلاحيات المستخدم على مرفقات الاجتماع (إظهار "إضافة"/"حذف" — بلاغ لاما 2026-11-03). */
+export function useMeetingAttachmentPermissions(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: [...meetingsKeys.attachments(meetingId ?? ''), 'permissions'] as const,
+    queryFn: () => meetingsApi.fetchMeetingAttachmentPermissions(meetingId as string),
+    enabled: !!meetingId,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
 export function useUploadMeetingAttachment() {
   const queryClient = useQueryClient()
   return useMutation({

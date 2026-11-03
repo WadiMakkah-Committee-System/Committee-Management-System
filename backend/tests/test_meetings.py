@@ -558,6 +558,17 @@ async def test_member_without_attachments_add_permission_is_forbidden(
     )
     assert upload_attempt.status_code == 403, upload_attempt.text
 
+    # الواجهة تخفي "إضافة"/"حذف" حسب نفس الصلاحيات (بلاغ لاما 2026-11-03).
+    member_perms = await client.get(f"/api/v1/meetings/{meeting_id}/attachments/permissions", headers=ctx["member_headers"])
+    assert member_perms.status_code == 200, member_perms.text
+    assert member_perms.json() == {"can_add": False, "can_delete": False}
+    chair_perms = await client.get(f"/api/v1/meetings/{meeting_id}/attachments/permissions", headers=ctx["chair_headers"])
+    assert chair_perms.json()["can_add"] is True
+    outsider_perms = await client.get(
+        f"/api/v1/meetings/{meeting_id}/attachments/permissions", headers=ctx["outsider_headers"]
+    )
+    assert outsider_perms.status_code == 403
+
 
 async def test_outsider_cannot_view_attachments(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User

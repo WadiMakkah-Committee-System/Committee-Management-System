@@ -12,7 +12,7 @@ from app.core import storage_client
 from app.models.document import Document, DocumentLink
 from app.models.user import User
 from app.services import document_service
-from app.services.meeting_service.access import _require_access
+from app.services.meeting_service.access import _access_flags, _require_access
 from app.models.meeting import MeetingAgendaItem
 from app.services.meeting_service.errors import AgendaItemNotFoundError, AttachmentNotFoundError
 from app.services.meeting_service.loading import load_meeting
@@ -113,6 +113,22 @@ async def list_attachments(
     )
 
     return await query_meeting_attachments(db, meeting_id=meeting_id, kind=kind)
+
+
+async def attachment_permissions(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> dict[str, bool]:
+    """
+    الهدف (بلاغ لاما 2026-11-03 — زر "إضافة" بالمرفقات يظهر للأعضاء): صلاحيات
+    المستخدم الفعلية على مرفقات هالاجتماع (نظامية + دور اللجنة، نفس _require_access
+    بالضبط) — الواجهة تخفي "إضافة"/"حذف" عمّن لا يملكها.
+    المخرجات: {can_add, can_delete}. الصلاحية: meetings.attachments.view.
+    """
+    meeting = await load_meeting(db, meeting_id)
+    committee = meeting.committee
+    await _require_access(
+        db, actor, committee, "meetings.attachments.view", "ليست لديك صلاحية عرض مرفقات هذا الاجتماع"
+    )
+    flags = await _access_flags(db, actor, committee, ["meetings.attachments.add", "meetings.attachments.delete"])
+    return {"can_add": flags["meetings.attachments.add"], "can_delete": flags["meetings.attachments.delete"]}
 
 
 async def query_meeting_attachments(
