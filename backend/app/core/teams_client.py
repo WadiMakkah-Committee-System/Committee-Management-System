@@ -55,7 +55,16 @@ _MAX_RETRIES = 2
 
 
 class TeamsError(Exception):
-    """خطأ عام أثناء التخاطب مع Microsoft Graph — تُترجَم إلى 502 بطبقة الـAPI."""
+    """خطأ عام أثناء التخاطب مع Microsoft Graph — تُترجَم إلى 502 بطبقة الـAPI.
+
+    status_code (إضافة 2026-11-03 — بلاغ لاما: "توليد مسودة من تفريغ تيمز" فشل
+    برسالة عامة ما توضح السبب): رمز HTTP اللي رجّعه Graph (أو None لو فشل اتصال)،
+    يُعرض للمستخدم كرقم فقط (بلا تفاصيل Graph الداخلية) عشان نعرف السبب بسرعة.
+    """
+
+    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class TeamsNotConfiguredError(TeamsError):
@@ -64,6 +73,11 @@ class TeamsNotConfiguredError(TeamsError):
 
 class TeamsNotFoundError(TeamsError):
     """المورد غير موجود بـGraph (404) — مثلًا اجتماع حُذف من Teams مباشرة."""
+
+
+class TeamsForbiddenError(TeamsError):
+    """رفض Graph الطلب (403) — صلاحية تطبيق ناقصة (مثل OnlineMeetingTranscript.Read.All)
+    أو Application Access Policy لا تغطي حساب المنظِّم."""
 
 
 @dataclass(frozen=True)
@@ -239,13 +253,14 @@ async def _send(
     message = _graph_error_message(response)
     await response.aclose()
     if response.status_code == 404:
-        raise TeamsNotFoundError(f"المورد غير موجود في Microsoft Teams ({message})")
+        raise TeamsNotFoundError(f"المورد غير موجود في Microsoft Teams ({message})", status_code=404)
     if response.status_code == 403:
-        raise TeamsError(
+        raise TeamsForbiddenError(
             "رفض Microsoft Graph الطلب (403) — تأكدي من موافقة المدير على صلاحيات التطبيق "
-            f"ومن Application Access Policy لحساب المنظِّم ({message})"
+            f"ومن Application Access Policy لحساب المنظِّم ({message})",
+            status_code=403,
         )
-    raise TeamsError(f"فشل طلب Microsoft Graph ({response.status_code}): {message}")
+    raise TeamsError(f"فشل طلب Microsoft Graph ({response.status_code}): {message}", status_code=response.status_code)
 
 
 def _client() -> httpx.AsyncClient:
