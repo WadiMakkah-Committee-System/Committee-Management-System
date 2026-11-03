@@ -661,6 +661,17 @@ export interface TeamsCallTokenResponse {
   identity: 'teams_user' | 'guest'
 }
 
+/** GET /meetings/{id}/insights — إحصائيات الاجتماع (قرار لاما 2026-11-03). */
+export interface MeetingInsights {
+  duration_seconds: number | null
+  attended_members: number
+  total_members: number
+  /** مدة الكلام تقديرية من عدد كلمات الترجمة النصية. */
+  speakers: { user_id: string | null; name: string; estimated_seconds: number; segments: number }[]
+  agenda: { agenda_item_id: string; title: string; actual_seconds: number; planned_seconds: number | null }[]
+  has_transcript: boolean
+}
+
 /** سطر جدول الحضور التلقائي (GET /meetings/{id}/attendance). last_left_at=null ⇒ لسا داخل. */
 export interface MeetingAttendanceRow {
   user: CommitteeMemberUser

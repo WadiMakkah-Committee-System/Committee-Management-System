@@ -87,6 +87,11 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   const [raisedHands, setRaisedHands] = useState<RaisedHand[]>([])
   const [discussingAgendaItem, setDiscussingAgendaItem] = useState<DiscussingAgendaItem | null>(null)
   // آخر من أعطاه الرئيس الكلمة (طابور المتحدثين) — الغرفة تعرض تنبيه.
+  // الترجمة النصية الحية للاجتماع (يشغّلها رئيس اللجنة للكل) — قرار لاما 2026-11-03.
+  const [captionsState, setCaptionsState] = useState<{ enabled: boolean; language: string }>({
+    enabled: false,
+    language: 'ar-sa',
+  })
   const [floorGiven, setFloorGiven] = useState<{ userId: string; fullName: string; at: number } | null>(null)
   const [activityEvents, setActivityEvents] = useState<LiveActivityEvent[]>([])
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
@@ -137,7 +142,9 @@ export function useMeetingRealtime(meetingId: string | undefined) {
       (payload: {
         hands: { user_id: string; full_name: string; raised_at: string | null }[]
         discussing: DiscussingPayload | null
+        captions?: { enabled: boolean; language: string } | null
       }) => {
+        setCaptionsState(payload.captions ?? { enabled: false, language: 'ar-sa' })
         setRaisedHands(
           sortHands(
             payload.hands.map((h) => ({ userId: h.user_id, fullName: h.full_name, raisedAt: h.raised_at ?? '' })),
@@ -157,6 +164,11 @@ export function useMeetingRealtime(meetingId: string | undefined) {
             ]),
       )
       pushActivity(`${payload.full_name} رفع/ت يده/ا`)
+    })
+
+    socket.on('captions.state', (payload: { enabled: boolean; language: string }) => {
+      setCaptionsState(payload)
+      pushActivity(payload.enabled ? 'شُغّلت الترجمة النصية' : 'أُوقفت الترجمة النصية')
     })
 
     socket.on('floor.given', (payload: { user_id: string; full_name: string }) => {
@@ -323,6 +335,23 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     }
   }, [])
 
+  /** تشغيل/إيقاف الترجمة النصية للكل (رئيس اللجنة — الخادم يتحقق). */
+  const setCaptions = useCallback(
+    async (enabled: boolean, language = 'ar-sa'): Promise<{ ok: boolean; error?: string }> => {
+      const socket = socketRef.current
+      if (!socket || !socket.connected) return { ok: false, error: 'لا يوجد اتصال بقناة الاجتماع حاليًا.' }
+      try {
+        const ack = (await socket.timeout(8000).emitWithAck('captions.set', { enabled, language })) as
+          | { ok: boolean; error?: string }
+          | undefined
+        return ack ?? { ok: false, error: 'لم يصل رد من الخادم — حاولي مجددًا.' }
+      } catch {
+        return { ok: false, error: 'انتهت مهلة انتظار رد الخادم — حاولي مجددًا.' }
+      }
+    },
+    [],
+  )
+
   /** إيقاف مناقشة البند الحالي (رئيس اللجنة) — بلاغ لاما 2026-11-03. */
   const stopDiscussing = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     const socket = socketRef.current
@@ -374,6 +403,8 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     floorGiven,
     giveFloor,
     stopDiscussing,
+    captionsState,
+    setCaptions,
     activityEvents,
     onlineUserIds,
     sendChatMessage,

@@ -60,6 +60,14 @@ from app.services.meeting_service.attendance import (
     heartbeat as attendance_heartbeat,
     start_session as start_attendance_session,
 )
+from app.services.meeting_service.insights import (
+    SegmentIn as TranscriptSegmentIn,
+    catch_up as meeting_catch_up,
+    close_agenda_sessions,
+    meeting_insights,
+    open_agenda_session,
+    save_transcript_segments,
+)
 from app.services.meeting_service.attachments import (
     add_agenda_item_attachments,
     add_attachment,
@@ -145,6 +153,12 @@ __all__ = [
     "open_teams_recording",
     "get_meeting",
     "list_attachments",
+    "TranscriptSegmentIn",
+    "meeting_catch_up",
+    "close_agenda_sessions",
+    "meeting_insights",
+    "open_agenda_session",
+    "save_transcript_segments",
     "attendance_summary",
     "end_attendance_session",
     "attendance_heartbeat",
