@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { CalendarRange, FileText, Paperclip, Plus, Save, Trash2, Vote } from 'lucide-react'
+import { CalendarRange, FileText, Lock, Paperclip, Plus, Save, Trash2, Vote } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -259,6 +259,7 @@ export function DecisionFormModal({
             <p className="-mt-1 text-xs text-text-muted">
               موافق/غير موافق جاهزان افتراضيًا — عدِّلهما أو أضف خيارات أخرى. علِّم "تُحسب موافقة" على
               أي خيار يُعتبر تأييدًا للقرار (تُستخدم لحساب الأغلبية تلقائيًا؛ اتركيها فارغة لاستطلاع رأي بحت).
+              وخيار "ممتنع" يُضاف تلقائيًا لكل تصويت ولا يُحتسب ضمن الأغلبية.
             </p>
 
             <div className="flex flex-col gap-2">
@@ -291,6 +292,19 @@ export function DecisionFormModal({
                   )}
                 </div>
               ))}
+              {/* "ممتنع" خيار ثابت يضيفه الكود تلقائيًا عند الطرح (راجعي
+                  decision_service/voting.py) — نفس عرضه بـDecisionDetailPage
+                  (2026-11-02)، حتى تعرف رئيسة اللجنة أنه سيُضاف دون أن
+                  تضيفه بنفسها، سواء طرحت التصويت من هنا مباشرة أو لاحقًا. */}
+              <div className="flex items-center gap-2 opacity-70">
+                <div className="flex flex-1 items-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-elevated px-3 py-2 text-sm text-text-muted">
+                  <Lock size={13} className="shrink-0" />
+                  ممتنع
+                </div>
+                <span className="shrink-0 rounded-xs bg-bg-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-muted">
+                  يُضاف تلقائيًا
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={addOption}
