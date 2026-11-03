@@ -14,6 +14,7 @@
 لجنة _create_approved_committee (حتى 2026-12-01).
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -403,25 +404,17 @@ async def test_call_token_for_embedded_join(
     assert hidden.status_code == 403, hidden.text
 
 
-def _fake_aad_token(claims: dict) -> str:
-    """JWT شكلي (بدون توقيع حقيقي) — التوقيع يتحقق منه ACS، وهنا نختبر منطقنا فقط."""
-    import base64
-    import json
-
-    def enc(obj: dict) -> str:
-        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
-
-    return f"{enc({'alg': 'RS256'})}.{enc(claims)}.sig"
-
-
 async def test_call_token_with_microsoft_account(
     client: AsyncClient, auth_headers, roles_by_name, super_admin_user: User, fake_teams: FakeTeams, monkeypatch
 ) -> None:
+    """
+    الدخول بهوية Microsoft: توكن Microsoft (مشفّر — ما نقرأه) + object_id لازم
+    يطابق الحساب المربوط بمستخدم المنصة؛ ACS هو اللي يتحقق من التوكن نفسه.
+    """
     ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
     await _grant_committee_role_permissions(["meetings.join"], slug="chair")
     meeting_id = (await _create(client, ctx)).json()["meeting_id"]
     monkeypatch.setattr(settings, "ACS_CONNECTION_STRING", "endpoint=https://x/;accesskey=y")
-    monkeypatch.setattr(settings, "TEAMS_TENANT_ID", "tenant-1")
     monkeypatch.setattr(settings, "TEAMS_CLIENT_ID", "client-1")
 
     exchanged: dict = {}
@@ -432,35 +425,51 @@ async def test_call_token_with_microsoft_account(
 
     monkeypatch.setattr(acs_client, "_exchange_sync", fake_exchange)
     url = f"/api/v1/meetings/{meeting_id}/teams/call-token"
+    oid = uuid.uuid4()
+    opaque_token = "eyJ.encrypted.part.four.five"
+
+    # الرئيس ما دخل المنصة بـMicrosoft بعد (غير مربوط) ⇒ رفض قبل ACS.
+    unlinked = await client.post(
+        url, headers=ctx["chair_headers"], json={"microsoft_token": opaque_token, "microsoft_object_id": str(oid)}
+    )
+    assert unlinked.status_code == 403, unlinked.text
+    assert exchanged == {}
+
+    chair_id = (await client.get("/api/v1/users/me", headers=ctx["chair_headers"])).json()["user_id"]
+    async with AsyncSessionLocal() as db:
+        chair = (await db.execute(select(User).where(User.user_id == uuid.UUID(chair_id)))).scalar_one()
+        chair.microsoft_object_id = oid
+        await db.commit()
 
     ok = await client.post(
-        url,
-        headers=ctx["chair_headers"],
-        json={"microsoft_token": _fake_aad_token({"tid": "tenant-1", "oid": "oid-1", "preferred_username": "a@co"})},
+        url, headers=ctx["chair_headers"], json={"microsoft_token": opaque_token, "microsoft_object_id": str(oid)}
     )
     assert ok.status_code == 200, ok.text
     assert ok.json()["identity"] == "teams_user"
     assert ok.json()["token"] == "teams-user-token"
-    assert exchanged["oid"] == "oid-1"
+    assert exchanged["oid"] == str(oid)
 
-    # حساب من مستأجر آخر ⇒ يُرفض قبل الاتصال بـACS.
+    # حساب Microsoft غير المربوط بهالمستخدم ⇒ رفض قبل ACS.
     exchanged.clear()
     other = await client.post(
-        url, headers=ctx["chair_headers"], json={"microsoft_token": _fake_aad_token({"tid": "other", "oid": "oid-2"})}
+        url,
+        headers=ctx["chair_headers"],
+        json={"microsoft_token": opaque_token, "microsoft_object_id": str(uuid.uuid4())},
     )
     assert other.status_code == 403, other.text
     assert exchanged == {}
 
-    garbage = await client.post(url, headers=ctx["chair_headers"], json={"microsoft_token": "not-a-jwt"})
-    assert garbage.status_code == 403, garbage.text
+    # ACS رفض التوكن ⇒ 403 برسالة عامة.
+    def rejecting_exchange(aad_token: str, object_id: str):
+        error = Exception("InvalidAccessToken")
+        error.status_code = 401  # type: ignore[attr-defined]
+        raise error
 
-    # غير عضو باللجنة ⇒ 403 حتى مع توكن Microsoft صالح الشكل.
-    outsider = await client.post(
-        url,
-        headers=ctx["outsider_headers"],
-        json={"microsoft_token": _fake_aad_token({"tid": "tenant-1", "oid": "oid-1"})},
+    monkeypatch.setattr(acs_client, "_exchange_sync", rejecting_exchange)
+    rejected = await client.post(
+        url, headers=ctx["chair_headers"], json={"microsoft_token": opaque_token, "microsoft_object_id": str(oid)}
     )
-    assert outsider.status_code == 403, outsider.text
+    assert rejected.status_code == 403, rejected.text
 
 
 # ============================== المسودة من التفريغ ==============================

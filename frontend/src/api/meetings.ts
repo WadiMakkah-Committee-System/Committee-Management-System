@@ -122,16 +122,16 @@ export async function getTeamsJoinUrl(meetingId: string): Promise<TeamsJoinRespo
  * تجربة الانضمام المدمج (Azure Communication Services): توكن قصير العمر + رابط
  * اجتماع Teams + اسم العرض — نفس فحوص getTeamsJoinUrl بالباك-إند (meetings.join،
  * مربوط بتيمز، لم ينتهِ). 503 لو ACS غير مهيّأ بالخادم.
- * microsoftToken (اختياري): توكن Microsoft بعد تسجيل الدخول بحساب الشركة ⇒
+ * microsoft (اختياري): توكن Microsoft + معرّف الحساب بعد الدخول بحساب الشركة ⇒
  * الدخول بالهوية الحقيقية (identity='teams_user')؛ بدونه ⇒ ضيف. 403 لو رُفض.
  */
 export async function getTeamsCallToken(
   meetingId: string,
-  microsoftToken?: string | null,
+  microsoft?: { token: string; objectId: string } | null,
 ): Promise<TeamsCallTokenResponse> {
   const { data } = await apiClient.post<TeamsCallTokenResponse>(
     `/meetings/${meetingId}/teams/call-token`,
-    microsoftToken ? { microsoft_token: microsoftToken } : undefined,
+    microsoft ? { microsoft_token: microsoft.token, microsoft_object_id: microsoft.objectId } : undefined,
   )
   return data
 }
