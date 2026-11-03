@@ -395,24 +395,22 @@ async def test_assignees_are_derived_automatically_from_committee_membership(
     assert assignee_ids == {ctx["chair_id"], ctx["member_ids"][0]}
 
 
-async def test_chair_defines_custom_multi_choice_options(
+async def test_open_voting_always_uses_fixed_options(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:
     """
-    تحديث 2026-09-07: خيارات التصويت حرة بالكامل — لا يوجد إلزام بموافق/
-    غير موافق. هنا 3 خيارات مخصَّصة بلا أي خيار is_approving (استطلاع رأي
-    بحت) — النتيجة يجب ألّا تُرفض تلقائيًا حتى بعد إغلاق التصويت، وتبقى
-    بانتظار اعتماد يدوي من رئيسة اللجنة.
+    تحديث 2026-11-03: خيارات التصويت ثابتة (موافق / غير موافق / ممتنع) —
+    خيارات مخصّصة يرسلها عميل قديم تُتجاهَل، و"موافق" وحده يُحتسب موافقة.
     """
     ctx = await _create_approved_committee(
-        client, auth_headers, roles_by_name, suffix="customopts", member_count=1
+        client, auth_headers, roles_by_name, suffix="fixedopts", member_count=1
     )
 
     create = await client.post(
         "/api/v1/decisions",
         json={
             "committee_id": ctx["committee_id"],
-            "title": "استطلاع اختيار المورّد",
+            "title": "قرار بخيارات ثابتة",
             "classification": "voting",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
@@ -425,55 +423,39 @@ async def test_chair_defines_custom_multi_choice_options(
         f"/api/v1/decisions/{decision_id}/open-voting",
         json={
             "options": [
-                {"label": "المورّد أ", "is_approving": False},
-                {"label": "المورّد ب", "is_approving": False},
-                {"label": "المورّد ج", "is_approving": False},
+                {"label": "المورّد أ", "is_approving": True},
+                {"label": "غير موافق", "is_approving": True},
             ]
         },
         headers=ctx["chair_headers"],
     )
-    assert open_vote.status_code == 201 or open_vote.status_code == 200, open_vote.text
-    labels = {o["label"] for o in open_vote.json()["vote_options"]}
-    assert labels == {"المورّد أ", "المورّد ب", "المورّد ج"}
-    option_b = next(o["option_id"] for o in open_vote.json()["vote_options"] if o["label"] == "المورّد ب")
+    assert open_vote.status_code == 200, open_vote.text
+    options = open_vote.json()["vote_options"]
+    assert [o["label"] for o in options] == ["موافق", "غير موافق", "ممتنع"]
+    flags = {o["label"]: (o["is_approving"], o["is_abstain"]) for o in options}
+    assert flags == {"موافق": (True, False), "غير موافق": (False, False), "ممتنع": (False, True)}
 
-    v1 = await client.post(
-        f"/api/v1/decisions/{decision_id}/vote",
-        json={"option_id": option_b},
-        headers=ctx["chair_headers"],
-    )
-    assert v1.status_code == 200, v1.text
-
-    v2 = await client.post(
-        f"/api/v1/decisions/{decision_id}/vote",
-        json={"option_id": option_b},
-        headers=ctx["member_headers_list"][0],
-    )
-    assert v2.status_code == 200, v2.text
-    body = v2.json()
-    # استطلاع بحت بلا أي خيار is_approving=true → لا رفض تلقائي إطلاقًا،
-    # يبقى 'voting' مع voting_closed_at محدَّدًا بانتظار قرار الرئيسة.
-    assert body["status"] == "voting"
-    assert body["voting_closed_at"] is not None
-    assert body["rejection_reason"] is None
-
-    approve = await client.post(
-        f"/api/v1/decisions/{decision_id}/approve", headers=ctx["chair_headers"]
-    )
-    assert approve.status_code == 200, approve.text
-    assert approve.json()["status"] == "approved"
+    # "غير موافق" من الطرفين: حتى لو أرسل العميل is_approving=true له، لا
+    # يُحتسب موافقة — يُرفض القرار تلقائيًا عند الإغلاق.
+    reject_id = next(o["option_id"] for o in options if o["label"] == "غير موافق")
+    for headers in (ctx["chair_headers"], ctx["member_headers_list"][0]):
+        vote = await client.post(
+            f"/api/v1/decisions/{decision_id}/vote", json={"option_id": reject_id}, headers=headers
+        )
+        assert vote.status_code == 200, vote.text
+    assert vote.json()["status"] == "rejected"
 
 
-async def test_open_voting_requires_at_least_two_options(
+async def test_open_voting_needs_no_options_in_body(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:
-    ctx = await _create_approved_committee(client, auth_headers, roles_by_name, suffix="oneopt")
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name, suffix="nobodyopts")
 
     create = await client.post(
         "/api/v1/decisions",
         json={
             "committee_id": ctx["committee_id"],
-            "title": "قرار بخيار واحد فقط",
+            "title": "قرار يُطرح بلا خيارات بالطلب",
             "classification": "voting",
             "start_date": "2026-09-10",
             "end_date": "2026-10-10",
@@ -483,11 +465,10 @@ async def test_open_voting_requires_at_least_two_options(
     decision_id = create.json()["decision_id"]
 
     response = await client.post(
-        f"/api/v1/decisions/{decision_id}/open-voting",
-        json={"options": [{"label": "خيار وحيد", "is_approving": True}]},
-        headers=ctx["chair_headers"],
+        f"/api/v1/decisions/{decision_id}/open-voting", json={}, headers=ctx["chair_headers"]
     )
-    assert response.status_code == 422, response.text
+    assert response.status_code == 200, response.text
+    assert [o["label"] for o in response.json()["vote_options"]] == ["موافق", "غير موافق", "ممتنع"]
 
 
 async def test_member_without_view_result_sees_only_own_vote(

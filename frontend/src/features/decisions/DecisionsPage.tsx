@@ -107,7 +107,7 @@ export function DecisionsPage() {
    */
   async function handleCreate(values: DecisionFormSubmitValues) {
     setFormError(null)
-    const { votingOptions, attachmentFile, ...payload } = values
+    const { openVotingNow, attachmentFile, ...payload } = values
     try {
       const created = await createMutation.mutateAsync(payload)
       if (attachmentFile) {
@@ -117,11 +117,11 @@ export function DecisionsPage() {
           showToast(`تم إنشاء القرار، لكن تعذّر رفع المرفق: ${extractErrorMessage(err)}`, 'error')
         }
       }
-      if (votingOptions && votingOptions.length >= 2) {
+      if (openVotingNow) {
         try {
           await openVotingMutation.mutateAsync({
             decisionId: created.decision_id,
-            payload: { options: votingOptions, voting_deadline: null },
+            payload: { voting_deadline: null },
           })
           showToast('تم إنشاء القرار وطرحه للتصويت بنجاح', 'success')
         } catch (err) {

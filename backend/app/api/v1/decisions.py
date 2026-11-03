@@ -187,15 +187,14 @@ async def open_voting(
     db: AsyncSession = Depends(get_db),
 ) -> DecisionOut:
     """
-    خيارات التصويت (options) تُكتب هنا من رئيسة اللجنة صراحة (قرار
-    2026-09-07) — راجعي docstring decision_service.open_voting.
+    الخيارات ثابتة (موافق / غير موافق / ممتنع، تحديث 2026-11-03) — راجعي
+    docstring decision_service.open_voting.
     """
     try:
         decision = await decision_service.open_voting(
             db,
             actor=current_user,
             decision_id=decision_id,
-            options=[opt.model_dump() for opt in payload.options],
             voting_deadline=payload.voting_deadline,
         )
     except _SERVICE_ERRORS as exc:

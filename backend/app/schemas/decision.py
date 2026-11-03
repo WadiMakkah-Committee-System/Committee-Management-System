@@ -7,6 +7,11 @@ Pydantic Schemas الخاصة بوحدة "إدارة القرارات" (القر
 رئيس اللجنة بس والأعضاء يقررون"): خيارات التصويت (DecisionVoteOptionCreate)
 تُكتب من رئيسة اللجنة عند فتح التصويت (DecisionOpenVoting)، بدل أن تكون
 موافق/غير موافق ثابتة بالكود — راجعي رأس db/migrations/0025_decision_vote_options.sql.
+
+تحديث 2026-11-03 (قرار صاحب المشروع بعد مقارنة منصات الحوكمة): رجعت خيارات
+التصويت ثابتة: موافق / غير موافق / ممتنع. DecisionOpenVoting ما يستقبل
+options بعد الآن (أي options يرسلها عميل قديم تُتجاهَل بصمت — extra="ignore"
+الافتراضي بـPydantic)، والخيارات تُنشأ بالكامل في decision_service/voting.py.
 """
 
 import uuid
@@ -59,25 +64,13 @@ class DecisionUpdate(BaseModel):
     end_date: date | None = None
 
 
-class DecisionVoteOptionCreate(BaseModel):
-    """
-    خيار تصويت واحد تكتبه رئيسة اللجنة عند فتح التصويت — نص حر بالكامل
-    (مثال: "موافق"/"غير موافق"، أو أي خيارات أخرى). is_approving يحدَّد
-    صراحة (لا يُستنتَج من النص) — يحدد هل هذا الخيار يُحسب "موافقة" عند
-    حساب الأغلبية التلقائية (راجعي رأس migration 0025 للتفصيل الكامل).
-    """
-
-    label: str = Field(min_length=1, max_length=255)
-    is_approving: bool = False
-
-
 class DecisionOpenVoting(BaseModel):
     """
-    فتح التصويت — options إلزامية (خياران على الأقل، وإلا لا معنى
-    للتصويت). voting_deadline اختياري (راجعي ملاحظة التصميم (2) بـ0021).
+    فتح التصويت — الخيارات ثابتة (موافق / غير موافق / ممتنع، تحديث
+    2026-11-03) ولا تُرسل من العميل. voting_deadline اختياري (راجعي ملاحظة
+    التصميم (2) بـ0021).
     """
 
-    options: list[DecisionVoteOptionCreate] = Field(min_length=2)
     voting_deadline: datetime | None = None
 
 

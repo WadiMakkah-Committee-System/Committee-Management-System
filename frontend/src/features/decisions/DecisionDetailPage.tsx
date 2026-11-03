@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   Download,
   Gavel,
-  Lock,
   Paperclip,
   Pencil,
   Plus,
@@ -42,7 +41,7 @@ import { DecisionStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { DecisionFormModal, type DecisionFormSubmitValues } from './DecisionFormModal'
 import { cn, extractErrorMessage, formatDate, formatDateTime, scopeFor } from '@/lib/utils'
-import type { DecisionVoteOptionInput } from '@/types'
+import { FixedVoteOptions } from './FixedVoteOptions'
 
 /**
  * تفاصيل قرار واحد + التصويت والاعتماد. راجعي رأس decision_service.py
@@ -78,11 +77,6 @@ export function DecisionDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [votingDeadline, setVotingDeadline] = useState('')
-  const [optionInputs, setOptionInputs] = useState<DecisionVoteOptionInput[]>([
-    { label: 'موافق', is_approving: true },
-    { label: 'غير موافق', is_approving: false },
-  ])
-  const [optionsError, setOptionsError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   // اختيار "ممتنع" يفتح مربع سبب إلزامي قبل الإرسال فعليًا (راجعي رأس
   // migration 0040) — بدل تصويت فوري مثل بقية الخيارات.
@@ -170,41 +164,13 @@ export function DecisionDetailPage() {
     })
   }
 
-  function updateOption(index: number, patch: Partial<DecisionVoteOptionInput>) {
-    setOptionInputs((prev) => prev.map((opt, i) => (i === index ? { ...opt, ...patch } : opt)))
-  }
-
-  function addOption() {
-    setOptionInputs((prev) => [...prev, { label: '', is_approving: false }])
-  }
-
-  function removeOption(index: number) {
-    setOptionInputs((prev) => prev.filter((_, i) => i !== index))
-  }
-
   function handleOpenVoting() {
     if (!decisionId) return
-    setOptionsError(null)
     setActionError(null)
-
-    const cleaned = optionInputs.map((o) => ({ ...o, label: o.label.trim() })).filter((o) => o.label)
-    if (cleaned.length < 2) {
-      setOptionsError('يجب إدخال خيارين على الأقل')
-      return
-    }
-    const labels = cleaned.map((o) => o.label)
-    if (new Set(labels).size !== labels.length) {
-      setOptionsError('لا يمكن تكرار نفس نص الخيار')
-      return
-    }
-
     openVotingMutation.mutate(
       {
         decisionId,
-        payload: {
-          options: cleaned,
-          voting_deadline: votingDeadline ? new Date(votingDeadline).toISOString() : null,
-        },
+        payload: { voting_deadline: votingDeadline ? new Date(votingDeadline).toISOString() : null },
       },
       {
         onSuccess: () => showToast('تم طرح القرار للتصويت', 'success'),
@@ -537,66 +503,7 @@ export function DecisionDetailPage() {
       {canOpenVoting && (
         <Card>
           <h2 className="text-sm font-semibold text-text-primary">طرح القرار للتصويت</h2>
-          <p className="mt-1 text-xs text-text-muted">
-            حدِّد خيارات التصويت (موافق/غير موافق افتراضيًا، ويمكن تعديلها أو إضافة خيارات أخرى).
-            علّمي "تُحسب موافقة" على أي خيار يُعتبر تأييدًا للقرار — تُستخدم لحساب الأغلبية تلقائيًا.
-            وخيار "ممتنع" يُضاف تلقائيًا لكل تصويت ولا يُحتسب ضمن الأغلبية.
-          </p>
-
-          <div className="mt-3 flex flex-col gap-2">
-            {optionInputs.map((opt, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <Input
-                  placeholder={`الخيار ${index + 1}`}
-                  value={opt.label}
-                  onChange={(e) => updateOption(index, { label: e.target.value })}
-                  className="flex-1"
-                />
-                <label className="flex shrink-0 items-center gap-1.5 text-xs text-text-secondary">
-                  <input
-                    type="checkbox"
-                    checked={opt.is_approving}
-                    onChange={(e) => updateOption(index, { is_approving: e.target.checked })}
-                    className="h-4 w-4 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
-                  />
-                  تُحسب موافقة
-                </label>
-                {optionInputs.length > 2 && (
-                  <button
-                    type="button"
-                    onClick={() => removeOption(index)}
-                    className="shrink-0 rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
-                    aria-label="حذف الخيار"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </div>
-            ))}
-            {/* "ممتنع" خيار ثابت يضيفه الكود تلقائيًا عند الطرح (راجعي
-                decision_service/voting.py) — لا يُكتب ضمن optionInputs ولا
-                يصح تعديله/حذفه. عُرض هنا بصريًا فقط (2026-11-02، بعد مقارنة
-                منصات حوكمة عالمية مثل iDeals Board وLoomio اللي تعرض
-                "ممتنع" ثابتًا ضمن خيارات التصويت من البداية بدل إخفائه)
-                حتى تعرف رئيسة اللجنة أنه سيُضاف دون أن تضيفه بنفسها. */}
-            <div className="flex items-center gap-2 opacity-70">
-              <div className="flex flex-1 items-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-elevated px-3 py-2 text-sm text-text-muted">
-                <Lock size={13} className="shrink-0" />
-                ممتنع
-              </div>
-              <span className="shrink-0 rounded-xs bg-bg-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-muted">
-                يُضاف تلقائيًا
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={addOption}
-              className="flex w-fit items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-brand-primary transition-colors hover:bg-brand-primary/10"
-            >
-              <Plus size={13} /> إضافة خيار
-            </button>
-            {optionsError && <p className="text-xs font-medium text-danger">{optionsError}</p>}
-          </div>
+          <FixedVoteOptions className="mt-3" />
 
           <p className="mt-4 text-xs text-text-muted">
             موعد انتهاء اختياري — بدونه يُغلق التصويت فقط عند اكتمال تصويت جميع الأعضاء.

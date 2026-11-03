@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Trash2, Vote as VoteIcon } from 'lucide-react'
+import { Plus, Vote as VoteIcon } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
@@ -16,7 +16,8 @@ import {
   useOpenVoting,
 } from '@/hooks/useDecisions'
 import { cn, extractErrorMessage } from '@/lib/utils'
-import type { Decision, DecisionClassification, DecisionVoteOptionInput } from '@/types'
+import type { Decision, DecisionClassification } from '@/types'
+import { FixedVoteOptions } from '@/features/decisions/FixedVoteOptions'
 
 const CLASSIFICATION_OPTIONS = [
   { value: 'final', label: 'قرار نهائي (يُعتمد مباشرة)' },
@@ -38,16 +39,9 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
   const myVote = decision.votes.find((v) => v.voter.user_id === currentUserId)
   const totalEligible = Math.max(decision.assignees.length, 1)
 
-  // بلاغ لاما 2026-09-13 (لايف): كانت خيارات التصويت هنا ثابتة (موافق/غير
-  // موافق) رغم أن الباك-إند وDecisionDetailPage.tsx يدعمان خيارات رئيسة
-  // اللجنة الحرة منذ 2026-09-07 — نفس القدرة الآن هنا (نسخة مختصرة تناسب
-  // عرض اللوحة الجانبية 340px)، بدل الاضطرار للخروج من غرفة الاجتماع.
+  // تحديث 2026-11-03: خيارات التصويت ثابتة (موافق / غير موافق / ممتنع) —
+  // النموذج هنا يعرضها للتأكيد فقط قبل فتح التصويت.
   const [showVotingForm, setShowVotingForm] = useState(false)
-  const [optionInputs, setOptionInputs] = useState<DecisionVoteOptionInput[]>([
-    { label: 'موافق', is_approving: true },
-    { label: 'غير موافق', is_approving: false },
-  ])
-  const [optionsError, setOptionsError] = useState<string | null>(null)
 
   async function vote(optionId: string) {
     try {
@@ -57,34 +51,11 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
     }
   }
 
-  function updateOption(index: number, patch: Partial<DecisionVoteOptionInput>) {
-    setOptionInputs((prev) => prev.map((opt, i) => (i === index ? { ...opt, ...patch } : opt)))
-  }
-
-  function addOption() {
-    setOptionInputs((prev) => [...prev, { label: '', is_approving: false }])
-  }
-
-  function removeOption(index: number) {
-    setOptionInputs((prev) => prev.filter((_, i) => i !== index))
-  }
-
   async function openVoting() {
-    setOptionsError(null)
-    const cleaned = optionInputs.map((o) => ({ ...o, label: o.label.trim() })).filter((o) => o.label)
-    if (cleaned.length < 2) {
-      setOptionsError('أدخلي خيارين على الأقل')
-      return
-    }
-    const labels = cleaned.map((o) => o.label)
-    if (new Set(labels).size !== labels.length) {
-      setOptionsError('لا يمكن تكرار نفس نص الخيار')
-      return
-    }
     try {
       await openVotingMutation.mutateAsync({
         decisionId: decision.decision_id,
-        payload: { options: cleaned },
+        payload: {},
       })
       showToast('تم فتح التصويت على القرار')
       setShowVotingForm(false)
@@ -117,44 +88,8 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
 
       {decision.status === 'pending' && decision.classification === 'voting' && showVotingForm && (
         <div className="flex flex-col gap-2 rounded-sm border border-border-default bg-bg-elevated p-2.5">
-          <p className="text-[11px] text-text-muted">حدّدي خيارات التصويت (خيارين على الأقل)</p>
-          {optionInputs.map((opt, index) => (
-            <div key={index} className="flex items-center gap-1.5">
-              <Input
-                placeholder={`الخيار ${index + 1}`}
-                value={opt.label}
-                onChange={(e) => updateOption(index, { label: e.target.value })}
-                className="flex-1"
-              />
-              <label className="flex shrink-0 items-center gap-1 text-[10px] text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={opt.is_approving}
-                  onChange={(e) => updateOption(index, { is_approving: e.target.checked })}
-                  className="h-3.5 w-3.5 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
-                />
-                موافقة
-              </label>
-              {optionInputs.length > 2 && (
-                <button
-                  type="button"
-                  onClick={() => removeOption(index)}
-                  className="shrink-0 rounded-sm p-1 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
-                  aria-label="حذف الخيار"
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={addOption}
-            className="flex w-fit items-center gap-1 rounded-sm px-1.5 py-1 text-[11px] font-medium text-brand-primary transition-colors hover:bg-brand-primary/10"
-          >
-            <Plus size={12} /> إضافة خيار
-          </button>
-          {optionsError && <p className="text-[11px] font-medium text-danger">{optionsError}</p>}
+          <p className="text-[11px] font-semibold text-text-secondary">خيارات التصويت</p>
+          <FixedVoteOptions compact />
           <div className="flex gap-1.5">
             <Button size="sm" onClick={openVoting} loading={openVotingMutation.isPending}>
               تأكيد فتح التصويت
@@ -292,52 +227,13 @@ export function DecisionsPanel({
   const [classification, setClassification] = useState<DecisionClassification>('voting')
   const [formError, setFormError] = useState<string | null>(null)
 
-  // تحديث 2026-09-16 (طلب لاما — "لما اسوي قرار المفترض لما اختار خاضع
-  // للتصويت تظهر فقرة مباشرة إدخل خيارات التصويت ثم اسوي نشر"): هذي
-  // اللوحة (غرفة الاجتماع) كانت لا تزال بخطوتين منفصلتين — إنشاء القرار
-  // أولًا، ثم زر "فتح التصويت" منفصل بعده على البطاقة (DecisionCard
-  // أدناه) — رغم أن DecisionFormModal.tsx (صفحة القرارات المستقلة) صار
-  // خطوة واحدة مدمجة منذ 2026-09-08 بنفس السبب بالضبط. نفس النمط الآن هنا.
-  const [optionInputs, setOptionInputs] = useState<DecisionVoteOptionInput[]>([
-    { label: 'موافق', is_approving: true },
-    { label: 'غير موافق', is_approving: false },
-  ])
-  const [optionsError, setOptionsError] = useState<string | null>(null)
-
-  function updateOption(index: number, patch: Partial<DecisionVoteOptionInput>) {
-    setOptionInputs((prev) => prev.map((opt, i) => (i === index ? { ...opt, ...patch } : opt)))
-  }
-
-  function addOption() {
-    setOptionInputs((prev) => [...prev, { label: '', is_approving: false }])
-  }
-
-  function removeOption(index: number) {
-    setOptionInputs((prev) => prev.filter((_, i) => i !== index))
-  }
-
   async function handleCreate() {
     setFormError(null)
-    setOptionsError(null)
     if (title.trim().length < 2) {
       setFormError('اسم القرار يجب أن يكون حرفين على الأقل')
       return
     }
 
-    let cleanedOptions: DecisionVoteOptionInput[] | null = null
-    if (classification === 'voting') {
-      const cleaned = optionInputs.map((o) => ({ ...o, label: o.label.trim() })).filter((o) => o.label)
-      if (cleaned.length < 2) {
-        setOptionsError('يجب إدخال خيارين على الأقل')
-        return
-      }
-      const labels = cleaned.map((o) => o.label)
-      if (new Set(labels).size !== labels.length) {
-        setOptionsError('لا يمكن تكرار نفس نص الخيار')
-        return
-      }
-      cleanedOptions = cleaned
-    }
 
     try {
       const created = await createMutation.mutateAsync({
@@ -352,11 +248,11 @@ export function DecisionsPanel({
         start_date: todayIso(),
         end_date: (meetingScheduledEndAt ?? meetingScheduledAt).slice(0, 10),
       })
-      if (cleanedOptions) {
+      if (classification === 'voting') {
         try {
           await openVotingMutation.mutateAsync({
             decisionId: created.decision_id,
-            payload: { options: cleanedOptions, voting_deadline: null },
+            payload: { voting_deadline: null },
           })
           showToast('تم إنشاء القرار وطرحه للتصويت بنجاح')
         } catch (err) {
@@ -369,10 +265,6 @@ export function DecisionsPanel({
         showToast('تم إنشاء القرار')
       }
       setTitle('')
-      setOptionInputs([
-        { label: 'موافق', is_approving: true },
-        { label: 'غير موافق', is_approving: false },
-      ])
       setShowForm(false)
     } catch (err) {
       setFormError(extractErrorMessage(err))
@@ -411,46 +303,7 @@ export function DecisionsPanel({
           {classification === 'voting' && (
             <div className="flex flex-col gap-2 rounded-sm border border-border-default bg-bg-surface p-2.5">
               <p className="text-[11px] font-semibold text-text-secondary">خيارات التصويت</p>
-              <p className="text-[10px] text-text-muted">
-                موافق/غير موافق جاهزان افتراضيًا — عدّليهما أو أضيفي خيارات أخرى.
-              </p>
-              {optionInputs.map((opt, index) => (
-                <div key={index} className="flex items-center gap-1.5">
-                  <Input
-                    placeholder={`الخيار ${index + 1}`}
-                    value={opt.label}
-                    onChange={(e) => updateOption(index, { label: e.target.value })}
-                    className="flex-1"
-                  />
-                  <label className="flex shrink-0 items-center gap-1 text-[10px] text-text-secondary">
-                    <input
-                      type="checkbox"
-                      checked={opt.is_approving}
-                      onChange={(e) => updateOption(index, { is_approving: e.target.checked })}
-                      className="h-3.5 w-3.5 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
-                    />
-                    تُحسب موافقة
-                  </label>
-                  {optionInputs.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => removeOption(index)}
-                      className="shrink-0 rounded-sm p-1 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
-                      aria-label="حذف الخيار"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={addOption}
-                className="flex w-fit items-center gap-1 rounded-sm px-1.5 py-1 text-[11px] font-medium text-brand-primary transition-colors hover:bg-brand-primary/10"
-              >
-                <Plus size={12} /> إضافة خيار
-              </button>
-              {optionsError && <p className="text-[11px] font-medium text-danger">{optionsError}</p>}
+              <FixedVoteOptions compact />
             </div>
           )}
 

@@ -979,9 +979,11 @@ export interface MeetingDraft {
  *
  * تحديث 2026-09-07 (قرار صريح: "الي يحدد بيانات التصويت رئيس اللجنة بس
  * والأعضاء يقررون"): خيارات التصويت لم تعد ثابتة (موافق/غير موافق) —
- * رئيسة اللجنة تكتبها بنفسها عند فتح التصويت (DecisionVoteOptionInput)،
- * والعضو يصوّت لـoption_id محدَّد بدل قيمة ثابتة. راجعي رأس
- * db/migrations/0025_decision_vote_options.sql للتفصيل الكامل.
+ * رئيسة اللجنة تكتبها بنفسها عند فتح التصويت، والعضو يصوّت لـoption_id
+ * محدَّد بدل قيمة ثابتة. راجعي رأس db/migrations/0025_decision_vote_options.sql.
+ *
+ * تحديث 2026-11-03: رجعت الخيارات ثابتة (موافق / غير موافق / ممتنع) ويُنشئها
+ * الباك-إند — التصويت لا يزال لـoption_id، فبنية البيانات لم تتغيّر.
  */
 export type DecisionClassification = 'final' | 'voting'
 export type DecisionStatus = 'pending' | 'voting' | 'approved' | 'rejected'
@@ -993,12 +995,6 @@ export interface DecisionVoteOption {
   /** خيار "ممتنع" الثابت — يضيفه الباك-إند تلقائيًا لكل تصويت، وليس من كتابة رئيسة اللجنة. */
   is_abstain: boolean
   sort_order: number
-}
-
-/** خيار تصويت تكتبه رئيسة اللجنة عند فتح التصويت — راجعي DecisionOpenVotingPayload. */
-export interface DecisionVoteOptionInput {
-  label: string
-  is_approving: boolean
 }
 
 export interface DecisionVote {
@@ -1051,8 +1047,11 @@ export interface DecisionUpdatePayload {
 }
 
 /** فتح التصويت — options إلزامية (خياران على الأقل)، تكتبها رئيسة اللجنة بالكامل. */
+/**
+ * تحديث 2026-11-03: خيارات التصويت ثابتة (موافق / غير موافق / ممتنع) يُنشئها
+ * الباك-إند بنفسه — لا تُرسل من الواجهة. راجعي features/decisions/FixedVoteOptions.tsx.
+ */
 export interface DecisionOpenVotingPayload {
-  options: DecisionVoteOptionInput[]
   voting_deadline?: string | null
 }
 
