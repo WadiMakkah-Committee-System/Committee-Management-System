@@ -1,20 +1,29 @@
 import { useState } from 'react'
-import { Hand, Mic, MicOff } from 'lucide-react'
+import { Hand, Mic, MicOff, Megaphone } from 'lucide-react'
 import { Avatar } from '@/components/ui/Avatar'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { cn } from '@/lib/utils'
 import type { CommitteeMemberUser } from '@/types'
+import type { RaisedHand } from '@/hooks/useMeetingRealtime'
 
 export function ParticipantsPanel({
   participants,
   onlineUserIds,
   raisedHandUserIds,
   currentUserId,
+  speakerQueue = [],
+  canGiveFloor = false,
+  onGiveFloor,
 }: {
   participants: CommitteeMemberUser[]
   onlineUserIds: Set<string>
   raisedHandUserIds: Set<string>
   currentUserId: string
+  /** طابور المتحدثين (قرار لاما 2026-11-03): الأيدي المرفوعة بترتيب الرفع. */
+  speakerQueue?: RaisedHand[]
+  /** رئيس اللجنة: زر "أعطه الكلمة" لكل واحد بالطابور. */
+  canGiveFloor?: boolean
+  onGiveFloor?: (userId: string) => void
 }) {
   const [query, setQuery] = useState('')
 
@@ -31,6 +40,35 @@ export function ParticipantsPanel({
 
   return (
     <div className="flex h-full flex-col">
+      {speakerQueue.length > 0 && (
+        <div className="border-b border-border-default bg-warning-bg/60 p-3">
+          <p className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-warning">
+            <Hand size={13} /> طابور المتحدثين ({speakerQueue.length})
+          </p>
+          <ol className="flex flex-col gap-1.5">
+            {speakerQueue.map((hand, index) => (
+              <li key={hand.userId} className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-warning text-[10px] font-bold text-white">
+                  {index + 1}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-text-primary">
+                  {hand.fullName}
+                  {hand.userId === currentUserId && <span className="font-normal text-text-muted"> (أنت)</span>}
+                </span>
+                {canGiveFloor && onGiveFloor && (
+                  <button
+                    type="button"
+                    onClick={() => onGiveFloor(hand.userId)}
+                    className="flex shrink-0 items-center gap-1 rounded-full bg-brand-primary px-2 py-1 text-[10px] font-semibold text-white transition-all hover:brightness-110"
+                  >
+                    <Megaphone size={11} /> أعطه الكلمة
+                  </button>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
       <div className="border-b border-border-default p-3">
         <SearchInput value={query} onChange={setQuery} placeholder="البحث عن مشارك..." />
       </div>

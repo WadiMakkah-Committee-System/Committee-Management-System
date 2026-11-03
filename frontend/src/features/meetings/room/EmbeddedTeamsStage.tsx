@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { LocalVideoStream, RemoteVideoStream } from '@azure/communication-calling'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   ExternalLink,
   Hourglass,
@@ -12,12 +13,16 @@ import {
   UserCheck,
   Users,
   Video,
+  Wifi,
+  WifiOff,
+  AlertTriangle,
 } from 'lucide-react'
 import { useTeamsJoinUrl } from '@/hooks/useMeetings'
 import { useToast } from '@/components/ui/Toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
 import type { Meeting } from '@/types'
-import type { EmbeddedParticipant, TeamsEmbeddedCall } from './useTeamsEmbeddedCall'
+import type { EmbeddedParticipant, FloatingReaction, NetworkQuality, TeamsEmbeddedCall } from './useTeamsEmbeddedCall'
+import { REACTION_EMOJI } from './reactions'
 
 /**
  * يعرض مقطع فيديو (محلي أو بعيد) من Azure Communication Services داخل عنصر DOM.
@@ -58,7 +63,10 @@ function Tile({
   speaking,
   large,
   onClick,
+  reactions = [],
 }: {
+  /** تفاعلات صاحب البطاقة الحالية — تطير فوق الفيديو لثواني. */
+  reactions?: FloatingReaction[]
   name: string
   stream: LocalVideoStream | RemoteVideoStream | null
   mirror?: boolean
@@ -84,6 +92,22 @@ function Tile({
           <Users size={large ? 40 : 20} />
         </div>
       )}
+      <div className="pointer-events-none absolute bottom-8 right-3 flex flex-col-reverse items-end gap-1">
+        <AnimatePresence>
+          {reactions.map((r) => (
+            <motion.span
+              key={r.id}
+              initial={{ opacity: 0, y: 12, scale: 0.6 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -24 }}
+              transition={{ duration: 0.35 }}
+              className={large ? 'text-4xl' : 'text-2xl'}
+            >
+              {REACTION_EMOJI[r.type]}
+            </motion.span>
+          ))}
+        </AnimatePresence>
+      </div>
       <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-1">
         <span className="truncate rounded-xs bg-black/60 px-2 py-0.5 text-[11px] text-white">{name}</span>
         {muted && (
@@ -178,6 +202,26 @@ function LobbyBar({ call }: { call: TeamsEmbeddedCall }) {
         </button>
       )}
     </div>
+  )
+}
+
+/**
+ * مؤشر جودة الاتصال (قرار لاما 2026-11-03): مخفي لما الاتصال ممتاز، أصفر
+ * "اتصالك ضعيف"، أحمر "اتصالك سيئ"، و"انقطع الإنترنت" — قبل ما ينقطع فعليًا.
+ */
+function NetworkBadge({ quality }: { quality: NetworkQuality }) {
+  if (quality === 'good') return null
+  const offline = quality === 'offline'
+  return (
+    <span
+      className={cn(
+        'flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white',
+        quality === 'poor' ? 'bg-warning' : 'bg-danger',
+      )}
+    >
+      {offline ? <WifiOff size={11} /> : <Wifi size={11} />}
+      {offline ? 'انقطع الإنترنت' : quality === 'poor' ? 'اتصالك ضعيف' : 'اتصالك سيئ'}
+    </span>
   )
 }
 
@@ -295,6 +339,7 @@ export function EmbeddedTeamsStage({
           speaking={false}
           large={large}
           onClick={() => setPinnedKey('local')}
+          reactions={call.reactions.filter((r) => r.key === 'local')}
         />
       ),
     },
@@ -309,6 +354,7 @@ export function EmbeddedTeamsStage({
           speaking={p.isSpeaking}
           large={large}
           onClick={() => setPinnedKey(p.key)}
+          reactions={call.reactions.filter((r) => r.key === p.key)}
         />
       ),
     })),
@@ -330,9 +376,20 @@ export function EmbeddedTeamsStage({
         ) : (
           tiles.find((t) => t.key === featuredKey)!.node(true)
         )}
-        <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white">
-          <Users size={11} />
-          {call.participants.length + 1} في الاجتماع
+        <div className="absolute left-2 top-2 flex flex-wrap items-center gap-1.5">
+          <span className="flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white">
+            <Users size={11} />
+            {call.participants.length + 1} في الاجتماع
+          </span>
+          <NetworkBadge quality={call.networkQuality} />
+          {call.mediaIssues.map((issue) => (
+            <span
+              key={issue}
+              className="flex items-center gap-1 rounded-full bg-warning px-2.5 py-1 text-[11px] font-semibold text-white"
+            >
+              <AlertTriangle size={11} /> {issue}
+            </span>
+          ))}
         </div>
       </div>
       <div className="flex gap-2 overflow-x-auto pb-1">

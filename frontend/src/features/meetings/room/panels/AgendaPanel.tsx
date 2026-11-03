@@ -1,4 +1,5 @@
-import { ClipboardList, Loader2, PlayCircle } from 'lucide-react'
+import { useState } from 'react'
+import { ClipboardList, Loader2, PlayCircle, Timer } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { cn } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
@@ -12,7 +13,8 @@ export function AgendaPanel({
 }: {
   agendaItems: MeetingAgendaItem[]
   discussingAgendaItemId: string | null
-  onStartDiscussing: (item: MeetingAgendaItem) => void
+  /** durationSeconds: مؤقت البند الاختياري (null = بدون مؤقت) — قرار لاما 2026-11-03. */
+  onStartDiscussing: (item: MeetingAgendaItem, durationSeconds: number | null) => void
   /** إصلاح 2026-09-14 (بلاغ لاما) — بس رئيس اللجنة يقدر يبدأ/يغيّر بند
    * المناقشة الحالي؛ الأعضاء يشوفون نفس الجدول للقراءة فقط بلا أي
    * تفاعل، عشان ضغطة عضو عرضية ما تسرق الحالة من رئيس اللجنة. */
@@ -23,6 +25,8 @@ export function AgendaPanel({
   pendingItemId?: string | null
 }) {
   const sorted = [...agendaItems].sort((a, b) => a.sort_order - b.sort_order)
+  // البند المفتوح عليه اختيار المؤقت (الرئيس يضغط البند ⇒ يختار المدة ⇒ يبدأ).
+  const [chooserFor, setChooserFor] = useState<string | null>(null)
 
   if (sorted.length === 0) {
     return (
@@ -38,11 +42,11 @@ export function AgendaPanel({
         const isCurrent = item.agenda_item_id === discussingAgendaItemId
         const isPending = pendingItemId === item.agenda_item_id
         return (
+          <div key={item.agenda_item_id} className="flex flex-col gap-1.5">
           <button
-            key={item.agenda_item_id}
             type="button"
             disabled={!canManage || pendingItemId !== null}
-            onClick={() => canManage && !isPending && onStartDiscussing(item)}
+            onClick={() => canManage && !isPending && setChooserFor(chooserFor === item.agenda_item_id ? null : item.agenda_item_id)}
             className={cn(
               'flex flex-col gap-2 rounded-md border p-3 text-right transition-colors',
               isCurrent
@@ -79,6 +83,7 @@ export function AgendaPanel({
                 ) : canManage ? (
                   'انقر لبدء المناقشة'
                 ) : null}
+                {isCurrent && canManage && !isPending && <span className="text-text-muted">· انقر لتغيير المؤقت</span>}
               </span>
             </div>
             <p className="text-[13px] font-semibold leading-relaxed text-text-primary">{item.title}</p>
@@ -86,8 +91,79 @@ export function AgendaPanel({
               <p className="text-[12px] leading-relaxed text-text-secondary">{item.description}</p>
             )}
           </button>
+          {canManage && chooserFor === item.agenda_item_id && (
+            <TimerChooser
+              onPick={(seconds) => {
+                setChooserFor(null)
+                onStartDiscussing(item, seconds)
+              }}
+              onCancel={() => setChooserFor(null)}
+            />
+          )}
+          </div>
         )
       })}
+    </div>
+  )
+}
+
+const PRESET_MINUTES = [5, 10, 15]
+
+/**
+ * اختيار مؤقت البند قبل بدء مناقشته (قرار لاما 2026-11-03): بدون مؤقت، أو
+ * 5/10/15 دقيقة، أو مدة يكتبها الرئيس (1–240 دقيقة). المؤقت تنبيهي فقط —
+ * ما يوقف النقاش لما يخلص.
+ */
+function TimerChooser({ onPick, onCancel }: { onPick: (seconds: number | null) => void; onCancel: () => void }) {
+  const [custom, setCustom] = useState('')
+  const customMinutes = Number(custom)
+  const customValid = Number.isInteger(customMinutes) && customMinutes >= 1 && customMinutes <= 240
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-brand-primary/30 bg-bg-surface p-2.5">
+      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-text-secondary">
+        <Timer size={12} /> مؤقت للبند؟
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={() => onPick(null)}
+          className="rounded-full border border-border-default px-2.5 py-1 text-[11px] font-medium text-text-secondary hover:border-brand-primary hover:text-brand-primary"
+        >
+          بدون مؤقت
+        </button>
+        {PRESET_MINUTES.map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => onPick(m * 60)}
+            className="rounded-full border border-border-default px-2.5 py-1 text-[11px] font-medium text-text-secondary hover:border-brand-primary hover:text-brand-primary"
+          >
+            {m} دقائق
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number"
+          min={1}
+          max={240}
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          placeholder="مدة أخرى (دقائق)"
+          className="h-8 min-w-0 flex-1 rounded-sm border border-border-default bg-bg-app px-2 text-[12px] text-text-primary focus:border-brand-primary focus:outline-none"
+        />
+        <button
+          type="button"
+          disabled={!customValid}
+          onClick={() => onPick(customMinutes * 60)}
+          className="h-8 shrink-0 rounded-sm bg-brand-primary px-3 text-[11px] font-semibold text-white disabled:opacity-50"
+        >
+          بدء
+        </button>
+        <button type="button" onClick={onCancel} className="h-8 shrink-0 px-2 text-[11px] text-text-muted hover:text-text-primary">
+          إلغاء
+        </button>
+      </div>
     </div>
   )
 }

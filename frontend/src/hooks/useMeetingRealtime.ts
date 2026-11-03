@@ -42,6 +42,37 @@ export type MeetingConnectionStatus = 'connecting' | 'open' | 'closed'
 export interface RaisedHand {
   userId: string
   fullName: string
+  /** وقت الرفع (من الخادم) — ترتيب طابور المتحدثين: أول من رفع أول من يتكلم. */
+  raisedAt: string
+}
+
+/** بند المناقشة الحالي + مؤقته الاختياري (durationSeconds=null ⇒ بدون مؤقت). */
+export interface DiscussingAgendaItem {
+  id: string
+  title: string
+  startedAt: string | null
+  durationSeconds: number | null
+}
+
+interface DiscussingPayload {
+  agenda_item_id: string
+  title: string
+  started_at?: string | null
+  duration_seconds?: number | null
+}
+
+function toDiscussing(p: DiscussingPayload): DiscussingAgendaItem {
+  return {
+    id: p.agenda_item_id,
+    title: p.title,
+    startedAt: p.started_at ?? null,
+    durationSeconds: p.duration_seconds ?? null,
+  }
+}
+
+/** ترتيب الطابور حسب وقت الرفع. */
+function sortHands(hands: RaisedHand[]): RaisedHand[] {
+  return [...hands].sort((a, b) => a.raisedAt.localeCompare(b.raisedAt))
 }
 
 export interface LiveActivityEvent {
@@ -54,9 +85,9 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   const [status, setStatus] = useState<MeetingConnectionStatus>('connecting')
   const [liveMessages, setLiveMessages] = useState<MeetingChatMessage[]>([])
   const [raisedHands, setRaisedHands] = useState<RaisedHand[]>([])
-  const [discussingAgendaItem, setDiscussingAgendaItem] = useState<{ id: string; title: string } | null>(
-    null,
-  )
+  const [discussingAgendaItem, setDiscussingAgendaItem] = useState<DiscussingAgendaItem | null>(null)
+  // آخر من أعطاه الرئيس الكلمة (طابور المتحدثين) — الغرفة تعرض تنبيه.
+  const [floorGiven, setFloorGiven] = useState<{ userId: string; fullName: string; at: number } | null>(null)
   const [activityEvents, setActivityEvents] = useState<LiveActivityEvent[]>([])
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
 
@@ -99,21 +130,46 @@ export function useMeetingRealtime(meetingId: string | undefined) {
       setLiveMessages((prev) => [...prev, payload.message])
     })
 
-    socket.on('hand.raised', (payload: { user_id: string; full_name: string }) => {
+    // الصورة الحالية للغرفة عند الدخول (طابور الأيدي + بند المناقشة ومؤقته) —
+    // للي يدخل متأخر (تحديث لاما 2026-11-03).
+    socket.on(
+      'room.state',
+      (payload: {
+        hands: { user_id: string; full_name: string; raised_at: string | null }[]
+        discussing: DiscussingPayload | null
+      }) => {
+        setRaisedHands(
+          sortHands(
+            payload.hands.map((h) => ({ userId: h.user_id, fullName: h.full_name, raisedAt: h.raised_at ?? '' })),
+          ),
+        )
+        setDiscussingAgendaItem(payload.discussing ? toDiscussing(payload.discussing) : null)
+      },
+    )
+
+    socket.on('hand.raised', (payload: { user_id: string; full_name: string; raised_at?: string }) => {
       setRaisedHands((prev) =>
         prev.some((h) => h.userId === payload.user_id)
           ? prev
-          : [...prev, { userId: payload.user_id, fullName: payload.full_name }],
+          : sortHands([
+              ...prev,
+              { userId: payload.user_id, fullName: payload.full_name, raisedAt: payload.raised_at ?? new Date().toISOString() },
+            ]),
       )
-      pushActivity(`${payload.full_name} رفعت يدها`)
+      pushActivity(`${payload.full_name} رفع/ت يده/ا`)
+    })
+
+    socket.on('floor.given', (payload: { user_id: string; full_name: string }) => {
+      setFloorGiven({ userId: payload.user_id, fullName: payload.full_name, at: Date.now() })
+      if (payload.full_name) pushActivity(`الكلمة الآن لـ ${payload.full_name}`)
     })
 
     socket.on('hand.lowered', (payload: { user_id: string }) => {
       setRaisedHands((prev) => prev.filter((h) => h.userId !== payload.user_id))
     })
 
-    socket.on('agenda.discussing', (payload: { agenda_item_id: string; title: string }) => {
-      setDiscussingAgendaItem({ id: payload.agenda_item_id, title: payload.title })
+    socket.on('agenda.discussing', (payload: DiscussingPayload) => {
+      setDiscussingAgendaItem(toDiscussing(payload))
       pushActivity(`بدأت مناقشة: ${payload.title}`)
     })
 
@@ -125,6 +181,16 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     socket.on('decision.created', (payload: { meeting_id: string }) => {
       queryClient.invalidateQueries({ queryKey: decisionsKeys.byMeeting(payload.meeting_id) })
       pushActivity('تم إنشاء قرار جديد')
+    })
+
+    // تحديث لاما 2026-11-03: فتح التصويت يطلّع نافذة التصويت للحاضرين، وكل صوت
+    // يحدّث العدّاد/النتيجة لحظيًا.
+    socket.on('decision.voting_opened', (payload: { meeting_id: string }) => {
+      queryClient.invalidateQueries({ queryKey: decisionsKeys.byMeeting(payload.meeting_id) })
+      pushActivity('تم فتح التصويت على قرار')
+    })
+    socket.on('decision.voted', (payload: { meeting_id: string }) => {
+      queryClient.invalidateQueries({ queryKey: decisionsKeys.byMeeting(payload.meeting_id) })
     })
 
     // إصلاح 2026-09-13 (بلاغ لاما — عضو يفتح الاجتماع بعد غيره يرى البقية
@@ -155,7 +221,7 @@ export function useMeetingRealtime(meetingId: string | undefined) {
       socket.disconnect()
       socketRef.current = null
     }
-  }, [meetingId, pushActivity])
+  }, [meetingId, pushActivity, queryClient])
 
   const send = useCallback((event: string, payload?: Record<string, unknown>) => {
     socketRef.current?.emit(event, payload)
@@ -238,8 +304,23 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   // send() العادي (بلا انتظار رد) — نفس عِلّة الدردشة قبل إصلاحها بالضبط.
   // الآن emitWithAck حقيقي بنتيجة واضحة — راجعي agenda_discussing
   // بـsocketio_server.py.
+  /** إعطاء الكلمة لصاحب يد مرفوعة (رئيس اللجنة فقط — الخادم يتحقق). */
+  const giveFloor = useCallback(async (userId: string): Promise<{ ok: boolean; error?: string }> => {
+    const socket = socketRef.current
+    if (!socket || !socket.connected) return { ok: false, error: 'لا يوجد اتصال بقناة الاجتماع حاليًا.' }
+    try {
+      const ack = (await socket.timeout(8000).emitWithAck('floor.give', { user_id: userId })) as
+        | { ok: boolean; error?: string }
+        | undefined
+      return ack ?? { ok: false, error: 'لم يصل رد من الخادم — حاولي مجددًا.' }
+    } catch {
+      return { ok: false, error: 'انتهت مهلة انتظار رد الخادم — حاولي مجددًا.' }
+    }
+  }, [])
+
+  /** durationSeconds اختياري: مؤقت البند (null/undefined ⇒ بدون مؤقت). */
   const announceDiscussing = useCallback(
-    async (agendaItemId: string, title: string): Promise<{ ok: boolean; error?: string }> => {
+    async (agendaItemId: string, title: string, durationSeconds?: number | null): Promise<{ ok: boolean; error?: string }> => {
       const socket = socketRef.current
       if (!socket || !socket.connected) {
         return { ok: false, error: 'لا يوجد اتصال بقناة الاجتماع حاليًا — تحققي من الاتصال وحاولي مجددًا.' }
@@ -247,7 +328,11 @@ export function useMeetingRealtime(meetingId: string | undefined) {
       try {
         const ack = (await socket
           .timeout(8000)
-          .emitWithAck('agenda.discussing', { agenda_item_id: agendaItemId, title })) as
+          .emitWithAck('agenda.discussing', {
+            agenda_item_id: agendaItemId,
+            title,
+            duration_seconds: durationSeconds ?? null,
+          })) as
           | { ok: true }
           | { ok: false; error?: string }
           | undefined
@@ -267,6 +352,8 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     liveMessages,
     raisedHands,
     discussingAgendaItem,
+    floorGiven,
+    giveFloor,
     activityEvents,
     onlineUserIds,
     sendChatMessage,

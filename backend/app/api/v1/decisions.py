@@ -45,6 +45,17 @@ _SERVICE_ERRORS = (
 )
 
 
+async def _broadcast_decision_event(event: str, decision) -> None:
+    """بث حدث قرار لغرفة اجتماعه (لو مربوط باجتماع) — الواجهة تعيد جلب القرارات."""
+    if decision.meeting_id is None:
+        return
+    await sio.emit(
+        event,
+        {"meeting_id": str(decision.meeting_id), "decision_id": str(decision.decision_id)},
+        room=f"meeting:{decision.meeting_id}",
+    )
+
+
 def _handle_errors(exc: Exception) -> Exception:
     if isinstance(exc, DecisionNotFoundError):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
@@ -130,6 +141,9 @@ async def get_decision(
         raise _handle_errors(exc) from exc
     if just_rejected:
         run_detached(notification_service.notify_decision_rejected(decision))
+    # تحديث عدّاد الأصوات/النتيجة لحظيًا بالغرفة (بدون هوية المصوّت — الباك-إند
+    # يحجب تفاصيل الأصوات حسب الصلاحية عند الجلب).
+    await _broadcast_decision_event("decision.voted", decision)
     return DecisionOut.model_validate(decision)
 
 
@@ -191,6 +205,8 @@ async def open_voting(
             decision, actor_user_id=current_user.user_id
         )
     )
+    # تحديث لاما 2026-11-03: نافذة التصويت تطلع للحاضرين بغرفة الاجتماع فورًا.
+    await _broadcast_decision_event("decision.voting_opened", decision)
     return DecisionOut.model_validate(decision)
 
 
@@ -213,6 +229,9 @@ async def cast_vote(
         raise _handle_errors(exc) from exc
     if just_rejected:
         run_detached(notification_service.notify_decision_rejected(decision))
+    # تحديث عدّاد الأصوات/النتيجة لحظيًا بالغرفة (بدون هوية المصوّت — الباك-إند
+    # يحجب تفاصيل الأصوات حسب الصلاحية عند الجلب).
+    await _broadcast_decision_event("decision.voted", decision)
     return DecisionOut.model_validate(decision)
 
 
