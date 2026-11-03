@@ -134,7 +134,17 @@ def _teams_error_to_http(exc: teams_client.TeamsError) -> HTTPException:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="العنصر المطلوب غير موجود في Microsoft Teams (ربما حُذف أو انتهت مدة الاحتفاظ به)",
         )
+    # 403 من Graph = صلاحية ناقصة بتطبيق Entra (مو مشكلة مؤقتة) — نقولها صراحة
+    # بدل "حاول مرة أخرى" اللي تخلي المستخدم يعيد بلا فايدة.
+    if isinstance(exc, teams_client.TeamsForbiddenError):
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="رفضت Microsoft Teams الطلب: صلاحيات تطبيق المنصة لا تسمح بهذه العملية "
+            "(تحتاج موافقة مدير Microsoft 365) — رمز الخطأ 403",
+        )
+    # رمز HTTP فقط (بدون رسالة Graph الداخلية) يسهّل تشخيص السبب من لقطة الشاشة.
+    code = f" — رمز الخطأ {exc.status_code}" if exc.status_code else ""
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail="تعذّر إتمام العملية مع Microsoft Teams، حاول مرة أخرى بعد قليل",
+        detail=f"تعذّر إتمام العملية مع Microsoft Teams، حاول مرة أخرى بعد قليل{code}",
     )
