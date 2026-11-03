@@ -274,6 +274,8 @@ class TeamsCallTokenIn(BaseModel):
     Microsoft Entra (بعد تسجيل الدخول بحساب الشركة) — غيابه يعني الدخول كضيف."""
 
     microsoft_token: str | None = Field(default=None, max_length=20000)
+    # معرّف حساب Microsoft (من MSAL بالواجهة) — لازم يطابق الحساب المربوط بالمستخدم.
+    microsoft_object_id: str | None = Field(default=None, max_length=64)
 
 
 class TeamsRecordingOut(BaseModel):

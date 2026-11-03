@@ -184,17 +184,27 @@ export async function signInWithMicrosoft(loginHint?: string): Promise<{ idToken
  * interactive=false (الافتراضي): صامت فقط — null لو يحتاج تفاعل.
  * interactive=true: لو الصامت فشل (انتهت جلسة Microsoft) يفتح نافذة — فقط من ضغطة زر.
  */
-export async function getMicrosoftTeamsToken(interactive = false): Promise<string | null> {
+/** توكن Teams للاجتماع + معرّف حساب Microsoft (oid) اللي صدر له. */
+export interface MicrosoftTeamsToken {
+  token: string
+  objectId: string
+}
+
+export async function getMicrosoftTeamsToken(interactive = false): Promise<MicrosoftTeamsToken | null> {
   const pca = await loadMicrosoftClient()
   const account = pca?.getActiveAccount()
   if (!pca || !account) return null
+  // localAccountId = معرّف حساب Microsoft (oid) — الباك-إند يتأكد إنه نفس الحساب
+  // المربوط بمستخدم المنصة. التوكن نفسه مشفّر لخدمة Microsoft وما ينقرأ.
+  const withId = (token: string): MicrosoftTeamsToken => ({ token, objectId: account.localAccountId })
   try {
-    return (await pca.acquireTokenSilent({ scopes: TEAMS_SCOPES, account })).accessToken
+    return withId((await pca.acquireTokenSilent({ scopes: TEAMS_SCOPES, account })).accessToken)
   } catch {
     if (!interactive) return null
     try {
-      return (await pca.acquireTokenPopup({ scopes: TEAMS_SCOPES, account, loginHint: account.username }))
-        .accessToken
+      return withId(
+        (await pca.acquireTokenPopup({ scopes: TEAMS_SCOPES, account, loginHint: account.username })).accessToken,
+      )
     } catch {
       return null
     }

@@ -8,7 +8,7 @@ import type {
   RemoteVideoStream,
 } from '@azure/communication-calling'
 import { getTeamsCallToken, getTeamsKnownGuests } from '@/api/meetings'
-import { getMicrosoftTeamsToken } from '@/lib/microsoftSignIn'
+import { getMicrosoftTeamsToken, type MicrosoftTeamsToken } from '@/lib/microsoftSignIn'
 import { useAuthStore } from '@/store/authStore'
 import { extractErrorMessage } from '@/lib/utils'
 
@@ -171,7 +171,7 @@ export function useTeamsEmbeddedCall(
    * الانضمام. microsoftToken (اختياري) ⇒ دخول بحساب Microsoft حق الشركة،
    * وبدونه ⇒ ضيف. الباك-إند يقرر النوع النهائي ويرجعه بـidentity.
    */
-  const join = useCallback(async (microsoftToken?: string | null) => {
+  const join = useCallback(async (microsoftToken?: MicrosoftTeamsToken | null) => {
     if (callRef.current || joiningRef.current) return
     joiningRef.current = true
     setPhase('joining')

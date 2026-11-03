@@ -21,8 +21,6 @@ Meeting Interoperability (يبقى التسجيل والتفريغ الرسمي 
 """
 
 import asyncio
-import base64
-import json
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -83,62 +81,29 @@ async def issue_meeting_token() -> AcsToken:
 # ============================== الدخول بحساب Microsoft (هوية Teams) ==============================
 
 
-def _unverified_claims(aad_token: str) -> dict:
-    """
-    الهدف: قراءة حقول توكن Microsoft Entra (tid/oid/اسم المستخدم) **بدون**
-    التحقق من التوقيع.
-    لماذا بدون تحقق هنا: التحقق الفعلي من التوقيع وصلاحية التوكن يجريه ACS
-    نفسه عند التبادل (get_token_for_teams_user) — هو الذي يرفض أي توكن مزوّر
-    أو منتهٍ أو لا يطابق oid/client_id. نستخدم القراءة هنا فقط لاستخراج oid
-    (مطلوب للتبادل) ولرفض مبكر لحسابات من خارج مستأجر الشركة.
-    الأخطاء: AcsTeamsIdentityError لو التوكن ليس JWT مقروءًا.
-    """
-    try:
-        payload = aad_token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-    except (IndexError, ValueError) as exc:
-        raise AcsTeamsIdentityError("توكن Microsoft غير صالح") from exc
-    if not isinstance(claims, dict):
-        raise AcsTeamsIdentityError("توكن Microsoft غير صالح")
-    return claims
-
-
-@dataclass(frozen=True)
-class TeamsUserIdentity:
-    """هوية مستخدم Microsoft 365 المستخرجة من توكنه (للتدقيق والعرض)."""
-
-    object_id: str
-    username: str
-
-
 def _exchange_sync(aad_token: str, object_id: str) -> AcsToken:
     client = CommunicationIdentityClient.from_connection_string(settings.ACS_CONNECTION_STRING.strip())
     access = client.get_token_for_teams_user(aad_token, settings.TEAMS_CLIENT_ID.strip(), object_id)
     return AcsToken(token=access.token, user_id=object_id, expires_on=access.expires_on)
 
 
-async def issue_teams_user_token(aad_token: str) -> tuple[AcsToken, TeamsUserIdentity]:
+async def issue_teams_user_token(aad_token: str, object_id: str) -> AcsToken:
     """
     الهدف: تحويل توكن Microsoft Entra لموظف الشركة (سجّل دخوله بالواجهة عبر
     MSAL) إلى توكن ACS بهويته الحقيقية في Teams — فيدخل الاجتماع باسمه،
     بدون Lobby، والمنظّم يدخل كمنظّم ويقدر يقبل الضيوف من داخل المنصة.
 
     المدخلات: aad_token بنطاقَي Teams.ManageCalls وTeams.ManageChats
-    (https://auth.msft.communication.azure.com/...).
-    المخرجات: (AcsToken، TeamsUserIdentity).
-    قواعد: يُرفض أي توكن من مستأجر غير TEAMS_TENANT_ID قبل الاتصال بـACS.
-    الأخطاء: AcsNotConfiguredError، AcsTeamsIdentityError (توكن مرفوض/خارجي)،
-    AcsError (شبكة/خطأ آخر من ACS).
+    (https://auth.msft.communication.azure.com/...)، وobject_id (معرّف حساب
+    Microsoft — الطبقة الأعلى تتأكد إنه نفس الحساب المربوط بمستخدم المنصة).
+    إصلاح 2026-11-03: هالتوكن **مشفّر** (صادر لخدمة Microsoft نفسها) فما نقدر
+    نقرأ محتواه — كان الكود يحاول يقرأ oid منه فيرفضه دائمًا. ACS هو اللي
+    يتحقق منه ومن مطابقته لـobject_id وclient_id.
+    المخرجات: AcsToken.
+    الأخطاء: AcsNotConfiguredError، AcsTeamsIdentityError (رفضه ACS)، AcsError.
     """
     if not is_configured() or not settings.TEAMS_CLIENT_ID.strip():
         raise AcsNotConfiguredError("الانضمام بحساب Microsoft غير مُهيّأ")
-    claims = _unverified_claims(aad_token)
-    object_id = str(claims.get("oid") or "")
-    tenant_id = str(claims.get("tid") or "")
-    if not object_id or tenant_id.lower() != settings.TEAMS_TENANT_ID.strip().lower():
-        raise AcsTeamsIdentityError("حساب Microsoft ليس من حسابات الشركة")
-    username = str(claims.get("preferred_username") or claims.get("upn") or claims.get("name") or "")
     try:
         token = await asyncio.to_thread(_exchange_sync, aad_token, object_id)
     except Exception as exc:
@@ -149,4 +114,4 @@ async def issue_teams_user_token(aad_token: str) -> tuple[AcsToken, TeamsUserIde
         if status_code in (400, 401, 403):
             raise AcsTeamsIdentityError(f"رفض ACS توكن Microsoft ({status_code}): {detail}") from exc
         raise AcsError(f"تعذّر تبادل توكن Microsoft مع ACS: {type(exc).__name__}: {detail}") from exc
-    return token, TeamsUserIdentity(object_id=object_id, username=username)
+    return token

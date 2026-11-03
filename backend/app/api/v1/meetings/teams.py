@@ -67,6 +67,7 @@ async def get_teams_call_token(
             actor=current_user,
             meeting_id=meeting_id,
             microsoft_token=payload.microsoft_token if payload else None,
+            microsoft_object_id=payload.microsoft_object_id if payload else None,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
