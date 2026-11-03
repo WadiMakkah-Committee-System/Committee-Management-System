@@ -644,6 +644,7 @@ def _mock_graph(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]
     monkeypatch.setattr(settings, "TEAMS_CLIENT_SECRET", "secret")
     monkeypatch.setattr(settings, "TEAMS_ORGANIZER_EMAIL", "meetings@example.com")
     monkeypatch.setattr(teams_client, "_token_cache", {"token": None, "expires_at": 0.0})
+    monkeypatch.setattr(teams_client, "_user_id_cache", {})
     monkeypatch.setattr(
         teams_client, "_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(recording_handler))
     )
@@ -724,3 +725,19 @@ def test_transcript_schema_matches_audio_schema_without_full_transcript() -> Non
     transcript = gemini_client._TRANSCRIPT_RESPONSE_SCHEMA
     assert set(transcript["properties"]) == set(audio["properties"]) - {"full_transcript"}
     assert set(transcript["required"]) == set(audio["required"]) - {"full_transcript"}
+
+
+async def test_user_id_lookups_are_cached(monkeypatch) -> None:
+    """تحسين أداء 2026-11-03: نفس البريد ما يُسأل عنه Graph مرتين (إنشاء الاجتماع أسرع)."""
+    seen = _mock_graph(
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"id": "entra-1"})
+        if "/users/a%40example.com" in str(request.url) or "/users/a@example.com" in str(request.url)
+        else httpx.Response(404, json={"error": {"code": "NotFound", "message": "x"}}),
+    )
+    assert await teams_client.get_user_id("a@example.com") == "entra-1"
+    assert await teams_client.get_user_id("A@Example.com") == "entra-1"
+    assert await teams_client.get_user_id("missing@example.com") is None
+    assert await teams_client.get_user_id("missing@example.com") is None
+    user_calls = [r for r in seen if "/users/" in str(r.url)]
+    assert len(user_calls) == 2
