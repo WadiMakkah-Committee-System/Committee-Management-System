@@ -44,7 +44,7 @@ export async function deleteDecision(decisionId: string): Promise<void> {
   await apiClient.delete(`/decisions/${decisionId}`)
 }
 
-/** الخيارات (options) تُكتب من رئيسة اللجنة بالكامل — راجعي DecisionOpenVotingPayload بـtypes/index.ts. */
+/** الخيارات ثابتة (موافق / غير موافق / ممتنع) ويُنشئها الباك-إند — راجعي DecisionOpenVotingPayload بـtypes/index.ts. */
 export async function openVoting(
   decisionId: string,
   payload: DecisionOpenVotingPayload,

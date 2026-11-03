@@ -34,9 +34,18 @@ from app.services.decision_service.errors import (
 from app.services.decision_service.loading import load_decision
 
 
-_REJECTION_REASON_NO_MAJORITY = "لم تتحقق نسبة الأغلبية المطلوبة (الخيارات المعلَّمة كموافقة لا تتجاوز 50% من الأصوات المسجّلة)"
+_REJECTION_REASON_NO_MAJORITY = "لم تتحقق نسبة الأغلبية المطلوبة (أصوات «موافق» لا تتجاوز 50% من الأصوات المسجّلة)"
 
 _ABSTAIN_LABEL = "ممتنع"  # راجعي رأس migration 0040 — نص الخيار الثابت المحجوز.
+
+# تحديث 2026-11-03 (قرار صاحب المشروع، بعد مقارنة منصات الحوكمة مثل OnBoard
+# وBoardPro وiBabs اللي تعتمد على خيارات ثابتة للقرارات): خيارات التصويت ثابتة
+# دائمًا — "موافق" وحده يُحتسب موافقة، و"غير موافق" لا، و"ممتنع" (أدناه) خارج
+# مقام الأغلبية. ما عادت رئيسة اللجنة تكتب خيارات أو تعلّم "تُحسب موافقة"، فلا
+# يمكن أن تنقلب النتيجة بتعليم خاطئ. القرارات القديمة بخيارات مخصّصة تبقى كما
+# هي (صفوفها بـdecision_vote_options لم تُمس)، والحساب بـ_maybe_close_voting
+# يعتمد is_approving المخزَّن فيستمر صحيحًا لها.
+_FIXED_VOTE_OPTIONS: tuple[tuple[str, bool], ...] = (("موافق", True), ("غير موافق", False))
 
 
 # ============================== إغلاق التصويت (كسلي) ==============================
@@ -100,14 +109,12 @@ async def open_voting(
     *,
     actor: User,
     decision_id: uuid.UUID,
-    options: list[dict],
     voting_deadline: datetime | None,
 ) -> Decision:
     """
     FR-009: طرح القرار للتصويت — فقط لقرار classification='voting' بحالة
-    pending. الخيارات (options) تحدّدها رئيسة اللجنة هنا بالكامل (قرار
-    صريح 2026-09-07) — كل عنصر {"label": نص حر, "is_approving": bool}.
-    يُتحقَّق من عدم تكرار label بين الخيارات (منعًا لالتباس عند التصويت).
+    pending. الخيارات ثابتة (تحديث 2026-11-03): موافق / غير موافق / ممتنع —
+    راجعي _FIXED_VOTE_OPTIONS أعلاه.
     """
     access = CommitteeAccess(db, actor)
     decision = await load_decision(db, decision_id)
@@ -121,31 +128,21 @@ async def open_voting(
     if decision.status != DecisionStatus.pending:
         raise DecisionInvalidStateError("لا يمكن طرح القرار للتصويت من حالته الحالية")
 
-    labels = [opt["label"].strip() for opt in options]
-    if len(labels) != len(set(labels)):
-        raise DecisionValidationError("لا يمكن تكرار نفس نص الخيار أكثر من مرة")
-    if _ABSTAIN_LABEL in labels:
-        # "ممتنع" خيار ثابت يضيفه الكود تلقائيًا (أدناه) — لا داعي ولا
-        # يصح أن تكتبه رئيسة اللجنة بنفسها ضمن options (تعارض/تكرار).
-        raise DecisionValidationError('"ممتنع" خيار ثابت يُضاف تلقائيًا — لا تكتبيه ضمن الخيارات')
-
     decision.status = DecisionStatus.voting
     decision.voting_opened_at = datetime.now(UTC)
     decision.voting_deadline = voting_deadline
     decision.vote_options = [
-        DecisionVoteOption(
-            label=opt["label"].strip(),
-            is_approving=opt.get("is_approving", False),
-            sort_order=index,
-        )
-        for index, opt in enumerate(options)
+        DecisionVoteOption(label=label, is_approving=is_approving, sort_order=index)
+        for index, (label, is_approving) in enumerate(_FIXED_VOTE_OPTIONS)
     ]
     # خيار "ممتنع" ثابت — يُضاف تلقائيًا لكل تصويت (طلب صاحبة المشروع
     # 2026-11-01)، آخر الخيارات ترتيبًا دائمًا. is_approving=false دومًا
     # (لا يُحتسب موافقة)، ومستبعد من مقام الأغلبية أصلًا (راجعي
     # _maybe_close_voting أعلاه).
     decision.vote_options.append(
-        DecisionVoteOption(label=_ABSTAIN_LABEL, is_approving=False, is_abstain=True, sort_order=len(options))
+        DecisionVoteOption(
+            label=_ABSTAIN_LABEL, is_approving=False, is_abstain=True, sort_order=len(_FIXED_VOTE_OPTIONS)
+        )
     )
 
     await audit_service.log_action(
@@ -154,7 +151,7 @@ async def open_voting(
         action_type="update",
         target_type="decision",
         target_id=decision.decision_id,
-        metadata={"action": "open_voting", "options": labels},
+        metadata={"action": "open_voting", "options": [opt.label for opt in decision.vote_options]},
     )
     await db.commit()
     # بدون إعادة تحميل بعد commit (تحسين أداء 2026-10-24): القرار محمَّل

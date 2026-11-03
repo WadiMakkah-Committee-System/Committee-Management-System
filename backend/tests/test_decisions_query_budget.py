@@ -73,7 +73,7 @@ async def test_decisions_list_query_count_does_not_grow_with_decisions(
     assert many <= 9, f"decisions list uses {many} SQL statements"
     # الشكل الكامل ما زال كما هو (لوحة القرارات بغرفة الاجتماع تعتمد عليه).
     item = many_body[0]
-    assert item["creator"]["user_id"] and item["assignees"] and len(item["vote_options"]) == 2
+    assert item["creator"]["user_id"] and item["assignees"] and len(item["vote_options"]) == 3  # موافق / غير موافق / ممتنع (ثابتة)
     assert item["votes"][0]["voter"]["user_id"] and item["votes"][0]["option"]["label"]
 
 

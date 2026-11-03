@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { CalendarRange, FileText, Lock, Paperclip, Plus, Save, Trash2, Vote } from 'lucide-react'
+import { CalendarRange, FileText, Paperclip, Save, Vote } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
-import type { Committee, Decision, DecisionClassification, DecisionVoteOptionInput } from '@/types'
+import type { Committee, Decision, DecisionClassification } from '@/types'
+import { FixedVoteOptions } from './FixedVoteOptions'
 
 const schema = z
   .object({
@@ -32,15 +33,12 @@ export interface DecisionFormSubmitValues {
   start_date: string
   end_date: string
   /**
-   * خيارات التصويت — تُملأ فقط لو classification === 'voting' بالإنشاء
-   * (بلاغ خطأ 2026-09-08: رئيسة لجنة اعتبرت التنقّل لصفحة منفصلة بعد
-   * الإنشاء ثم كتابة الخيارات "خطوة زايدة ومربكة" — أُدمجت هنا لتصير
-   * إنشاء + طرح للتصويت خطوة واحدة). DecisionsPage.tsx.handleCreate يستدعي
-   * open-voting تلقائيًا بعد نجاح الإنشاء لو هذا الحقل موجود وغير فارغ.
-   * فارغ = أُنشئ بحالة pending عادية، وتُطرح للتصويت لاحقًا يدويًا من
-   * صفحة التفاصيل (نفس المسار القديم، لا يزال متاحًا).
+   * طرح القرار للتصويت مباشرة بعد إنشائه — true فقط لو classification ===
+   * 'voting' بالإنشاء (بلاغ خطأ 2026-09-08: إنشاء + طرح للتصويت خطوة واحدة).
+   * DecisionsPage.tsx.handleCreate يستدعي open-voting تلقائيًا بعد نجاح
+   * الإنشاء. الخيارات ثابتة (تحديث 2026-11-03) فلا تُرسل من هنا.
    */
-  votingOptions: DecisionVoteOptionInput[] | null
+  openVotingNow: boolean
   /** مرفق اختياري عند الإنشاء فقط (طلب صاحبة المشروع 2026-11-01) — يُرفع بنداء منفصل بعد نجاح الإنشاء. */
   attachmentFile: File | null
 }
@@ -91,11 +89,6 @@ export function DecisionFormModal({
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
 
-  const [optionInputs, setOptionInputs] = useState<DecisionVoteOptionInput[]>([
-    { label: 'موافق', is_approving: true },
-    { label: 'غير موافق', is_approving: false },
-  ])
-  const [optionsError, setOptionsError] = useState<string | null>(null)
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
 
   const classification = watch('classification')
@@ -111,44 +104,12 @@ export function DecisionFormModal({
         start_date: decision?.start_date ?? '',
         end_date: decision?.end_date ?? '',
       })
-      setOptionInputs([
-        { label: 'موافق', is_approving: true },
-        { label: 'غير موافق', is_approving: false },
-      ])
-      setOptionsError(null)
       setAttachmentFile(null)
     }
   }, [open, decision, committees, reset])
 
-  function updateOption(index: number, patch: Partial<DecisionVoteOptionInput>) {
-    setOptionInputs((prev) => prev.map((opt, i) => (i === index ? { ...opt, ...patch } : opt)))
-  }
-
-  function addOption() {
-    setOptionInputs((prev) => [...prev, { label: '', is_approving: false }])
-  }
-
-  function removeOption(index: number) {
-    setOptionInputs((prev) => prev.filter((_, i) => i !== index))
-  }
-
   const submit = handleSubmit((values) => {
-    if (!showOptionsBuilder) {
-      onSubmit({ ...values, votingOptions: null, attachmentFile })
-      return
-    }
-    setOptionsError(null)
-    const cleaned = optionInputs.map((o) => ({ ...o, label: o.label.trim() })).filter((o) => o.label)
-    if (cleaned.length < 2) {
-      setOptionsError('يجب إدخال خيارين على الأقل')
-      return
-    }
-    const labels = cleaned.map((o) => o.label)
-    if (new Set(labels).size !== labels.length) {
-      setOptionsError('لا يمكن تكرار نفس نص الخيار')
-      return
-    }
-    onSubmit({ ...values, votingOptions: cleaned, attachmentFile })
+    onSubmit({ ...values, openVotingNow: showOptionsBuilder, attachmentFile })
   })
 
   const committeeOptions = committees.map((c) => ({ value: c.committee_id, label: c.name }))
@@ -253,67 +214,10 @@ export function DecisionFormModal({
                 <Vote size={13} />
               </span>
               <h3 className="text-xs font-bold uppercase tracking-wide text-text-secondary">
-                خيارات التصويت<span className="text-danger"> *</span>
+                خيارات التصويت
               </h3>
             </div>
-            <p className="-mt-1 text-xs text-text-muted">
-              موافق/غير موافق جاهزان افتراضيًا — عدِّلهما أو أضف خيارات أخرى. علِّم "تُحسب موافقة" على
-              أي خيار يُعتبر تأييدًا للقرار (تُستخدم لحساب الأغلبية تلقائيًا؛ اتركيها فارغة لاستطلاع رأي بحت).
-              وخيار "ممتنع" يُضاف تلقائيًا لكل تصويت ولا يُحتسب ضمن الأغلبية.
-            </p>
-
-            <div className="flex flex-col gap-2">
-              {optionInputs.map((opt, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <Input
-                    placeholder={`الخيار ${index + 1}`}
-                    value={opt.label}
-                    onChange={(e) => updateOption(index, { label: e.target.value })}
-                    className="flex-1"
-                  />
-                  <label className="flex shrink-0 items-center gap-1.5 text-xs text-text-secondary">
-                    <input
-                      type="checkbox"
-                      checked={opt.is_approving}
-                      onChange={(e) => updateOption(index, { is_approving: e.target.checked })}
-                      className="h-4 w-4 rounded-xs border-border-default text-brand-primary focus:ring-brand-accent/40"
-                    />
-                    تُحسب موافقة
-                  </label>
-                  {optionInputs.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => removeOption(index)}
-                      className="shrink-0 rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
-                      aria-label="حذف الخيار"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-              ))}
-              {/* "ممتنع" خيار ثابت يضيفه الكود تلقائيًا عند الطرح (راجعي
-                  decision_service/voting.py) — نفس عرضه بـDecisionDetailPage
-                  (2026-11-02)، حتى تعرف رئيسة اللجنة أنه سيُضاف دون أن
-                  تضيفه بنفسها، سواء طرحت التصويت من هنا مباشرة أو لاحقًا. */}
-              <div className="flex items-center gap-2 opacity-70">
-                <div className="flex flex-1 items-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-elevated px-3 py-2 text-sm text-text-muted">
-                  <Lock size={13} className="shrink-0" />
-                  ممتنع
-                </div>
-                <span className="shrink-0 rounded-xs bg-bg-elevated px-1.5 py-0.5 text-[11px] font-semibold text-text-muted">
-                  يُضاف تلقائيًا
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={addOption}
-                className="flex w-fit items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs font-medium text-brand-primary transition-colors hover:bg-brand-primary/10"
-              >
-                <Plus size={13} /> إضافة خيار
-              </button>
-              {optionsError && <p className="text-xs font-medium text-danger">{optionsError}</p>}
-            </div>
+            <FixedVoteOptions />
           </div>
         )}
 
