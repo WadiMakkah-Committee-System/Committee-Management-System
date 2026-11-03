@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/Toast'
 import {
   useDeleteMeetingAttachment,
   useDownloadMeetingAttachment,
+  useMeetingAttachmentPermissions,
   useMeetingAttachments,
   useOpenMeetingAttachment,
   useUploadMeetingAttachment,
@@ -29,6 +30,11 @@ interface UploadingFile {
  * الآن من داخل Microsoft Teams نفسه (افتحي المرفق ثم شاركيه من تيمز).
  */
 export function AttachmentsPanel({ meetingId }: { meetingId: string }) {
+  // بلاغ لاما 2026-11-03: زر "إضافة" كان يظهر لكل الأعضاء — الحين حسب الصلاحية
+  // الفعلية من الباك-إند (نظامية + دور اللجنة)، ونفس الشي لزر الحذف.
+  const permissionsQuery = useMeetingAttachmentPermissions(meetingId)
+  const canAdd = permissionsQuery.data?.can_add ?? false
+  const canDelete = permissionsQuery.data?.can_delete ?? false
   const { showToast } = useToast()
   const attachmentsQuery = useMeetingAttachments(meetingId)
   const uploadMutation = useUploadMeetingAttachment()
@@ -91,6 +97,7 @@ export function AttachmentsPanel({ meetingId }: { meetingId: string }) {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border-default p-3">
         <p className="text-[13px] font-semibold text-text-primary">المرفقات ({attachments.length})</p>
+        {canAdd && (
         <Button
           size="sm"
           variant="secondary"
@@ -100,6 +107,7 @@ export function AttachmentsPanel({ meetingId }: { meetingId: string }) {
         >
           {uploadingFiles.length > 0 ? `جارٍ رفع ${uploadingFiles.length} ملف...` : 'إضافة'}
         </Button>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -166,6 +174,7 @@ export function AttachmentsPanel({ meetingId }: { meetingId: string }) {
                   >
                     <Download size={13} />
                   </button>
+                  {canDelete && (
                   <button
                     onClick={() => handleDelete(attachment.document_id)}
                     className="rounded-sm p-1.5 text-text-muted transition-colors hover:bg-danger-bg hover:text-danger"
@@ -174,6 +183,7 @@ export function AttachmentsPanel({ meetingId }: { meetingId: string }) {
                   >
                     <Trash2 size={13} />
                   </button>
+                  )}
                 </div>
               </li>
             ))}

@@ -260,6 +260,13 @@ class TeamsCallTokenOut(BaseModel):
     identity: Literal["teams_user", "guest"]
 
 
+class MeetingAttachmentPermissionsOut(BaseModel):
+    """GET /meetings/{id}/attachments/permissions — هل يقدر المستخدم يضيف/يحذف مرفقات هالاجتماع."""
+
+    can_add: bool
+    can_delete: bool
+
+
 class TeamsKnownGuestOut(BaseModel):
     """عنصر GET /meetings/{id}/teams/known-guests — ضيف دخل من المنصة (عضو مصرّح
     له)، يُقبل من قاعة الانتظار تلقائيًا. acs_user_id يطابق معرّف المنتظر بـACS."""

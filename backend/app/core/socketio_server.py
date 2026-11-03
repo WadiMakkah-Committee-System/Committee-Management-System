@@ -440,6 +440,39 @@ async def agenda_discussing(sid: str, data: dict[str, Any] | None) -> dict[str, 
     return {"ok": True}
 
 
+@sio.on("agenda.stop")
+async def agenda_stop(sid: str, _data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """
+    الهدف (بلاغ لاما 2026-11-03): "إيقاف المناقشة" — ينهي البند الحالي (ومؤقته)
+    بدون ما يضطر الرئيس يبدأ بند ثاني. نفس صلاحية بدء المناقشة.
+    """
+    resolved = await _session_user_and_room(sid)
+    if resolved is None:
+        return {"ok": False, "error": "انتهت صلاحية جلسة الاتصال — أعيدي تحميل الصفحة."}
+    user, meeting_id = resolved
+    try:
+        async with AsyncSessionLocal() as db:
+            await meeting_chat_service.require_agenda_manage_access(db, actor=user, meeting_id=uuid.UUID(meeting_id))
+    except (MeetingChatForbiddenError, MeetingChatNotFoundError) as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception("agenda.stop: فشل غير متوقع — meeting_id=%s", meeting_id)
+        return {"ok": False, "error": "تعذر إيقاف المناقشة بسبب خطأ بالخادم — حاولي مجددًا."}
+    stopped: dict[str, Any] | None = None
+    try:
+        raw = await redis_client.get(_discussing_key(meeting_id))
+        stopped = json.loads(raw) if raw else None
+        await redis_client.delete(_discussing_key(meeting_id))
+    except Exception:  # noqa: BLE001
+        logger.warning("agenda.stop: تعذّر تحديث Redis", exc_info=True)
+    await sio.emit(
+        "agenda.stopped",
+        {"agenda_item_id": (stopped or {}).get("agenda_item_id"), "title": (stopped or {}).get("title")},
+        room=_room(meeting_id),
+    )
+    return {"ok": True}
+
+
 @sio.on("minutes.editing")
 async def minutes_editing(sid: str, data: dict[str, Any] | None) -> None:
     """حدث عابر بحت (لا يُحفَظ) — راجعي تعليق meeting_live_socket القديم."""

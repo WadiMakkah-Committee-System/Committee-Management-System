@@ -167,6 +167,11 @@ export function MeetingRoom({
     else if (floorGiven.fullName) showToast(`الكلمة الآن لـ ${floorGiven.fullName}`, 'info')
   }, [floorGiven, currentUser?.user_id, showToast])
 
+  async function handleStopDiscussing() {
+    const result = await realtime.stopDiscussing()
+    if (!result.ok) showToast(result.error || 'تعذر إيقاف المناقشة.', 'error')
+  }
+
   async function handleGiveFloor(userId: string) {
     const result = await realtime.giveFloor(userId)
     if (!result.ok) showToast(result.error || 'تعذر إعطاء الكلمة.', 'error')
@@ -365,7 +370,12 @@ export function MeetingRoom({
               {/* تعديل لاما 2026-09-06: "بدأ مناقشة البند ما ظهر إشعار أعلى
                   الصفحة" — بث agenda.discussing كان يُسجَّل بسجل النشاط فقط
                   بلا أي عنصر ظاهر بمنطقة الفيديو الرئيسية نفسها. */}
-              {realtime.discussingAgendaItem && <AgendaTimerBanner item={realtime.discussingAgendaItem} />}
+              {realtime.discussingAgendaItem && (
+                <AgendaTimerBanner
+                  item={realtime.discussingAgendaItem}
+                  onStop={canManageAgenda ? () => void handleStopDiscussing() : undefined}
+                />
+              )}
 
               {meetingEnded && (
                 <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-[12px] font-medium text-warning">

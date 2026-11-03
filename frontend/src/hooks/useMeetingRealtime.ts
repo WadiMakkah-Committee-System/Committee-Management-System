@@ -173,6 +173,11 @@ export function useMeetingRealtime(meetingId: string | undefined) {
       pushActivity(`بدأت مناقشة: ${payload.title}`)
     })
 
+    socket.on('agenda.stopped', (payload: { title?: string | null }) => {
+      setDiscussingAgendaItem(null)
+      pushActivity(payload.title ? `انتهت مناقشة: ${payload.title}` : 'انتهت المناقشة')
+    })
+
     // إصلاح 2026-09-14 (بلاغ لاما — قرار ينشئه رئيس اللجنة داخل الاجتماع
     // لا يظهر للأعضاء الآخرين إلا بعد تحديث الصفحة يدويًا): DecisionsPanel
     // يعتمد كليًا على React Query بلا أي بث لحظي — بث "decision.created"
@@ -318,6 +323,20 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     }
   }, [])
 
+  /** إيقاف مناقشة البند الحالي (رئيس اللجنة) — بلاغ لاما 2026-11-03. */
+  const stopDiscussing = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    const socket = socketRef.current
+    if (!socket || !socket.connected) return { ok: false, error: 'لا يوجد اتصال بقناة الاجتماع حاليًا.' }
+    try {
+      const ack = (await socket.timeout(8000).emitWithAck('agenda.stop', {})) as
+        | { ok: boolean; error?: string }
+        | undefined
+      return ack ?? { ok: false, error: 'لم يصل رد من الخادم — حاولي مجددًا.' }
+    } catch {
+      return { ok: false, error: 'انتهت مهلة انتظار رد الخادم — حاولي مجددًا.' }
+    }
+  }, [])
+
   /** durationSeconds اختياري: مؤقت البند (null/undefined ⇒ بدون مؤقت). */
   const announceDiscussing = useCallback(
     async (agendaItemId: string, title: string, durationSeconds?: number | null): Promise<{ ok: boolean; error?: string }> => {
@@ -354,6 +373,7 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     discussingAgendaItem,
     floorGiven,
     giveFloor,
+    stopDiscussing,
     activityEvents,
     onlineUserIds,
     sendChatMessage,

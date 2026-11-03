@@ -58,6 +58,16 @@ export interface EmbeddedParticipant {
 }
 
 /**
+ * يوحّد معرّف ACS للمقارنة (بلاغ لاما 2026-11-03): المعرّف الخام شكله
+ * "8:acs:{مورد}_{مستخدم}"، وقد يوصل من قاعة انتظار Teams ببادئة مختلفة —
+ * فنقارن بالجزء الأخير (معرّف المستخدم الفريد) بأحرف صغيرة.
+ */
+function normalizeAcsId(rawId: string): string {
+  const tail = rawId.split(':').pop() ?? rawId
+  return (tail.split('_').pop() ?? tail).toLowerCase()
+}
+
+/**
  * الهدف (تجربة poc/acs-teams-embed — 2026-11-02):
  * الانضمام لاجتماع Microsoft Teams **من داخل غرفة الاجتماع بالمنصة** (نفس
  * الـframe الذي كان يعرض فيديو Agora) عبر Azure Communication Services —
@@ -165,18 +175,25 @@ export function useTeamsEmbeddedCall(
     if (waiting.length === 0) return
     let known: Set<string>
     try {
-      known = new Set((await getTeamsKnownGuests(meetingId)).map((g) => g.acs_user_id))
-    } catch {
+      known = new Set((await getTeamsKnownGuests(meetingId)).map((g) => normalizeAcsId(g.acs_user_id)))
+    } catch (err) {
+      console.info('[auto-admit] تعذّر جلب الضيوف المعروفين', err)
       return
     }
     for (const p of waiting) {
       const key = idOf(p)
-      if (!known.has(key)) continue
+      const match = known.has(normalizeAcsId(key))
+      // تشخيص (بلاغ لاما 2026-11-03 — القبول التلقائي ما اشتغل): المعرّفات بالكونسول بدون أسماء.
+      console.info('[auto-admit]', { lobbyId: key, matched: match, knownCount: known.size })
+      if (!match) continue
       autoAdmittingRef.current.add(key)
       call.lobby
         .admit(p.identifier)
         .then(() => onAutoAdmittedRef.current?.(p.displayName || 'عضو باللجنة'))
-        .catch(() => autoAdmittingRef.current.delete(key))
+        .catch((err) => {
+          console.info('[auto-admit] فشل القبول', err)
+          autoAdmittingRef.current.delete(key)
+        })
     }
   }, [meetingId])
 
