@@ -222,14 +222,24 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
           {decision.votes.length > 0 && (
             <ul className="mt-1 flex flex-col gap-1 border-t border-border-default pt-2">
               {decision.votes.map((v) => (
-                <li key={v.voter.user_id} className="flex items-center justify-between text-[11px]">
-                  <span className="flex items-center gap-1.5 text-text-secondary">
-                    <Avatar firstName={v.voter.first_name} lastName={v.voter.last_name} size={18} />
-                    {v.voter.first_name} {v.voter.last_name}
-                  </span>
-                  <span className={v.option.is_approving ? 'text-status-success-main' : 'text-text-muted'}>
-                    {v.option.label}
-                  </span>
+                <li key={v.voter.user_id} className="flex flex-col gap-0.5 text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-text-secondary">
+                      <Avatar firstName={v.voter.first_name} lastName={v.voter.last_name} size={18} />
+                      {v.voter.first_name} {v.voter.last_name}
+                    </span>
+                    <span className={v.option.is_approving ? 'text-status-success-main' : 'text-text-muted'}>
+                      {v.option.label}
+                    </span>
+                  </div>
+                  {/* بلاغ لاما 2026-11-03: سبب الامتناع ما كان يظهر للرئيس داخل غرفة
+                     الاجتماع (كان بصفحة القرار فقط). الباك-إند يرسله لرئيس اللجنة
+                     وصاحب الصوت فقط، وnull لغيرهم — فالعرض هنا آمن. */}
+                  {v.option.is_abstain && v.reason && (
+                    <p className="mr-6 rounded-xs bg-bg-elevated px-2 py-1 text-[11px] text-text-secondary">
+                      السبب: {v.reason}
+                    </p>
+                  )}
                 </li>
               ))}
             </ul>
