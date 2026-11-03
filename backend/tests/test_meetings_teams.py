@@ -741,3 +741,40 @@ async def test_user_id_lookups_are_cached(monkeypatch) -> None:
     assert await teams_client.get_user_id("missing@example.com") is None
     user_calls = [r for r in seen if "/users/" in str(r.url)]
     assert len(user_calls) == 2
+
+
+async def test_automatic_attendance_sessions_and_summary(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user: User, fake_teams: FakeTeams
+) -> None:
+    """الحضور التلقائي (migration 0043): جلسة لكل دخول، نبضات، خروج، وجدول مجمّع."""
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+    await _grant_committee_role_permissions(["meetings.join", "meetings.view"], slug="chair")
+    meeting_id = (await _create(client, ctx)).json()["meeting_id"]
+    base = f"/api/v1/meetings/{meeting_id}/attendance"
+
+    first = await client.post(base, headers=ctx["chair_headers"])
+    assert first.status_code == 201, first.text
+    first_id = first.json()["attendance_id"]
+    beat = await client.post(f"{base}/{first_id}/heartbeat", headers=ctx["chair_headers"])
+    assert beat.json() == {"active": True}
+
+    # دخول جديد (مثلًا تحديث الصفحة) يقفل الجلسة السابقة ويفتح جلسة جديدة.
+    second = await client.post(base, headers=ctx["chair_headers"])
+    second_id = second.json()["attendance_id"]
+    assert (await client.post(f"{base}/{first_id}/heartbeat", headers=ctx["chair_headers"])).json() == {"active": False}
+
+    # ما أحد يقدر يلمس جلسات غيره، وغير العضو ما يقدر يسجل حضور.
+    assert (await client.post(f"{base}/{second_id}/heartbeat", headers=ctx["member_headers"])).json() == {"active": False}
+    assert (await client.post(base, headers=ctx["outsider_headers"])).status_code == 403
+
+    summary_live = (await client.get(base, headers=ctx["chair_headers"])).json()
+    assert len(summary_live) == 1
+    assert summary_live[0]["sessions"] == 2
+    assert summary_live[0]["last_left_at"] is None  # لسا داخل
+
+    left = await client.post(f"{base}/{second_id}/leave", headers=ctx["chair_headers"])
+    assert left.status_code == 204
+    summary = (await client.get(base, headers=ctx["chair_headers"])).json()
+    assert summary[0]["last_left_at"] is not None
+    assert summary[0]["total_seconds"] >= 0
+    assert (await client.get(base, headers=ctx["outsider_headers"])).status_code == 403

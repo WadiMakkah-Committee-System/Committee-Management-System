@@ -27,16 +27,17 @@ join/leave الخاصين بـAgora — أُزيلا 2026-11-02 مع الانت�
 - minutes.py      المحاضر.
 - chat.py         رسائل القناة اللحظية.
 - teams.py        تكامل Microsoft Teams: رابط الانضمام + التسجيلات (migration 0041).
+- attendance.py   الحضور التلقائي لاجتماعات Teams (migration 0043).
 
 المسارات وترتيب تسجيلها مطابقان تمامًا للملف السابق (نفس البادئة /meetings).
 """
 
 from fastapi import APIRouter
 
-from app.api.v1.meetings import ai, attachments, chat, core, minutes, teams
+from app.api.v1.meetings import ai, attachments, attendance, chat, core, minutes, teams
 
 # كل راوتر فرعي يحمل البادئة /meetings بنفسه (FastAPI لا يسمح بمسار
 # فارغ "" تحت راوتر بلا بادئة)، وهذا الراوتر يجمعها بنفس الترتيب الأصلي.
 router = APIRouter()
-for _sub in (core, attachments, ai, minutes, chat, teams):
+for _sub in (core, attachments, attendance, ai, minutes, chat, teams):
     router.include_router(_sub.router)

@@ -240,6 +240,15 @@ export function useMeetingAttachments(meetingId: string | undefined, kind?: Meet
   })
 }
 
+/** جدول الحضور التلقائي للاجتماع (migration 0043). */
+export function useMeetingAttendance(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: [...meetingsKeys.detail(meetingId ?? ''), 'attendance'] as const,
+    queryFn: () => meetingsApi.fetchMeetingAttendance(meetingId as string),
+    enabled: !!meetingId,
+  })
+}
+
 /** صلاحيات المستخدم على مرفقات الاجتماع (إظهار "إضافة"/"حذف" — بلاغ لاما 2026-11-03). */
 export function useMeetingAttachmentPermissions(meetingId: string | undefined) {
   return useQuery({

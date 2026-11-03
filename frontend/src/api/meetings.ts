@@ -1,4 +1,4 @@
-import { apiClient } from '@/lib/apiClient'
+import { API_BASE_URL, apiClient } from '@/lib/apiClient'
 import { fileNameFromDisposition } from '@/lib/utils'
 import type {
   Meeting,
@@ -10,6 +10,7 @@ import type {
   MeetingCreatePayload,
   TeamsCallTokenResponse,
   TeamsKnownGuest,
+  MeetingAttendanceRow,
   TeamsJoinResponse,
   TeamsRecording,
   MeetingListItem,
@@ -195,6 +196,39 @@ export async function updateAgendaItem(
 
 export async function deleteAgendaItem(agendaItemId: string): Promise<void> {
   await apiClient.delete(`/meetings/agenda-items/${agendaItemId}`)
+}
+
+// ============================== الحضور التلقائي (migration 0043) ==============================
+
+/** بداية جلسة حضور لحظة دخول العضو الفعلي للاجتماع (meetings.join). */
+export async function startAttendance(meetingId: string): Promise<{ attendance_id: string }> {
+  const { data } = await apiClient.post<{ attendance_id: string }>(`/meetings/${meetingId}/attendance`)
+  return data
+}
+
+/** نبضة "لسا داخل" — active=false ⇒ الجلسة مقفلة، ابدأ جلسة جديدة. */
+export async function attendanceHeartbeat(meetingId: string, attendanceId: string): Promise<{ active: boolean }> {
+  const { data } = await apiClient.post<{ active: boolean }>(`/meetings/${meetingId}/attendance/${attendanceId}/heartbeat`)
+  return data
+}
+
+/**
+ * خروج العضو — بـfetch keepalive (مو axios) عشان يوصل حتى لو الصفحة تنقفل
+ * (pagehide). التوكن يُمرَّر صريحًا لأن الطلب خارج apiClient.
+ */
+export function leaveAttendance(meetingId: string, attendanceId: string, accessToken: string | null): void {
+  if (!accessToken) return
+  void fetch(`${API_BASE_URL}/meetings/${meetingId}/attendance/${attendanceId}/leave`, {
+    method: 'POST',
+    keepalive: true,
+    headers: { Authorization: `Bearer ${accessToken}` },
+  }).catch(() => {})
+}
+
+/** جدول الحضور المجمّع (meetings.view). */
+export async function fetchMeetingAttendance(meetingId: string): Promise<MeetingAttendanceRow[]> {
+  const { data } = await apiClient.get<MeetingAttendanceRow[]>(`/meetings/${meetingId}/attendance`)
+  return data
 }
 
 /** GET /meetings/{id}/attachments/permissions — هل يقدر المستخدم يضيف/يحذف مرفقات الاجتماع. */

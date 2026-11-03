@@ -54,6 +54,12 @@ Role (own/department/all، من دور المستخدم العام) **أو** ص�
 """
 
 from app.services.meeting_service.agenda import add_agenda_item, delete_agenda_item, update_agenda_item
+from app.services.meeting_service.attendance import (
+    attendance_summary,
+    end_session as end_attendance_session,
+    heartbeat as attendance_heartbeat,
+    start_session as start_attendance_session,
+)
 from app.services.meeting_service.attachments import (
     add_agenda_item_attachments,
     add_attachment,
@@ -139,6 +145,10 @@ __all__ = [
     "open_teams_recording",
     "get_meeting",
     "list_attachments",
+    "attendance_summary",
+    "end_attendance_session",
+    "attendance_heartbeat",
+    "start_attendance_session",
     "attachment_permissions",
     "query_meeting_attachments",
     "list_extracted_items",

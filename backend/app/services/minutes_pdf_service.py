@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import base64
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -204,6 +204,8 @@ class MinutesPdfData:
     participants: list[str]
     sections: list[dict]
     signatures: list[MinutesPdfSignature]
+    # الحضور الفعلي من الحضور التلقائي (migration 0043): "الاسم — المدة". فاضي ⇒ ما يُعرض.
+    attended: list[str] = field(default_factory=list)
 
 
 def _fmt(value: datetime | None) -> str:
@@ -274,6 +276,13 @@ def build_minutes_pdf(data: MinutesPdfData) -> bytes:
         story.append(SectionHeading("الحضور"))
         story.append(Spacer(1, 4))
         story.append(RTLText("، ".join(data.participants), size=10.5))
+        story.append(Spacer(1, 10))
+
+    if data.attended:
+        story.append(SectionHeading("الحضور الفعلي (مسجّل تلقائيًا)"))
+        story.append(Spacer(1, 4))
+        for line in data.attended:
+            story.append(RTLText(line, size=10.5))
         story.append(Spacer(1, 10))
 
     sections = sorted(data.sections or [], key=lambda s: s.get("order", 0))
