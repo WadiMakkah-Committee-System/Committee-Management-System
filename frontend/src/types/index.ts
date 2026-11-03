@@ -661,6 +661,15 @@ export interface TeamsCallTokenResponse {
   identity: 'teams_user' | 'guest'
 }
 
+/** سطر جدول الحضور التلقائي (GET /meetings/{id}/attendance). last_left_at=null ⇒ لسا داخل. */
+export interface MeetingAttendanceRow {
+  user: CommitteeMemberUser
+  first_joined_at: string
+  last_left_at: string | null
+  total_seconds: number
+  sessions: number
+}
+
 /** عنصر GET /meetings/{id}/teams/known-guests — ضيف دخل من المنصة (عضو مصرّح له). */
 export interface TeamsKnownGuest {
   acs_user_id: string

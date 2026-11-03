@@ -919,6 +919,15 @@ async def sign_minutes(
     return result
 
 
+def _format_duration(total_seconds: int) -> str:
+    """مدة الحضور للمحضر: "1 س 05 د" / "12 د" / "أقل من دقيقة"."""
+    minutes = total_seconds // 60
+    if minutes < 1:
+        return "أقل من دقيقة"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours} س {mins:02d} د" if hours else f"{mins} د"
+
+
 async def get_minutes_pdf(db: AsyncSession, *, meeting_id: uuid.UUID, actor: User) -> tuple[str, bytes]:
     """
     الهدف: ملف PDF للمحضر (تصنيف "مرفقات اللجنة" بالوثائق — طلب لاما 2026-11-01).
@@ -933,6 +942,7 @@ async def get_minutes_pdf(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
     + أكواد دور اللجنة عند الحاجة فقط (0-1).
     """
     # استيراد كسول: reportlab يُحمَّل فقط عند أول طلب PDF، لا مع تشغيل التطبيق.
+    from app.services.meeting_service.attendance import summarize_attendance
     from app.services.minutes_pdf_service import (
         MinutesPdfData,
         MinutesPdfSignature,
@@ -953,6 +963,10 @@ async def get_minutes_pdf(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
         location=meeting.location,
         stage=minutes.stage.value,
         participants=[p.full_name for p in meeting.participants],
+        attended=[
+            f"{row.user.full_name} — {_format_duration(row.total_seconds)}"
+            for row in await summarize_attendance(db, meeting_id=meeting.meeting_id)
+        ],
         sections=list(minutes.sections or []),
         signatures=[
             MinutesPdfSignature(name=s.user.full_name, signed_at=s.signed_at, image_base64=s.signature_image)

@@ -28,6 +28,7 @@ import { AgendaTimerBanner } from './room/AgendaTimerBanner'
 import { ReactionsButton } from './room/ReactionsButton'
 import { DeviceCheck } from './room/DeviceCheck'
 import { isDeviceCheckDone, type DevicePrefs } from './room/devicePrefs'
+import { useMeetingAttendance } from './room/useMeetingAttendance'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
 
@@ -135,6 +136,8 @@ export function MeetingRoom({
   }
 
   const meeting = meetingQuery.data
+  // الحضور التلقائي: جلسة لحظة الدخول الفعلي للاجتماع + نبضات + خروج.
+  useMeetingAttendance(meetingId, embeddedCall.phase === 'connected')
 
   // تحديث لاما 2026-11-03: زر "دخول الاجتماع" (خارج الغرفة) هو الدخول نفسه —
   // أول ما تفتح الغرفة يبدأ الاتصال تلقائيًا، بدون زر انضمام ثاني داخل الإطار.

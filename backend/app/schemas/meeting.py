@@ -267,6 +267,28 @@ class MeetingAttachmentPermissionsOut(BaseModel):
     can_delete: bool
 
 
+class MeetingAttendanceSessionOut(BaseModel):
+    """رد POST /meetings/{id}/attendance — معرّف الجلسة للنبضات والخروج."""
+
+    attendance_id: uuid.UUID
+
+
+class MeetingAttendanceHeartbeatOut(BaseModel):
+    """active=False ⇒ الجلسة مقفلة/مو لك — الواجهة تبدأ جلسة جديدة."""
+
+    active: bool
+
+
+class MeetingAttendanceRowOut(BaseModel):
+    """سطر جدول الحضور (قرار لاما 2026-11-03). last_left_at=None ⇒ لسا داخل الاجتماع."""
+
+    user: CommitteeMemberUserOut
+    first_joined_at: datetime
+    last_left_at: datetime | None
+    total_seconds: int
+    sessions: int
+
+
 class TeamsKnownGuestOut(BaseModel):
     """عنصر GET /meetings/{id}/teams/known-guests — ضيف دخل من المنصة (عضو مصرّح
     له)، يُقبل من قاعة الانتظار تلقائيًا. acs_user_id يطابق معرّف المنتظر بـACS."""
