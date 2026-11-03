@@ -5,6 +5,7 @@ import {
   Hourglass,
   Info,
   Loader2,
+  LogIn,
   MicOff,
   MonitorUp,
   RotateCcw,
@@ -15,8 +16,6 @@ import {
 import { useTeamsJoinUrl } from '@/hooks/useMeetings'
 import { useToast } from '@/components/ui/Toast'
 import { cn, extractErrorMessage } from '@/lib/utils'
-import { getMicrosoftTeamsToken } from '@/lib/microsoftSignIn'
-import { useAuthStore } from '@/store/authStore'
 import type { Meeting } from '@/types'
 import type { EmbeddedParticipant, TeamsEmbeddedCall } from './useTeamsEmbeddedCall'
 
@@ -182,6 +181,19 @@ function LobbyBar({ call }: { call: TeamsEmbeddedCall }) {
   )
 }
 
+/** تنبيه رئيس اللجنة بخصوص التسجيل/التفريغ (ما يقدر أحد يشغلهما من داخل المنصة). */
+function RecordingHint() {
+  return (
+    <div className="mt-2 flex max-w-md items-start gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-right text-[12px] text-warning">
+      <Info size={14} className="mt-0.5 shrink-0" />
+      <span>
+        بصفتك رئيس اللجنة: التسجيل يبدأ <strong>تلقائيًا</strong> مع بداية الاجتماع. لو ما ظهر تنبيه التفريغ
+        (Transcription)، شغّليه من <strong>تطبيق تيمز</strong> — بدونه لا يمكن توليد مسودة المحضر.
+      </span>
+    </div>
+  )
+}
+
 /**
  * الهدف (تجربة poc/acs-teams-embed — 2026-11-02):
  * المساحة الرئيسية بغرفة الاجتماع: فيديو اجتماع Microsoft Teams **داخل المنصة**
@@ -191,7 +203,7 @@ function LobbyBar({ call }: { call: TeamsEmbeddedCall }) {
  * تلقائيًا (باسمه، بدون انتظار، والمنظّم/الرئيس يقبل الضيوف من شريط LobbyBar)
  * — بدون أي نافذة. ومن دخل بكلمة المرور يدخل كضيف وينتظر حتى يُقبل.
  *
- * الحالات: قبل الانضمام (زر الانضمام + بديل فتح تيمز)، جارٍ الاتصال، بانتظار
+ * الحالات: جارٍ الاتصال (يبدأ تلقائيًا)، يحتاج تأكيد Microsoft، بانتظار
  * السماح بالدخول (Lobby)، داخل الاجتماع (بطاقة مميزة + شريط مصغّرات، ومشاركة
  * الشاشة تُعرض كبطاقة مميزة تلقائيًا)، انتهى، أو خطأ.
  *
@@ -210,91 +222,60 @@ export function EmbeddedTeamsStage({
   canRecord: boolean
 }) {
   const [pinnedKey, setPinnedKey] = useState<string>('local')
-  const viaMicrosoft = useAuthStore((st) => st.authMethod) === 'microsoft'
-  const [joinNotice, setJoinNotice] = useState<string | null>(null)
 
-  /**
-   * الانضمام: لو الجلسة دخلت بحساب Microsoft نجيب توكن Teams صامتًا (ونافذة
-   * فقط لو انتهت جلسة Microsoft — من نفس ضغطة الزر)، ولو تعذّر يدخل كضيف مع
-   * تنبيه بدل ما يتعطل الاجتماع.
-   */
-  async function joinMeeting() {
-    setJoinNotice(null)
-    if (!viaMicrosoft) {
-      await call.join(null)
-      return
-    }
-    const token = await getMicrosoftTeamsToken(true).catch(() => null)
-    if (!token) setJoinNotice('تعذّر استخدام حسابك في Microsoft — دخلت كضيف. سجّل خروج وادخل من جديد لو تكرر.')
-    await call.join(token)
-  }
-
-  if (call.phase === 'idle' || call.phase === 'ended' || call.phase === 'error') {
+  // تحديث لاما 2026-11-03: الدخول يبدأ تلقائيًا من MeetingRoom (call.start) أول ما
+  // تفتح الغرفة — فالحالات هنا: جاري الاتصال، أو يحتاج ضغطة (انتهت جلسة
+  // Microsoft)، أو انقطع/غادر (إعادة الانضمام). لا يوجد زر "انضمام" ثاني.
+  if (call.phase === 'idle' || call.phase === 'joining' || call.phase === 'lobby') {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-5 rounded-lg bg-[#1b2338] p-6 text-center">
-        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-primary/15 text-brand-accent">
-          <Video size={30} />
-        </span>
-        <div className="flex flex-col gap-1.5">
-          <h2 className="text-lg font-semibold text-white">
-            {call.phase === 'ended' ? 'غادرت الاجتماع' : 'اجتماع Microsoft Teams'}
-          </h2>
-          <p className="max-w-md text-sm text-white/60">
-            {call.phase === 'ended'
-              ? 'يمكنك العودة للاجتماع في أي وقت ما دام لم ينتهِ.'
-              : 'الصوت والفيديو يعملان هنا داخل المنصة، بجانب الأجندة والقرارات.'}
-          </p>
-          {call.phase === 'error' && call.errorMessage && (
-            <p className="max-w-md text-sm text-danger">{call.errorMessage}</p>
-          )}
-          {joinNotice && <p className="max-w-md text-sm text-warning">{joinNotice}</p>}
-        </div>
-        <button
-          type="button"
-          onClick={() => void joinMeeting()}
-          className="flex h-11 items-center gap-2 rounded-full bg-brand-primary px-6 text-sm font-semibold text-white transition-all hover:brightness-110 active:scale-95"
-        >
-          {call.phase === 'idle' ? <Video size={17} /> : <RotateCcw size={17} />}
-          {call.phase === 'idle' ? 'الانضمام للاجتماع' : 'إعادة الانضمام'}
-        </button>
-        <p className="max-w-sm text-xs text-white/50">
-          {viaMicrosoft
-            ? 'بتدخل باسمك من حساب الشركة مباشرة.'
-            : 'دخلت المنصة بكلمة المرور، فبتدخل الاجتماع كضيف ويسمح لك المنظّم بالدخول.'}
-        </p>
-        <OpenInTeamsButton meetingId={meeting.meeting_id} subtle />
-        {canRecord && (
-          <div className="flex max-w-md items-start gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-right text-[12px] text-warning">
-            <Info size={14} className="mt-0.5 shrink-0" />
-            <span>
-              بصفتك رئيس اللجنة: التسجيل يبدأ <strong>تلقائيًا</strong> مع بداية الاجتماع. لو ما ظهر تنبيه التفريغ
-              (Transcription)، شغّليه من <strong>تطبيق تيمز</strong> — بدونه لا يمكن توليد مسودة المحضر.
-            </span>
-          </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-lg bg-[#1b2338] p-6 text-center text-white/70">
+        {call.phase === 'lobby' ? (
+          <>
+            <Hourglass size={28} className="text-warning" />
+            <p className="text-sm text-white">في انتظار السماح بدخولك</p>
+            <p className="max-w-sm text-xs text-white/50">يسمح لك منظّم الاجتماع أو رئيس اللجنة بالدخول.</p>
+          </>
+        ) : (
+          <>
+            <Loader2 size={28} className="animate-spin" />
+            <p className="text-sm">جاري الاتصال بالاجتماع...</p>
+            <p className="max-w-sm text-xs text-white/40">لو طلب المتصفح إذن الكاميرا والمايك، اسمح له.</p>
+          </>
         )}
+        {canRecord && <RecordingHint />}
       </div>
     )
   }
 
-  if (call.phase === 'joining' || call.phase === 'lobby') {
+  if (call.phase === 'needs_signin' || call.phase === 'ended' || call.phase === 'error') {
+    const needsSignIn = call.phase === 'needs_signin'
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-lg bg-[#1b2338] p-6 text-center text-white/70">
-        {call.phase === 'joining' ? (
-          <>
-            <Loader2 size={28} className="animate-spin" />
-            <p className="text-sm">جاري الاتصال بالاجتماع...</p>
-          </>
-        ) : (
-          <>
-            <Hourglass size={28} className="text-warning" />
-            <p className="text-sm text-white">في انتظار سماح منظّم الاجتماع بدخولك</p>
-            <p className="max-w-sm text-xs text-white/50">
-              {call.identity === 'teams_user'
-                ? 'يسمح لك منظّم الاجتماع أو رئيس اللجنة بالدخول.'
-                : 'دخلت كضيف — يسمح لك بالدخول أحد أعضاء الشركة الموجودين بالاجتماع.'}
-            </p>
-          </>
-        )}
+      <div className="flex flex-1 flex-col items-center justify-center gap-5 rounded-lg bg-[#1b2338] p-6 text-center">
+        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-primary/15 text-brand-accent">
+          {needsSignIn ? <LogIn size={30} /> : <Video size={30} />}
+        </span>
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-lg font-semibold text-white">
+            {needsSignIn ? 'تأكيد حساب Microsoft' : call.phase === 'ended' ? 'غادرت الاجتماع' : 'انقطع الاتصال بالاجتماع'}
+          </h2>
+          <p className="max-w-md text-sm text-white/60">
+            {needsSignIn
+              ? 'انتهت جلسة حسابك في Microsoft على هذا الجهاز — اضغط للمتابعة وبتدخل باسمك مباشرة.'
+              : 'تقدر ترجع للاجتماع في أي وقت ما دام ما انتهى.'}
+          </p>
+          {call.phase === 'error' && call.errorMessage && (
+            <p className="max-w-md text-sm text-danger">{call.errorMessage}</p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => void call.start(true)}
+          className="flex h-11 items-center gap-2 rounded-full bg-brand-primary px-6 text-sm font-semibold text-white transition-all hover:brightness-110 active:scale-95"
+        >
+          {needsSignIn ? <LogIn size={17} /> : <RotateCcw size={17} />}
+          {needsSignIn ? 'المتابعة بحساب Microsoft' : 'إعادة الانضمام'}
+        </button>
+        <OpenInTeamsButton meetingId={meeting.meeting_id} subtle />
       </div>
     )
   }

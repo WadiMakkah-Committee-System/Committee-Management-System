@@ -91,6 +91,7 @@ from app.services.meeting_service.extracted_items import (
 )
 from app.services.meeting_service.loading import sync_meeting_status
 from app.services.meeting_service.teams import get_call_token as get_teams_call_token
+from app.services.meeting_service.teams import list_known_guests as list_teams_known_guests
 from app.services.meeting_service.teams import get_join_url as get_teams_join_url
 from app.services.meeting_service.teams import list_recordings as list_teams_recordings
 from app.services.meeting_service.teams import open_recording as open_teams_recording
@@ -131,6 +132,7 @@ __all__ = [
     "extend_meeting",
     "get_latest_recording",
     "get_teams_call_token",
+    "list_teams_known_guests",
     "get_teams_join_url",
     "list_teams_recordings",
     "open_teams_recording",

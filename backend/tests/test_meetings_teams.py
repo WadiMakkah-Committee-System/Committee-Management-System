@@ -394,6 +394,14 @@ async def test_call_token_for_embedded_join(
     outsider = await client.post(f"/api/v1/meetings/{meeting_id}/teams/call-token", headers=ctx["outsider_headers"])
     assert outsider.status_code == 403, outsider.text
 
+    # الضيف اللي دخل من المنصة ينحفظ للقبول التلقائي من قاعة الانتظار.
+    known = await client.get(f"/api/v1/meetings/{meeting_id}/teams/known-guests", headers=ctx["chair_headers"])
+    assert known.status_code == 200, known.text
+    assert [g["acs_user_id"] for g in known.json()] == ["8:acs:1"]
+    assert known.json()[0]["display_name"]
+    hidden = await client.get(f"/api/v1/meetings/{meeting_id}/teams/known-guests", headers=ctx["outsider_headers"])
+    assert hidden.status_code == 403, hidden.text
+
 
 def _fake_aad_token(claims: dict) -> str:
     """JWT شكلي (بدون توقيع حقيقي) — التوقيع يتحقق منه ACS، وهنا نختبر منطقنا فقط."""

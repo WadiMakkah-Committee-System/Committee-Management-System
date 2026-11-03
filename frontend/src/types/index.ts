@@ -661,6 +661,13 @@ export interface TeamsCallTokenResponse {
   identity: 'teams_user' | 'guest'
 }
 
+/** عنصر GET /meetings/{id}/teams/known-guests — ضيف دخل من المنصة (عضو مصرّح له). */
+export interface TeamsKnownGuest {
+  acs_user_id: string
+  user_id: string
+  display_name: string
+}
+
 export interface TeamsJoinResponse {
   join_url: string
 }

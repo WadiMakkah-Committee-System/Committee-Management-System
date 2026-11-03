@@ -1,4 +1,4 @@
-import { Activity, Paperclip, CalendarDays, Users, Vote } from 'lucide-react'
+import { Activity, DoorOpen, Paperclip, CalendarDays, Users, Vote } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export type RoomPanelKey =
@@ -8,6 +8,7 @@ export type RoomPanelKey =
   | 'attachments'
   | 'chat'
   | 'activity'
+  | 'lobby'
 
 /** تبويبات اللوحة الديناميكية فقط (بلا "المحادثة" — تُفتَح من الشريط العام
  * الداكن MeetingRoomAppRail.tsx. لوحة "التسجيل + الذكاء الاصطناعي" أُزيلت
@@ -24,19 +25,29 @@ const TAB_ITEMS: { key: RoomPanelKey; label: string; icon: typeof Users }[] = [
   { key: 'attachments', label: 'المرفقات', icon: Paperclip },
 ]
 
-/** صف تبويبات اللوحة الديناميكية أعلى غرفة الاجتماع — تبويب واحد فقط نشط بأي وقت. */
+/** تبويب "الانتظار" (قرار لاما 2026-11-03) — يظهر فقط لمن يقدر يقبل المنتظرين
+ * (داخل الاجتماع بحساب Microsoft)، أول التبويبات عشان ما يفوت. */
+const LOBBY_TAB = { key: 'lobby' as const, label: 'الانتظار', icon: DoorOpen }
+
+/** صف تبويبات اللوحة الديناميكية أعلى غرفة الاجتماع — تبويب واحد فقط نشط بأي وقت.
+ * showLobby/lobbyCount: تبويب قاعة الانتظار ورقم المنتظرين عليه. */
 export function MeetingRoomSidebar({
   active,
   onSelect,
   raisedHandCount,
+  showLobby = false,
+  lobbyCount = 0,
 }: {
   active: RoomPanelKey
   onSelect: (key: RoomPanelKey) => void
   raisedHandCount: number
+  showLobby?: boolean
+  lobbyCount?: number
 }) {
+  const tabs = showLobby ? [LOBBY_TAB, ...TAB_ITEMS] : TAB_ITEMS
   return (
     <nav className="flex shrink-0 items-center justify-between gap-1 border-b border-border-default bg-bg-surface px-2 py-2">
-      {TAB_ITEMS.map(({ key, label, icon: Icon }) => {
+      {tabs.map(({ key, label, icon: Icon }) => {
         const isActive = active === key
         return (
           <button
@@ -52,6 +63,11 @@ export function MeetingRoomSidebar({
           >
             <span className="relative">
               <Icon size={17} />
+              {key === 'lobby' && lobbyCount > 0 && (
+                <span className="absolute -left-2 -top-1.5 flex h-3.5 min-w-3.5 animate-pulse items-center justify-center rounded-full bg-danger px-0.5 text-[8px] font-bold text-white">
+                  {lobbyCount}
+                </span>
+              )}
               {key === 'participants' && raisedHandCount > 0 && (
                 <span className="absolute -left-2 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warning px-0.5 text-[8px] font-bold text-white">
                   {raisedHandCount}

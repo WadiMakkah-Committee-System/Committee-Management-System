@@ -21,6 +21,8 @@ import { DecisionsPanel } from './room/panels/DecisionsPanel'
 import { AttachmentsPanel } from './room/panels/AttachmentsPanel'
 import { ChatPanel } from './room/panels/ChatPanel'
 import { ActivityPanel } from './room/panels/ActivityPanel'
+import { LobbyPanel } from './room/panels/LobbyPanel'
+import { GuestWaitingScreen } from './room/GuestWaitingScreen'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
 
@@ -54,6 +56,7 @@ export function MeetingRoom({
   onClose: () => void
 }) {
   const currentUser = useAuthStore((s) => s.user)
+  const authMethod = useAuthStore((s) => s.authMethod)
   const { showToast } = useToast()
   // Polling أثناء بقاء الغرفة مفتوحة فقط (راجعي useMeetingDetail) — يكشف
   // انتهاء وقت الاجتماع (status → finished) بدون حاجة لإعادة فتح الصفحة.
@@ -67,7 +70,10 @@ export function MeetingRoom({
   const realtime = useMeetingRealtime(meetingId)
   // تجربة الانضمام المدمج (Azure Communication Services): فيديو اجتماع Teams
   // داخل الغرفة نفسها بدل فتح تطبيق تيمز — راجعي useTeamsEmbeddedCall.ts.
-  const embeddedCall = useTeamsEmbeddedCall(meetingId)
+  // onAutoAdmitted: أعضاء اللجنة اللي دخلوا كضيوف يُقبلون تلقائيًا — نبلّغ الموظف.
+  const embeddedCall = useTeamsEmbeddedCall(meetingId, {
+    onAutoAdmitted: (name) => showToast(`دخل ${name} (عضو باللجنة)`, 'info'),
+  })
 
   const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
@@ -124,6 +130,44 @@ export function MeetingRoom({
   }
 
   const meeting = meetingQuery.data
+
+  // تحديث لاما 2026-11-03: زر "دخول الاجتماع" (خارج الغرفة) هو الدخول نفسه —
+  // أول ما تفتح الغرفة يبدأ الاتصال تلقائيًا، بدون زر انضمام ثاني داخل الإطار.
+  // مرة واحدة فقط لكل فتح للغرفة؛ إعادة المحاولة بعدها من زر "إعادة الانضمام".
+  const autoStartedRef = useRef(false)
+  useEffect(() => {
+    if (!meeting?.has_teams_meeting || autoStartedRef.current) return
+    if (meeting.status === 'finished' || meeting.status === 'recorded') return
+    autoStartedRef.current = true
+    void embeddedCall.start(false)
+  }, [meeting?.has_teams_meeting, meeting?.status, embeddedCall])
+
+  // ضيف (دخل المنصة بدون حساب Microsoft بالشركة) ⇒ شاشة انتظار كاملة لين
+  // ينقبل — ما يشوف الأجندة/المرفقات/القرارات/المشاركين قبل القبول.
+  const isGuest =
+    embeddedCall.identity === 'guest' || (embeddedCall.identity === null && authMethod !== 'microsoft')
+  const showGuestGate = Boolean(meeting?.has_teams_meeting) && isGuest && embeddedCall.phase !== 'connected'
+
+  // قاعة الانتظار: تظهر لمن يقدر يقبل (داخل بحساب Microsoft). تنبيه منبثق لكل
+  // منتظر جديد ما انقبل تلقائيًا خلال ثانيتين (يعني مو عضو دخل من المنصة).
+  const canSeeLobby = embeddedCall.identity === 'teams_user' && embeddedCall.phase === 'connected'
+  const lobbyRef = useRef(embeddedCall.lobbyParticipants)
+  const announcedLobbyRef = useRef(new Set<string>())
+  useEffect(() => {
+    lobbyRef.current = embeddedCall.lobbyParticipants
+    if (!canSeeLobby) return
+    const timers = embeddedCall.lobbyParticipants
+      .filter((p) => !announcedLobbyRef.current.has(p.key))
+      .map((p) => {
+        announcedLobbyRef.current.add(p.key)
+        return setTimeout(() => {
+          if (lobbyRef.current.some((w) => w.key === p.key)) {
+            showToast(`${p.name} ينتظر الدخول — من تبويب "الانتظار"`, 'info')
+          }
+        }, 2000)
+      })
+    return () => timers.forEach(clearTimeout)
+  }, [embeddedCall.lobbyParticipants, canSeeLobby, showToast])
 
   const canCreateDecision = Boolean(
     currentUser &&
@@ -208,6 +252,8 @@ export function MeetingRoom({
           <Loader2 size={28} className="animate-spin" />
           <p className="text-sm">جاري تحميل بيانات الاجتماع...</p>
         </div>
+      ) : showGuestGate ? (
+        <GuestWaitingScreen meeting={meeting} call={embeddedCall} onLeave={() => setConfirmLeaveOpen(true)} />
       ) : (
         <>
           <MeetingRoomHeader meeting={meeting} onOpenParticipants={() => handleSelectPanel('participants')} />
@@ -225,6 +271,8 @@ export function MeetingRoom({
                 active={activePanel}
                 onSelect={handleSelectPanel}
                 raisedHandCount={realtime.raisedHands.length}
+                showLobby={canSeeLobby}
+                lobbyCount={embeddedCall.lobbyParticipants.length}
               />
 
               <div className="min-h-0 flex-1 overflow-hidden">
@@ -268,6 +316,13 @@ export function MeetingRoom({
                   />
                 )}
                 {activePanel === 'activity' && <ActivityPanel events={realtime.activityEvents} />}
+                {activePanel === 'lobby' && canSeeLobby && (
+                  <LobbyPanel
+                    participants={embeddedCall.lobbyParticipants}
+                    onAdmit={embeddedCall.admit}
+                    onReject={embeddedCall.reject}
+                  />
+                )}
               </div>
             </aside>
 

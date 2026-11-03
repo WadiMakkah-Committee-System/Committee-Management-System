@@ -27,13 +27,16 @@ app.core.gemini_client، وrecordings._begin_draft (تهيئة صف المسود
 """
 
 import asyncio
+import json
 import logging
 import uuid
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import acs_client, gemini_client, teams_client, teams_transcript
+from app.core.redis_client import redis_client
 from app.models.committee import Committee
 from app.models.meeting import Meeting, MeetingMode, MeetingStatus
 from app.models.meeting_draft import MeetingDraft, MeetingDraftSource, MeetingDraftStatus
@@ -337,6 +340,7 @@ async def get_call_token(
         token = await acs_client.issue_meeting_token()
         identity_kind = "guest"
         metadata["identity"] = "guest"
+        await _remember_guest(meeting.meeting_id, token.user_id, actor)
     if meeting.started_at is None:
         meeting.started_at = datetime.now(UTC)
     await audit_service.log_action(
@@ -351,6 +355,75 @@ async def get_call_token(
     display_name = actor.full_name
     await db.commit()
     return token, join_url, display_name, identity_kind
+
+
+# ============================== الضيوف المعروفون (قبول تلقائي) ==============================
+
+# قرار لاما 2026-11-03: أعضاء اللجنة اللي يدخلون كضيوف (بدون حساب Microsoft
+# بالشركة) يُقبلون من قاعة الانتظار تلقائيًا. الضيف ما يحصل على هوية ACS إلا
+# من get_call_token بعد اجتياز فحص meetings.join لهذا الاجتماع — فنحفظ هنا
+# ربط "هوية ACS ← مستخدم المنصة"، وجهاز الموظف الداخل بالاجتماع يقرأ القائمة
+# (list_known_guests) ويقبل المطابقين فقط. أي أحد دخل برابط Teams مباشرة
+# (خارج المنصة) ما يكون بالقائمة، فيبقى للقبول اليدوي.
+_KNOWN_GUESTS_TTL = timedelta(hours=24)
+
+
+def _known_guests_key(meeting_id: uuid.UUID) -> str:
+    return f"meeting:{meeting_id}:acs-guests"
+
+
+@dataclass(frozen=True)
+class KnownGuest:
+    """ضيف دخل من المنصة: acs_user_id (معرّفه بـACS/Teams)، ومستخدم المنصة."""
+
+    acs_user_id: str
+    user_id: str
+    display_name: str
+
+
+async def _remember_guest(meeting_id: uuid.UUID, acs_user_id: str, actor: User) -> None:
+    """
+    يحفظ ربط هوية ACS الجديدة بمستخدم المنصة لهذا الاجتماع (Redis، 24 ساعة).
+    best-effort: فشل Redis ما يمنع الانضمام — أسوأ حالة يُقبل الضيف يدويًا.
+    """
+    key = _known_guests_key(meeting_id)
+    value = json.dumps({"user_id": str(actor.user_id), "display_name": actor.full_name}, ensure_ascii=False)
+    try:
+        async with redis_client.pipeline(transaction=True) as pipe:
+            pipe.hset(key, acs_user_id, value)
+            pipe.expire(key, _KNOWN_GUESTS_TTL)
+            await pipe.execute()
+    except Exception:  # noqa: BLE001 — تحسين تجربة فقط، لا يوقف الانضمام
+        logger.warning("تعذّر حفظ هوية الضيف للقبول التلقائي (meeting=%s)", meeting_id, exc_info=True)
+
+
+async def list_known_guests(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> list[KnownGuest]:
+    """
+    الهدف: ضيوف هذا الاجتماع اللي دخلوا من المنصة (أعضاء مصرّح لهم) — يستخدمها
+    جهاز الموظف الداخل بحساب Microsoft ليقبلهم من قاعة الانتظار تلقائيًا.
+    الصلاحيات: meetings.join على لجنة الاجتماع (نفس من يدخل الغرفة).
+    المخرجات: قائمة (قد تكون فارغة). الأخطاء: MeetingForbiddenError، MeetingInvalidStateError.
+    """
+    meeting = await load_meeting(db, meeting_id)
+    await _require_access(
+        db, actor, meeting.committee, "meetings.join", "ليست لديك صلاحية الانضمام لهذا الاجتماع"
+    )
+    _require_linked(meeting)
+    raw = await redis_client.hgetall(_known_guests_key(meeting.meeting_id))
+    guests: list[KnownGuest] = []
+    for acs_user_id, value in raw.items():
+        try:
+            data = json.loads(value)
+        except (TypeError, ValueError):
+            continue
+        guests.append(
+            KnownGuest(
+                acs_user_id=acs_user_id if isinstance(acs_user_id, str) else acs_user_id.decode(),
+                user_id=str(data.get("user_id", "")),
+                display_name=str(data.get("display_name", "")),
+            )
+        )
+    return guests
 
 
 # ============================== التسجيلات ==============================

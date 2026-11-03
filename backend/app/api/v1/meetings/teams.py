@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
 from app.db.session import get_db
-from app.schemas.meeting import TeamsCallTokenIn, TeamsCallTokenOut, TeamsJoinOut, TeamsRecordingOut
+from app.schemas.meeting import TeamsCallTokenIn, TeamsCallTokenOut, TeamsJoinOut, TeamsKnownGuestOut, TeamsRecordingOut
 from app.services import meeting_service
 
 from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
@@ -77,6 +77,25 @@ async def get_teams_call_token(
         display_name=display_name,
         identity=identity,
     )
+
+
+@router.get("/{meeting_id}/teams/known-guests", response_model=list[TeamsKnownGuestOut])
+async def list_teams_known_guests(
+    meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[TeamsKnownGuestOut]:
+    """
+    ضيوف الاجتماع اللي دخلوا من المنصة (أعضاء مصرّح لهم) — جهاز الموظف الداخل
+    بحساب Microsoft يقبلهم من قاعة الانتظار تلقائيًا (قرار لاما 2026-11-03).
+
+    - Authorization: meetings.join على لجنة الاجتماع.
+    - 200: قائمة {acs_user_id, user_id, display_name} (قد تكون فارغة).
+    - 403 / 404 / 409 كما بـ/teams/join.
+    """
+    try:
+        guests = await meeting_service.list_teams_known_guests(db, actor=current_user, meeting_id=meeting_id)
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    return [TeamsKnownGuestOut(acs_user_id=g.acs_user_id, user_id=g.user_id, display_name=g.display_name) for g in guests]
 
 
 @router.get("/{meeting_id}/teams/recordings", response_model=list[TeamsRecordingOut])
