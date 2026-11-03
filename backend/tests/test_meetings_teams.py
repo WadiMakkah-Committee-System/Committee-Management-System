@@ -603,8 +603,14 @@ async def test_recordings_list_and_stream_require_record_permission(
     )
     assert unknown.status_code == 404, unknown.text
 
+    # طلب لاما 2026-11-03: عضو اللجنة (يملك draft.view/summary.view افتراضيًا،
+    # بدون record_audio) يشوف التسجيل وينزّله — كان يرجع 403.
     member = await client.get(f"/api/v1/meetings/{meeting_id}/teams/recordings", headers=ctx["member_headers"])
-    assert member.status_code == 403, member.text
+    assert member.status_code == 200, member.text
+    member_content = await client.get(
+        f"/api/v1/meetings/{meeting_id}/teams/recordings/rec-1/content", headers=ctx["member_headers"]
+    )
+    assert member_content.status_code == 200, member_content.text
 
 
 # ============================== تحليل التفريغ (دوال نقية) ==============================

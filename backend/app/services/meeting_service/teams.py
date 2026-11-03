@@ -42,7 +42,7 @@ from app.models.meeting import Meeting, MeetingMode, MeetingStatus
 from app.models.meeting_draft import MeetingDraft, MeetingDraftSource, MeetingDraftStatus
 from app.models.user import User
 from app.services import audit_service
-from app.services.meeting_service.access import _require_access
+from app.services.meeting_service.access import _require_access, _require_any_access
 from app.services.meeting_service.errors import MeetingInvalidStateError, MeetingValidationError
 from app.services.meeting_service.loading import _all_committee_members, load_committee, load_meeting
 
@@ -446,13 +446,23 @@ async def list_known_guests(db: AsyncSession, *, actor: User, meeting_id: uuid.U
 
 async def _load_for_recordings(db: AsyncSession, actor: User, meeting_id: uuid.UUID) -> Meeting:
     """
-    تحميل الاجتماع + فحص meetings.record_audio + التأكد من ربطه بـTeams —
+    تحميل الاجتماع + فحص صلاحية مشاهدة التسجيل + التأكد من ربطه بـTeams —
     مشتركة بين list_recordings وopen_recording.
+
+    تعديل 2026-11-03 (طلب لاما — "التسجيل ما يظهر للأعضاء، المفترض يطلع"):
+    كانت تشترط meetings.record_audio (صلاحية الرئيس فقط) فالعضو يشوف 403.
+    صارت نفس قاعدة تسجيل الاجتماع الحضوري بالضبط (get_latest_recording):
+    أي واحدة من record_audio / draft.view / summary.view — عضو اللجنة يملك
+    الأخيرتين افتراضيًا، فيشوف تسجيل اجتماع لجنته (مشاهدة/تنزيل فقط).
     الأخطاء: MeetingNotFoundError، MeetingForbiddenError، MeetingInvalidStateError.
     """
     meeting = await load_meeting(db, meeting_id)
-    await _require_access(
-        db, actor, meeting.committee, "meetings.record_audio", "ليست لديك صلاحية الوصول لتسجيل هذا الاجتماع"
+    await _require_any_access(
+        db,
+        actor,
+        meeting.committee,
+        ["meetings.record_audio", "meetings.draft.view", "meetings.summary.view"],
+        "ليست لديك صلاحية الوصول لتسجيل هذا الاجتماع",
     )
     _require_linked(meeting)
     return meeting
@@ -463,7 +473,7 @@ async def list_recordings(
 ) -> list[teams_client.TeamsArtifact]:
     """
     الهدف: قائمة تسجيلات Teams لهذا الاجتماع (قاعدة 6).
-    الصلاحيات: meetings.record_audio (نفس صلاحية التسجيل الصوتي الحالية).
+    الصلاحيات: record_audio أو draft.view أو summary.view (راجعي _load_for_recordings).
     المخرجات: قائمة (فارغة لو لم يُسجَّل، أو انتهت مدة احتفاظ Teams).
     الأخطاء: MeetingForbiddenError، MeetingInvalidStateError، TeamsError.
     """
