@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # ============================== المشاركون ==============================
 
 
-async def _teams_participants(committee: Committee, *, organizer_id: str) -> list[teams_client.TeamsParticipant]:
+async def _teams_participants(committee: Committee, *, organizer_id: str | None) -> list[teams_client.TeamsParticipant]:
     """
     الهدف: تحويل أعضاء اللجنة إلى مشاركي اجتماع Teams.
 
@@ -99,8 +99,12 @@ async def _create_and_attach(meeting: Meeting, committee: Committee) -> None:
     التأثيرات الجانبية: استدعاءات Graph (بحث المستخدمين + إنشاء الاجتماع).
     الأخطاء: TeamsError.
     """
-    organizer_id = await teams_client.get_organizer_id()
-    participants = await _teams_participants(committee, organizer_id=organizer_id)
+    # تحسين أداء 2026-11-03: المنظِّم والأعضاء يُبحث عنهم بالتوازي (كان المنظِّم
+    # أولًا ثم الأعضاء)، ثم يُستبعد المنظِّم من قائمة المشاركين.
+    organizer_id, participants = await asyncio.gather(
+        teams_client.get_organizer_id(), _teams_participants(committee, organizer_id=None)
+    )
+    participants = [p for p in participants if p.user_id != organizer_id]
     created = await teams_client.create_online_meeting(
         organizer_id=organizer_id,
         subject=meeting.title,

@@ -96,6 +96,15 @@ class TeamsArtifact:
 
 _token_cache: dict[str, object] = {"token": None, "expires_at": 0.0}
 
+# تحسين أداء 2026-11-03 (بلاغ لاما — إنشاء الاجتماع صار بطيء بعد Teams): كل إنشاء
+# كان يسأل Graph عن Object ID لكل عضو باللجنة + المنظِّم من جديد. المعرّفات
+# ثابتة (ما تتغير لنفس البريد)، فنخزّنها بالذاكرة: الموجود ساعة، وغير الموجود
+# 5 دقائق (لو انضاف حسابه بـMicrosoft 365 يُلتقط بسرعة).
+# {email (أحرف صغيرة): (وقت الانتهاء monotonic، Object ID أو None)}
+_user_id_cache: dict[str, tuple[float, str | None]] = {}
+_USER_ID_TTL_FOUND_SECONDS = 60 * 60
+_USER_ID_TTL_MISSING_SECONDS = 5 * 60
+
 
 def is_configured() -> bool:
     """
@@ -282,14 +291,21 @@ async def get_user_id(email: str) -> str | None:
     الصلاحية المطلوبة بـGraph: User.Read.All.
     """
     _require_config()
+    cache_key = email.strip().lower()
+    cached = _user_id_cache.get(cache_key)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
     async with _client() as client:
         try:
             response = await _send(
                 client, "GET", f"/users/{quote(email.strip(), safe='@')}", params={"$select": "id"}
             )
         except TeamsNotFoundError:
+            _user_id_cache[cache_key] = (time.monotonic() + _USER_ID_TTL_MISSING_SECONDS, None)
             return None
-        return response.json()["id"]
+        user_id = response.json()["id"]
+    _user_id_cache[cache_key] = (time.monotonic() + _USER_ID_TTL_FOUND_SECONDS, user_id)
+    return user_id
 
 
 async def get_organizer_id() -> str:
