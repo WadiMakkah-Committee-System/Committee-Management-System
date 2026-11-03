@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
+  CallClient,
+  DeviceManager,
+  Reaction,
   CallAgentCommon,
   CallCommon,
   JoinCallOptions,
@@ -11,6 +14,7 @@ import { getTeamsCallToken, getTeamsKnownGuests } from '@/api/meetings'
 import { getMicrosoftTeamsToken, type MicrosoftTeamsToken } from '@/lib/microsoftSignIn'
 import { useAuthStore } from '@/store/authStore'
 import { extractErrorMessage } from '@/lib/utils'
+import { getDevicePrefs } from './devicePrefs'
 
 /** مراحل الاتصال المدمج: idle قبل البدء، joining أثناء الاتصال، lobby بانتظار
  * السماح بالدخول، connected داخل الاجتماع، ended بعد المغادرة/الإنهاء، error فشل،
@@ -24,6 +28,22 @@ export type EmbeddedCallIdentity = 'teams_user' | 'guest'
 /** مشارك ينتظر بالـLobby (يقبله المنظّم/الرئيس من داخل المنصة). */
 export interface LobbyParticipant {
   key: string
+  name: string
+}
+
+/** تفاعل ظاهر مؤقتًا فوق فيديو صاحبه (key = معرّف المشارك، أو 'local' لي). */
+export interface FloatingReaction {
+  id: string
+  key: string
+  type: Reaction
+}
+
+/** جودة الاتصال (UserFacingDiagnostics): good/poor/bad، أو offline لو انقطع النت. */
+export type NetworkQuality = 'good' | 'poor' | 'bad' | 'offline'
+
+/** جهاز صوت/صورة للاختيار بإعدادات الأجهزة. */
+export interface DeviceOption {
+  id: string
   name: string
 }
 
@@ -82,12 +102,20 @@ export function useTeamsEmbeddedCall(
   const [localVideo, setLocalVideo] = useState<LocalVideoStream | null>(null)
   const [identity, setIdentity] = useState<EmbeddedCallIdentity | null>(null)
   const [lobbyParticipants, setLobbyParticipants] = useState<LobbyParticipant[]>([])
+  const [reactions, setReactions] = useState<FloatingReaction[]>([])
+  const [networkQuality, setNetworkQuality] = useState<NetworkQuality>('good')
+  // مشاكل الأجهزة الحالية (رسائل عربية) — من UserFacingDiagnostics.
+  const [mediaIssues, setMediaIssues] = useState<string[]>([])
+  const callClientRef = useRef<CallClient | null>(null)
+  const deviceManagerRef = useRef<DeviceManager | null>(null)
+  const sdkRef = useRef<typeof import('@azure/communication-calling') | null>(null)
 
   const agentRef = useRef<CallAgentCommon | null>(null)
   const callRef = useRef<CallCommon | null>(null)
   const localVideoRef = useRef<LocalVideoStream | null>(null)
   const idOfRef = useRef<((p: RemoteParticipant) => string) | null>(null)
   const identityRef = useRef<EmbeddedCallIdentity | null>(null)
+  const rawIdRef = useRef<typeof import('@azure/communication-common').getIdentifierRawId | null>(null)
   const joiningRef = useRef(false)
   // مفاتيح المنتظرين اللي بدأ قبولهم تلقائيًا — يمنع تكرار القبول لنفس الشخص.
   const autoAdmittingRef = useRef(new Set<string>())
@@ -183,10 +211,13 @@ export function useTeamsEmbeddedCall(
         getTeamsCallToken(meetingId, microsoftToken),
       ])
       idOfRef.current = (p) => common.getIdentifierRawId(p.identifier)
+      rawIdRef.current = common.getIdentifierRawId
       setIdentity(joinInfo.identity)
       identityRef.current = joinInfo.identity
 
+      sdkRef.current = sdk
       const callClient = new sdk.CallClient()
+      callClientRef.current = callClient
       let agent: CallAgentCommon
       // الانضمام الفعلي يتأخر لما بعد تجهيز الكاميرا (joinOptions) — نحفظه كدالة.
       let startCall: (options: JoinCallOptions) => CallCommon
@@ -215,16 +246,30 @@ export function useTeamsEmbeddedCall(
       agentRef.current = agent
 
       const deviceManager = await callClient.getDeviceManager()
+      deviceManagerRef.current = deviceManager
       await deviceManager.askDevicePermission({ audio: true, video: true })
-      const cameras = await deviceManager.getCameras()
-      const video = cameras[0] ? new sdk.LocalVideoStream(cameras[0]) : null
+      // تفضيلات الجهاز (شاشة فحص الأجهزة): الكاميرا/المايك/السماعة، وهل يدخل
+      // والكاميرا/المايك شغالين.
+      const prefs = getDevicePrefs()
+      const [cameras, microphones, speakers] = await Promise.all([
+        deviceManager.getCameras(),
+        deviceManager.getMicrophones().catch(() => []),
+        deviceManager.getSpeakers().catch(() => []),
+      ])
+      const mic = microphones.find((m) => m.id === prefs.microphoneId)
+      if (mic) await deviceManager.selectMicrophone(mic).catch(() => {})
+      const speaker = speakers.find((m) => m.id === prefs.speakerId)
+      if (speaker) await deviceManager.selectSpeaker(speaker).catch(() => {})
+      const camera = cameras.find((c) => c.id === prefs.cameraId) ?? cameras[0]
+      const video = camera ? new sdk.LocalVideoStream(camera) : null
       localVideoRef.current = video
       setLocalVideo(video)
-      setCameraOn(!!video)
+      const startWithVideo = !!video && prefs.cameraOn
+      setCameraOn(startWithVideo)
 
       const joinOptions: JoinCallOptions = {
-        audioOptions: { muted: false },
-        videoOptions: video ? { localVideoStreams: [video] } : undefined,
+        audioOptions: { muted: !prefs.micOn },
+        videoOptions: startWithVideo && video ? { localVideoStreams: [video] } : undefined,
       }
       const call = startCall(joinOptions)
       callRef.current = call
@@ -263,6 +308,8 @@ export function useTeamsEmbeddedCall(
       call.remoteParticipants.forEach(watchParticipant)
       refresh()
       refreshLobby()
+      watchReactions(call, sdk)
+      watchDiagnostics(call, sdk)
       joiningRef.current = false
     } catch (err) {
       joiningRef.current = false
@@ -273,6 +320,103 @@ export function useTeamsEmbeddedCall(
       agentRef.current = null
     }
   }, [meetingId, refresh, refreshLobby, watchParticipant, autoAdmitKnownGuests])
+
+  /** التفاعلات (👍❤️😂😮👏) — ميزة Teams نفسها، فتظهر للي بتطبيق Teams كمان. */
+  function watchReactions(call: CallCommon, sdk: typeof import('@azure/communication-calling')) {
+    try {
+      call.feature(sdk.Features.Reaction).on('reaction', (e) => {
+        const key = rawIdRef.current ? rawIdRef.current(e.identifier) : 'unknown'
+        pushReaction(key, e.reactionMessage.reactionType)
+      })
+    } catch {
+      /* التفاعلات غير مدعومة بهالاجتماع — نتجاهل */
+    }
+  }
+
+  function pushReaction(key: string, type: Reaction) {
+    const id = `${Date.now()}-${Math.random()}`
+    setReactions((prev) => [...prev.slice(-20), { id, key, type }])
+    setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 3500)
+  }
+
+  /** جودة الاتصال ومشاكل الأجهزة (UserFacingDiagnostics) — تنبيه قبل ما ينقطع. */
+  function watchDiagnostics(call: CallCommon, sdk: typeof import('@azure/communication-calling')) {
+    try {
+      const diagnostics = call.feature(sdk.Features.UserFacingDiagnostics)
+      const recomputeNetwork = () => {
+        const latest = diagnostics.network.getLatest()
+        if (latest.noNetwork?.value === true) return setNetworkQuality('offline')
+        const values = [latest.networkReceiveQuality?.value, latest.networkSendQuality?.value, latest.networkReconnect?.value]
+        if (values.includes(3)) setNetworkQuality('bad')
+        else if (values.includes(2)) setNetworkQuality('poor')
+        else setNetworkQuality('good')
+      }
+      diagnostics.network.on('diagnosticChanged', recomputeNetwork)
+      const issueText: Record<string, string> = {
+        microphoneNotFunctioning: 'المايك ما يشتغل',
+        microphonePermissionDenied: 'المتصفح ما سمح بالمايك',
+        noMicrophoneDevicesEnumerated: 'ما فيه مايك متصل',
+        cameraStartFailed: 'تعذّر تشغيل الكاميرا',
+        cameraPermissionDenied: 'المتصفح ما سمح بالكاميرا',
+        cameraFreeze: 'الكاميرا متجمّدة',
+        speakingWhileMicrophoneIsMuted: 'تتكلم والمايك مكتوم',
+        noSpeakerDevicesEnumerated: 'ما فيه سماعة متصلة',
+      }
+      diagnostics.media.on('diagnosticChanged', () => {
+        const latest = diagnostics.media.getLatest() as Record<string, { value: unknown } | undefined>
+        setMediaIssues(
+          Object.entries(issueText)
+            .filter(([k]) => latest[k]?.value === true)
+            .map(([, text]) => text),
+        )
+      })
+    } catch {
+      /* التشخيص غير مدعوم — نتجاهل */
+    }
+  }
+
+  /** إرسال تفاعل للكل (ويظهر فوق فيديوي فورًا). */
+  const sendReaction = useCallback(async (type: Reaction) => {
+    const call = callRef.current
+    const sdk = sdkRef.current
+    if (!call || !sdk) return
+    pushReaction('local', type)
+    await call.feature(sdk.Features.Reaction).sendReaction({ reactionType: type }).catch(() => {})
+  }, [])
+
+  /** الأجهزة المتاحة (لإعدادات الأجهزة داخل الاجتماع). */
+  const listDevices = useCallback(async () => {
+    const dm = deviceManagerRef.current
+    if (!dm) return { cameras: [], microphones: [], speakers: [] }
+    const [cameras, microphones, speakers] = await Promise.all([
+      dm.getCameras(),
+      dm.getMicrophones().catch(() => []),
+      dm.getSpeakers().catch(() => []),
+    ])
+    const toOption = (d: { id: string; name: string }): DeviceOption => ({ id: d.id, name: d.name })
+    return { cameras: cameras.map(toOption), microphones: microphones.map(toOption), speakers: speakers.map(toOption) }
+  }, [])
+
+  /** تبديل الأجهزة أثناء الاجتماع بدون خروج. */
+  const switchDevices = useCallback(
+    async (choice: { cameraId?: string | null; microphoneId?: string | null; speakerId?: string | null }) => {
+      const dm = deviceManagerRef.current
+      if (!dm) return
+      if (choice.microphoneId) {
+        const mic = (await dm.getMicrophones()).find((m) => m.id === choice.microphoneId)
+        if (mic) await dm.selectMicrophone(mic).catch(() => {})
+      }
+      if (choice.speakerId) {
+        const sp = (await dm.getSpeakers().catch(() => [])).find((m) => m.id === choice.speakerId)
+        if (sp) await dm.selectSpeaker(sp).catch(() => {})
+      }
+      if (choice.cameraId && localVideoRef.current) {
+        const cam = (await dm.getCameras()).find((c) => c.id === choice.cameraId)
+        if (cam) await localVideoRef.current.switchSource(cam).catch(() => {})
+      }
+    },
+    [],
+  )
 
   /**
    * بدء الدخول حسب جلسة المنصة: دخل بحساب Microsoft ⇒ توكن Teams صامت (بهويته)،
@@ -379,6 +523,12 @@ export function useTeamsEmbeddedCall(
     lobbyParticipants,
     admit,
     reject,
+    reactions,
+    sendReaction,
+    networkQuality,
+    mediaIssues,
+    listDevices,
+    switchDevices,
     start,
     join,
     leave,

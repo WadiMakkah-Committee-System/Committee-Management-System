@@ -34,14 +34,16 @@ expire_on_commit=False (راجعي db/session.py)، بالضبط نفس افتر
 القديم (current_user كان يُمرَّر لكل الحلقة من نفس التحميل الأول).
 """
 
+import json
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import socketio
 
 from app.core.config import settings
-from app.core.redis_client import is_session_valid, touch_session
+from app.core.redis_client import is_session_valid, redis_client, touch_session
 from app.core.security import InvalidTokenError, decode_token
 from app.db.session import AsyncSessionLocal
 from app.models.user import User, UserStatus
@@ -61,6 +63,62 @@ logger = logging.getLogger(__name__)
 
 def _room(meeting_id: str) -> str:
     return f"meeting:{meeting_id}"
+
+
+# ============================== حالة الغرفة (Redis) ==============================
+# تحديث لاما 2026-11-03 (دفعة تحسينات الاجتماع): طابور رفع اليد وبند المناقشة
+# الحالي (مع مؤقته) صاروا يُحفظون بـRedis — فاللي يدخل متأخر يستلم الصورة
+# الحالية (room.state) بدل ما يشوف الغرفة "فاضية" لين يصير حدث جديد.
+# مؤقتة بطبيعتها (12 ساعة) — ما تُخزَّن بقاعدة البيانات.
+_ROOM_STATE_TTL = timedelta(hours=12)
+# حدود مؤقت البند: من دقيقة إلى 4 ساعات (بالثواني).
+_TIMER_MIN_SECONDS = 60
+_TIMER_MAX_SECONDS = 4 * 60 * 60
+
+
+def _hands_key(meeting_id: str) -> str:
+    return f"meeting:{meeting_id}:hands"
+
+
+def _discussing_key(meeting_id: str) -> str:
+    return f"meeting:{meeting_id}:discussing"
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+async def _room_state(meeting_id: str) -> dict[str, Any]:
+    """الصورة الحالية للغرفة: طابور الأيدي المرفوعة (بالترتيب) + بند المناقشة الحالي."""
+    hands: list[dict[str, Any]] = []
+    discussing: dict[str, Any] | None = None
+    try:
+        raw_hands = await redis_client.hgetall(_hands_key(meeting_id))
+        for user_id, value in raw_hands.items():
+            data = json.loads(value)
+            hands.append({"user_id": user_id, "full_name": data.get("full_name", ""), "raised_at": data.get("raised_at")})
+        hands.sort(key=lambda h: h.get("raised_at") or "")
+        raw_discussing = await redis_client.get(_discussing_key(meeting_id))
+        if raw_discussing:
+            discussing = json.loads(raw_discussing)
+    except Exception:  # noqa: BLE001 — حالة مساعدة فقط، ما توقف الاتصال
+        logger.warning("room.state: تعذّر قراءة حالة الغرفة من Redis (meeting=%s)", meeting_id, exc_info=True)
+    return {"hands": hands, "discussing": discussing}
+
+
+async def _user_has_other_connection(meeting_id: str, user_id: str, exclude_sid: str) -> bool:
+    """هل للمستخدم اتصال آخر بنفس الغرفة (غرفة الاجتماع + المحضر يفتحان اتصالين)."""
+    for other_sid, _eio in sio.manager.get_participants("/", _room(meeting_id)):
+        if other_sid == exclude_sid:
+            continue
+        try:
+            other = await sio.get_session(other_sid)
+        except KeyError:
+            continue
+        other_user: User | None = other.get("user")
+        if other_user is not None and str(other_user.user_id) == user_id:
+            return True
+    return False
 
 
 async def _resolve_user_from_token(token: str) -> User | None:
@@ -149,6 +207,9 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
     if existing_user_ids:
         await sio.emit("presence.roster", {"user_ids": list(existing_user_ids)}, to=sid)
 
+    # الصورة الحالية للطابور وبند المناقشة (مع مؤقته) — للقادم الجديد فقط.
+    await sio.emit("room.state", await _room_state(str(meeting_id)), to=sid)
+
     await sio.emit(
         "presence.joined",
         {"user_id": str(user.user_id), "full_name": user.full_name},
@@ -167,6 +228,12 @@ async def disconnect(sid: str) -> None:
     meeting_id: str | None = session.get("meeting_id")
     if not user or not meeting_id:
         return
+    # خرج فعليًا (ما عنده اتصال ثاني بالغرفة) ⇒ تنزل يده من الطابور.
+    if not await _user_has_other_connection(meeting_id, str(user.user_id), sid):
+        try:
+            await redis_client.hdel(_hands_key(meeting_id), str(user.user_id))
+        except Exception:  # noqa: BLE001
+            logger.warning("disconnect: تعذّر إنزال اليد من Redis", exc_info=True)
     await sio.emit(
         "presence.left",
         {"user_id": str(user.user_id), "full_name": user.full_name},
@@ -237,13 +304,28 @@ async def chat_send(sid: str, data: dict[str, Any] | None) -> dict[str, Any]:
 
 @sio.on("hand.raise")
 async def hand_raise(sid: str, _data: dict[str, Any] | None = None) -> None:
+    """رفع اليد — يدخل طابور المتحدثين بوقت الرفع (أول من رفع أول من يتكلم)."""
     resolved = await _session_user_and_room(sid)
     if resolved is None:
         return
     user, meeting_id = resolved
+    key = _hands_key(meeting_id)
+    raised_at = _now_iso()
+    try:
+        # hsetnx: لو رافع يده أصلًا يبقى بمكانه بالطابور (ما يرجع لآخره).
+        existing = await redis_client.hget(key, str(user.user_id))
+        if existing:
+            raised_at = json.loads(existing).get("raised_at") or raised_at
+        else:
+            await redis_client.hset(
+                key, str(user.user_id), json.dumps({"full_name": user.full_name, "raised_at": raised_at}, ensure_ascii=False)
+            )
+        await redis_client.expire(key, _ROOM_STATE_TTL)
+    except Exception:  # noqa: BLE001 — البث يكمل حتى لو Redis تعطل
+        logger.warning("hand.raise: تعذّر حفظ الطابور بـRedis", exc_info=True)
     await sio.emit(
         "hand.raised",
-        {"user_id": str(user.user_id), "full_name": user.full_name},
+        {"user_id": str(user.user_id), "full_name": user.full_name, "raised_at": raised_at},
         room=_room(meeting_id),
     )
 
@@ -254,7 +336,46 @@ async def hand_lower(sid: str, _data: dict[str, Any] | None = None) -> None:
     if resolved is None:
         return
     user, meeting_id = resolved
+    try:
+        await redis_client.hdel(_hands_key(meeting_id), str(user.user_id))
+    except Exception:  # noqa: BLE001
+        logger.warning("hand.lower: تعذّر تحديث الطابور بـRedis", exc_info=True)
     await sio.emit("hand.lowered", {"user_id": str(user.user_id)}, room=_room(meeting_id))
+
+
+@sio.on("floor.give")
+async def floor_give(sid: str, data: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    الهدف (طابور المتحدثين — قرار لاما 2026-11-03): رئيس اللجنة يعطي الكلمة
+    لصاحب يد مرفوعة ⇒ تنزل يده من الطابور ويُبث "floor.given" للكل.
+    الصلاحية: نفس إدارة الأجندة (رئيس اللجنة أو meetings.agenda.item.update عامة).
+    """
+    resolved = await _session_user_and_room(sid)
+    if resolved is None:
+        return {"ok": False, "error": "انتهت صلاحية جلسة الاتصال — أعيدي تحميل الصفحة."}
+    user, meeting_id = resolved
+    target_user_id = str((data or {}).get("user_id") or "")
+    if not target_user_id:
+        return {"ok": False, "error": "حددي العضو."}
+    try:
+        async with AsyncSessionLocal() as db:
+            await meeting_chat_service.require_agenda_manage_access(db, actor=user, meeting_id=uuid.UUID(meeting_id))
+    except (MeetingChatForbiddenError, MeetingChatNotFoundError) as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception("floor.give: فشل غير متوقع — meeting_id=%s", meeting_id)
+        return {"ok": False, "error": "تعذر إعطاء الكلمة بسبب خطأ بالخادم — حاولي مجددًا."}
+    full_name = ""
+    try:
+        raw = await redis_client.hget(_hands_key(meeting_id), target_user_id)
+        if raw:
+            full_name = json.loads(raw).get("full_name", "")
+        await redis_client.hdel(_hands_key(meeting_id), target_user_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("floor.give: تعذّر تحديث الطابور بـRedis", exc_info=True)
+    await sio.emit("hand.lowered", {"user_id": target_user_id}, room=_room(meeting_id))
+    await sio.emit("floor.given", {"user_id": target_user_id, "full_name": full_name}, room=_room(meeting_id))
+    return {"ok": True}
 
 
 @sio.on("agenda.discussing")
@@ -267,6 +388,16 @@ async def agenda_discussing(sid: str, data: dict[str, Any] | None) -> dict[str, 
     title = (data or {}).get("title")
     if not agenda_item_id or not title:
         return {"ok": False, "error": "بيانات بند الأجندة ناقصة."}
+    # مؤقت البند اختياري (قرار لاما 2026-11-03): None = بدون مؤقت.
+    duration_raw = (data or {}).get("duration_seconds")
+    duration_seconds: int | None = None
+    if duration_raw is not None:
+        try:
+            duration_seconds = int(duration_raw)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "مدة المؤقت غير صالحة."}
+        if not _TIMER_MIN_SECONDS <= duration_seconds <= _TIMER_MAX_SECONDS:
+            return {"ok": False, "error": "مدة المؤقت لازم تكون بين دقيقة و4 ساعات."}
     # إصلاح 2026-09-14 (بلاغ لاما): كان أي مشارك بالغرفة يقدر يبث هذا
     # الحدث، لا رئيس اللجنة فقط — راجعي require_agenda_manage_access
     # بـmeeting_chat_service.py للتفصيل الكامل. فشل الصلاحية هنا = خطأ
@@ -295,11 +426,17 @@ async def agenda_discussing(sid: str, data: dict[str, Any] | None) -> dict[str, 
             user.user_id,
         )
         return {"ok": False, "error": "تعذر بدء المناقشة بسبب خطأ بالخادم — حاولي مجددًا."}
-    await sio.emit(
-        "agenda.discussing",
-        {"agenda_item_id": agenda_item_id, "title": title},
-        room=_room(meeting_id),
-    )
+    payload = {
+        "agenda_item_id": agenda_item_id,
+        "title": title,
+        "started_at": _now_iso(),
+        "duration_seconds": duration_seconds,
+    }
+    try:
+        await redis_client.set(_discussing_key(meeting_id), json.dumps(payload, ensure_ascii=False), ex=_ROOM_STATE_TTL)
+    except Exception:  # noqa: BLE001
+        logger.warning("agenda.discussing: تعذّر حفظ البند الحالي بـRedis", exc_info=True)
+    await sio.emit("agenda.discussing", payload, room=_room(meeting_id))
     return {"ok": True}
 
 

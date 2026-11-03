@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { ClipboardList, Loader2, TimerOff } from 'lucide-react'
+import { Loader2, Settings2, TimerOff } from 'lucide-react'
 import { useMeetingDetail } from '@/hooks/useMeetings'
 import { useCommittees } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
@@ -23,6 +23,11 @@ import { ChatPanel } from './room/panels/ChatPanel'
 import { ActivityPanel } from './room/panels/ActivityPanel'
 import { LobbyPanel } from './room/panels/LobbyPanel'
 import { GuestWaitingScreen } from './room/GuestWaitingScreen'
+import { VotingOverlay } from './room/VotingOverlay'
+import { AgendaTimerBanner } from './room/AgendaTimerBanner'
+import { ReactionsButton } from './room/ReactionsButton'
+import { DeviceCheck } from './room/DeviceCheck'
+import { isDeviceCheckDone, type DevicePrefs } from './room/devicePrefs'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
 
@@ -107,10 +112,10 @@ export function MeetingRoom({
   // pendingAgendaItemId يعطّل البند أثناء الإرسال (يمنع ضغط مزدوج)،
   // وtoast فوري يوضّح النجاح أو سبب الفشل الحقيقي، بدل انتظار بثّ
   // "agenda.discussing" فقط كمؤشر وحيد على حدوث شيء.
-  async function handleStartDiscussing(item: MeetingAgendaItem) {
+  async function handleStartDiscussing(item: MeetingAgendaItem, durationSeconds: number | null = null) {
     setPendingAgendaItemId(item.agenda_item_id)
     try {
-      const result = await realtime.announceDiscussing(item.agenda_item_id, item.title)
+      const result = await realtime.announceDiscussing(item.agenda_item_id, item.title, durationSeconds)
       if (result.ok) {
         showToast(`بدأت مناقشة: ${item.title}`, 'success')
       } else {
@@ -134,13 +139,38 @@ export function MeetingRoom({
   // تحديث لاما 2026-11-03: زر "دخول الاجتماع" (خارج الغرفة) هو الدخول نفسه —
   // أول ما تفتح الغرفة يبدأ الاتصال تلقائيًا، بدون زر انضمام ثاني داخل الإطار.
   // مرة واحدة فقط لكل فتح للغرفة؛ إعادة المحاولة بعدها من زر "إعادة الانضمام".
+  // فحص الكاميرا والمايك أول مرة على الجهاز (قرار لاما 2026-11-03) — بعده
+  // الدخول تلقائي. needsDeviceCheck=true ⇒ شاشة الفحص بدل الغرفة لين "دخول الآن".
+  const [needsDeviceCheck, setNeedsDeviceCheck] = useState(() => !isDeviceCheckDone())
+  const [deviceSettingsOpen, setDeviceSettingsOpen] = useState(false)
   const autoStartedRef = useRef(false)
   useEffect(() => {
-    if (!meeting?.has_teams_meeting || autoStartedRef.current) return
+    if (!meeting?.has_teams_meeting || autoStartedRef.current || needsDeviceCheck) return
     if (meeting.status === 'finished' || meeting.status === 'recorded') return
     autoStartedRef.current = true
     void embeddedCall.start(false)
-  }, [meeting?.has_teams_meeting, meeting?.status, embeddedCall])
+  }, [meeting?.has_teams_meeting, meeting?.status, embeddedCall, needsDeviceCheck])
+
+  /** حفظ إعدادات الأجهزة أثناء الاجتماع ⇒ تبديل الأجهزة + الكاميرا/المايك حسب الاختيار. */
+  async function applyDeviceSettings(prefs: DevicePrefs) {
+    setDeviceSettingsOpen(false)
+    await embeddedCall.switchDevices(prefs)
+    if (prefs.micOn === embeddedCall.micMuted) await embeddedCall.toggleMic()
+    if (prefs.cameraOn !== embeddedCall.cameraOn) await embeddedCall.toggleCamera()
+  }
+
+  // طابور المتحدثين: تنبيه لما الرئيس يعطي أحد الكلمة.
+  const floorGiven = realtime.floorGiven
+  useEffect(() => {
+    if (!floorGiven) return
+    if (floorGiven.userId === currentUser?.user_id) showToast('رئيس اللجنة أعطاك الكلمة 🎤', 'success')
+    else if (floorGiven.fullName) showToast(`الكلمة الآن لـ ${floorGiven.fullName}`, 'info')
+  }, [floorGiven, currentUser?.user_id, showToast])
+
+  async function handleGiveFloor(userId: string) {
+    const result = await realtime.giveFloor(userId)
+    if (!result.ok) showToast(result.error || 'تعذر إعطاء الكلمة.', 'error')
+  }
 
   // ضيف (دخل المنصة بدون حساب Microsoft بالشركة) ⇒ شاشة انتظار كاملة لين
   // ينقبل — ما يشوف الأجندة/المرفقات/القرارات/المشاركين قبل القبول.
@@ -252,6 +282,8 @@ export function MeetingRoom({
           <Loader2 size={28} className="animate-spin" />
           <p className="text-sm">جاري تحميل بيانات الاجتماع...</p>
         </div>
+      ) : needsDeviceCheck && meeting.has_teams_meeting ? (
+        <DeviceCheck mode="prejoin" onDone={() => setNeedsDeviceCheck(false)} />
       ) : showGuestGate ? (
         <GuestWaitingScreen meeting={meeting} call={embeddedCall} onLeave={() => setConfirmLeaveOpen(true)} />
       ) : (
@@ -282,6 +314,9 @@ export function MeetingRoom({
                     onlineUserIds={realtime.onlineUserIds}
                     raisedHandUserIds={raisedHandUserIds}
                     currentUserId={currentUser?.user_id ?? ''}
+                    speakerQueue={realtime.raisedHands}
+                    canGiveFloor={canManageAgenda}
+                    onGiveFloor={(id) => void handleGiveFloor(id)}
                   />
                 )}
                 {activePanel === 'agenda' && (
@@ -326,18 +361,11 @@ export function MeetingRoom({
               </div>
             </aside>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+            <div className="relative flex min-h-0 flex-1 flex-col gap-3 p-3">
               {/* تعديل لاما 2026-09-06: "بدأ مناقشة البند ما ظهر إشعار أعلى
                   الصفحة" — بث agenda.discussing كان يُسجَّل بسجل النشاط فقط
                   بلا أي عنصر ظاهر بمنطقة الفيديو الرئيسية نفسها. */}
-              {realtime.discussingAgendaItem && (
-                <div className="flex items-center gap-2 rounded-md border border-brand-primary/30 bg-brand-primary/10 px-3 py-2 text-[12px] font-medium text-white">
-                  <ClipboardList size={14} className="shrink-0 text-brand-accent" />
-                  <span className="truncate">
-                    جارٍ الآن مناقشة: {realtime.discussingAgendaItem.title}
-                  </span>
-                </div>
-              )}
+              {realtime.discussingAgendaItem && <AgendaTimerBanner item={realtime.discussingAgendaItem} />}
 
               {meetingEnded && (
                 <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-[12px] font-medium text-warning">
@@ -357,7 +385,31 @@ export function MeetingRoom({
                 <TeamsMeetingStage meeting={meeting} canRecord={canRecord} />
               )}
 
+              {currentUser && (
+                <VotingOverlay
+                  meetingId={meetingId}
+                  currentUserId={currentUser.user_id}
+                  onOpenDecisions={() => handleSelectPanel('decisions')}
+                />
+              )}
+
               <MeetingControls
+                extra={
+                  embeddedCall.phase === 'connected' ? (
+                    <>
+                      <ReactionsButton onReact={(type) => void embeddedCall.sendReaction(type)} />
+                      <button
+                        type="button"
+                        onClick={() => setDeviceSettingsOpen(true)}
+                        aria-label="إعدادات الأجهزة"
+                        title="إعدادات الأجهزة"
+                        className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white transition-all hover:bg-white/20 active:scale-95"
+                      >
+                        <Settings2 size={18} />
+                      </button>
+                    </>
+                  ) : undefined
+                }
                 handRaised={iRaisedHand}
                 onToggleHand={() => (iRaisedHand ? realtime.lowerHand() : realtime.raiseHand())}
                 onLeave={() => setConfirmLeaveOpen(true)}
@@ -377,6 +429,16 @@ export function MeetingRoom({
             </div>
           </div>
         </>
+      )}
+
+      {deviceSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex bg-black/60 backdrop-blur-sm">
+          <DeviceCheck
+            mode="settings"
+            onDone={(prefs) => void applyDeviceSettings(prefs)}
+            onCancel={() => setDeviceSettingsOpen(false)}
+          />
+        </div>
       )}
 
       <ConfirmDialog

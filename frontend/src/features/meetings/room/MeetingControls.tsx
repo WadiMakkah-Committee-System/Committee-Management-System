@@ -49,7 +49,10 @@ export function MeetingControls({
   onToggleHand,
   onLeave,
   media,
+  extra,
 }: {
+  /** عناصر إضافية بجانب رفع اليد (التفاعلات/إعدادات الأجهزة). */
+  extra?: React.ReactNode
   handRaised: boolean
   onToggleHand: () => void
   onLeave: () => void
@@ -72,9 +75,21 @@ export function MeetingControls({
 
   return (
     <div className="flex h-20 shrink-0 items-center justify-center gap-2.5 border-t border-white/10 bg-[#161c2c] px-4">
-      <ControlButton onClick={onToggleHand} active={handRaised} label={handRaised ? 'إنزال اليد' : 'رفع اليد'}>
+      {/* قرار لاما 2026-11-03: اليد المرفوعة تتلون أصفر — واضح هل هي مرفوعة ولا نازلة. */}
+      <button
+        type="button"
+        onClick={onToggleHand}
+        aria-label={handRaised ? 'إنزال اليد' : 'رفع اليد'}
+        aria-pressed={handRaised}
+        title={handRaised ? 'إنزال اليد' : 'رفع اليد'}
+        className={cn(
+          'flex h-11 w-11 items-center justify-center rounded-full transition-all active:scale-95',
+          handRaised ? 'bg-warning text-white shadow-[0_0_0_3px_rgba(0,0,0,0.15)] hover:brightness-105' : 'bg-white/10 text-white hover:bg-white/20',
+        )}
+      >
         <Hand size={18} />
-      </ControlButton>
+      </button>
+      {extra}
 
       {media && (
         <>
