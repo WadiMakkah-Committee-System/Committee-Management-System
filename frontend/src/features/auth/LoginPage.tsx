@@ -14,10 +14,14 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { extractErrorMessage } from '@/lib/utils'
 import {
+  forgetMicrosoftEmail,
+  getRememberedMicrosoftEmail,
   isCompanyEmail,
   isMicrosoftCancel,
   loadLoginOptions,
   loadMicrosoftClient,
+  prepareSilentSignIn,
+  rememberMicrosoftEmail,
   signInWithMicrosoft,
   signOutMicrosoft,
 } from '@/lib/microsoftSignIn'
@@ -52,14 +56,17 @@ export function LoginPage() {
   const queryClient = useQueryClient()
   const [serverError, setServerError] = useState<string | null>(null)
   const [loginOptions, setLoginOptions] = useState<LoginOptions | null>(null)
+  // آخر إيميل شركة دخل من هالجهاز — يتعبّى تلقائيًا (دخول بضغطة وحدة، قرار لاما 2026-11-03).
+  const [rememberedEmail, setRememberedEmail] = useState<string | null>(() => getRememberedMicrosoftEmail())
 
   const {
     register,
     handleSubmit,
     watch,
     setError,
+    setValue,
     formState: { errors },
-  } = useForm<FormValues>({ resolver: zodResolver(schema) })
+  } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { username: rememberedEmail ?? '' } })
 
   // تهيئة إعدادات Microsoft ومكتبة MSAL أول ما تفتح الصفحة (مو عند الضغط)،
   // حتى تفتح نافذة Microsoft مباشرة من ضغطة الزر بدون ما يحجبها المتصفح.
@@ -78,7 +85,22 @@ export function LoginPage() {
   }, [])
 
   const microsoftEnabled = Boolean(loginOptions?.microsoft_enabled)
-  const usesMicrosoft = isCompanyEmail(watch('username') ?? '', loginOptions)
+  const typedUsername = watch('username') ?? ''
+  const usesMicrosoft = isCompanyEmail(typedUsername, loginOptions)
+
+  // دخول صامت مسبق: أول ما يكون المكتوب إيميل شركة (أو معبّى من آخر مرة) نجهّز
+  // الدخول بالخلفية بدون نافذة — فالضغطة تدخل فورًا لو جلسة Microsoft موجودة.
+  useEffect(() => {
+    if (!usesMicrosoft) return
+    const timer = setTimeout(() => prepareSilentSignIn(typedUsername), 500)
+    return () => clearTimeout(timer)
+  }, [usesMicrosoft, typedUsername])
+
+  function handleNotMe() {
+    forgetMicrosoftEmail()
+    setRememberedEmail(null)
+    setValue('username', '')
+  }
 
   /** المشترك بين طريقتي الدخول: حفظ التوكنات والمستخدم وطريقة الدخول. */
   async function finishLogin(tokens: TokenResponse, method: AuthMethod) {
@@ -107,9 +129,11 @@ export function LoginPage() {
 
   const microsoftMutation = useMutation({
     mutationFn: async (loginHint?: string) => {
-      const { idToken } = await signInWithMicrosoft(loginHint)
+      const { idToken, account } = await signInWithMicrosoft(loginHint)
       try {
-        return await finishLogin(await authApi.loginWithMicrosoft(idToken), 'microsoft')
+        const me = await finishLogin(await authApi.loginWithMicrosoft(idToken), 'microsoft')
+        rememberMicrosoftEmail(account.username)
+        return me
       } catch (err) {
         // المنصة رفضت الحساب (غير مسجل/موقوف...) ⇒ ننسى حساب Microsoft من المتصفح.
         await signOutMicrosoft().catch(() => {})
@@ -225,7 +249,7 @@ export function LoginPage() {
             />
             <AnimatePresence initial={false} mode="wait">
               {usesMicrosoft ? (
-                <motion.p
+                <motion.div
                   key="microsoft-hint"
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
@@ -233,8 +257,17 @@ export function LoginPage() {
                   className="flex items-start gap-2 rounded-sm border border-brand-primary/20 bg-brand-primary/5 px-3 py-2 text-xs text-text-secondary"
                 >
                   <Building2 size={14} className="mt-0.5 shrink-0 text-brand-primary" />
-                  هذا إيميل الشركة — بتكمل الدخول من نافذة Microsoft بدون كلمة مرور المنصة.
-                </motion.p>
+                  <span className="flex-1">إيميل الشركة — تدخل بحسابك في Microsoft بدون كلمة مرور المنصة.</span>
+                  {rememberedEmail && typedUsername.trim().toLowerCase() === rememberedEmail.toLowerCase() && (
+                    <button
+                      type="button"
+                      onClick={handleNotMe}
+                      className="shrink-0 font-semibold text-brand-primary hover:underline"
+                    >
+                      مو أنت؟
+                    </button>
+                  )}
+                </motion.div>
               ) : (
                 <motion.div
                   key="password-fields"
