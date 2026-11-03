@@ -260,6 +260,15 @@ class TeamsCallTokenOut(BaseModel):
     identity: Literal["teams_user", "guest"]
 
 
+class TeamsKnownGuestOut(BaseModel):
+    """عنصر GET /meetings/{id}/teams/known-guests — ضيف دخل من المنصة (عضو مصرّح
+    له)، يُقبل من قاعة الانتظار تلقائيًا. acs_user_id يطابق معرّف المنتظر بـACS."""
+
+    acs_user_id: str
+    user_id: str
+    display_name: str
+
+
 class TeamsCallTokenIn(BaseModel):
     """جسم اختياري لـPOST /meetings/{id}/teams/call-token: microsoft_token توكن
     Microsoft Entra (بعد تسجيل الدخول بحساب الشركة) — غيابه يعني الدخول كضيف."""

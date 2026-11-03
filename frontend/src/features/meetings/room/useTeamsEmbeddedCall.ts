@@ -7,13 +7,16 @@ import type {
   RemoteParticipant,
   RemoteVideoStream,
 } from '@azure/communication-calling'
-import { getTeamsCallToken } from '@/api/meetings'
+import { getTeamsCallToken, getTeamsKnownGuests } from '@/api/meetings'
 import { getMicrosoftTeamsToken } from '@/lib/microsoftSignIn'
+import { useAuthStore } from '@/store/authStore'
 import { extractErrorMessage } from '@/lib/utils'
 
-/** مراحل الاتصال المدمج: idle قبل الضغط، joining أثناء الاتصال، lobby بانتظار
- * سماح المنظّم، connected داخل الاجتماع، ended بعد المغادرة/الإنهاء، error فشل. */
-export type EmbeddedCallPhase = 'idle' | 'joining' | 'lobby' | 'connected' | 'ended' | 'error'
+/** مراحل الاتصال المدمج: idle قبل البدء، joining أثناء الاتصال، lobby بانتظار
+ * السماح بالدخول، connected داخل الاجتماع، ended بعد المغادرة/الإنهاء، error فشل،
+ * needs_signin: جلسة Microsoft انتهت وتحتاج ضغطة (المتصفح يمنع فتح نافذة
+ * تسجيل الدخول تلقائيًا بدون ضغطة من المستخدم). */
+export type EmbeddedCallPhase = 'idle' | 'joining' | 'lobby' | 'connected' | 'ended' | 'error' | 'needs_signin'
 
 /** نوع هوية المستخدم داخل الاجتماع: teams_user بحساب الشركة، guest ضيف. */
 export type EmbeddedCallIdentity = 'teams_user' | 'guest'
@@ -59,8 +62,17 @@ export interface EmbeddedParticipant {
  * - ضيف: createCallAgent — ينتظر بالـLobby حتى يقبله أحد من الشركة.
  * قيود موثّقة (مايكروسوفت): لا أحد من الاثنين يقدر يشغّل التسجيل/التفريغ من
  * هنا — الاجتماع يُنشأ بتسجيل تلقائي (recordAutomatically) بالباك-إند.
+ *
+ * تحديث لاما 2026-11-03:
+ * - start: الدخول يبدأ تلقائيًا أول ما تفتح الغرفة (MeetingRoom) — بدون زر
+ *   انضمام ثاني داخل الإطار. يختار نوع الدخول حسب جلسة المنصة (Microsoft/كلمة مرور).
+ * - قاعة الانتظار: reject + قبول تلقائي لأعضاء اللجنة اللي دخلوا كضيوف من
+ *   المنصة (GET /teams/known-guests) — onAutoAdmitted يبلّغ الغرفة بأسمائهم.
  */
-export function useTeamsEmbeddedCall(meetingId: string) {
+export function useTeamsEmbeddedCall(
+  meetingId: string,
+  options: { onAutoAdmitted?: (name: string) => void } = {},
+) {
   const [phase, setPhase] = useState<EmbeddedCallPhase>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [participants, setParticipants] = useState<EmbeddedParticipant[]>([])
@@ -75,6 +87,14 @@ export function useTeamsEmbeddedCall(meetingId: string) {
   const callRef = useRef<CallCommon | null>(null)
   const localVideoRef = useRef<LocalVideoStream | null>(null)
   const idOfRef = useRef<((p: RemoteParticipant) => string) | null>(null)
+  const identityRef = useRef<EmbeddedCallIdentity | null>(null)
+  const joiningRef = useRef(false)
+  // مفاتيح المنتظرين اللي بدأ قبولهم تلقائيًا — يمنع تكرار القبول لنفس الشخص.
+  const autoAdmittingRef = useRef(new Set<string>())
+  const onAutoAdmittedRef = useRef(options.onAutoAdmitted)
+  useEffect(() => {
+    onAutoAdmittedRef.current = options.onAutoAdmitted
+  }, [options.onAutoAdmitted])
 
   /** يعيد اشتقاق لقطة المشاركين وحالة المايك/الشاشة من كائن المكالمة الحي. */
   const refresh = useCallback(() => {
@@ -103,6 +123,35 @@ export function useTeamsEmbeddedCall(meetingId: string) {
     setLobbyParticipants(call.lobby.participants.map((p) => ({ key: idOf(p), name: p.displayName || 'ضيف' })))
   }, [])
 
+  /**
+   * القبول التلقائي: لو أنا داخل بحساب Microsoft (أقدر أقبل)، أي منتظر هويته
+   * صادرة من منصتنا لعضو مصرّح له بهذا الاجتماع يُقبل فورًا. غير المعروفين
+   * (دخلوا برابط Teams من خارج المنصة) يبقون للقبول اليدوي. الفشل صامت —
+   * مثلًا لو حسابي ما عنده صلاحية القبول بـTeams.
+   */
+  const autoAdmitKnownGuests = useCallback(async () => {
+    const call = callRef.current
+    const idOf = idOfRef.current
+    if (!call || !idOf || identityRef.current !== 'teams_user' || call.state !== 'Connected') return
+    const waiting = call.lobby.participants.filter((p) => !autoAdmittingRef.current.has(idOf(p)))
+    if (waiting.length === 0) return
+    let known: Set<string>
+    try {
+      known = new Set((await getTeamsKnownGuests(meetingId)).map((g) => g.acs_user_id))
+    } catch {
+      return
+    }
+    for (const p of waiting) {
+      const key = idOf(p)
+      if (!known.has(key)) continue
+      autoAdmittingRef.current.add(key)
+      call.lobby
+        .admit(p.identifier)
+        .then(() => onAutoAdmittedRef.current?.(p.displayName || 'عضو باللجنة'))
+        .catch(() => autoAdmittingRef.current.delete(key))
+    }
+  }, [meetingId])
+
   /** يشترك بأحداث مشارك بعيد (فيديو/مايك/تحدّث/اسم) ليُحدَّث العرض لحظيًا. */
   const watchParticipant = useCallback(
     (p: RemoteParticipant) => {
@@ -123,7 +172,8 @@ export function useTeamsEmbeddedCall(meetingId: string) {
    * وبدونه ⇒ ضيف. الباك-إند يقرر النوع النهائي ويرجعه بـidentity.
    */
   const join = useCallback(async (microsoftToken?: string | null) => {
-    if (callRef.current) return
+    if (callRef.current || joiningRef.current) return
+    joiningRef.current = true
     setPhase('joining')
     setErrorMessage(null)
     try {
@@ -134,6 +184,7 @@ export function useTeamsEmbeddedCall(meetingId: string) {
       ])
       idOfRef.current = (p) => common.getIdentifierRawId(p.identifier)
       setIdentity(joinInfo.identity)
+      identityRef.current = joinInfo.identity
 
       const callClient = new sdk.CallClient()
       let agent: CallAgentCommon
@@ -180,7 +231,12 @@ export function useTeamsEmbeddedCall(meetingId: string) {
 
       call.on('stateChanged', () => {
         if (call.state === 'InLobby') setPhase('lobby')
-        else if (call.state === 'Connected') setPhase('connected')
+        else if (call.state === 'Connected') {
+          setPhase('connected')
+          // منتظرين كانوا قبل دخولي (مثلًا أعضاء دخلوا قبل الرئيس) ⇒ نقبلهم الحين.
+          refreshLobby()
+          void autoAdmitKnownGuests()
+        }
         else if (call.state === 'Disconnected') {
           const reason = call.callEndReason
           // 0 = إنهاء طبيعي (مغادرة/إنهاء الاجتماع). غير ذلك = رفض/خطأ.
@@ -200,18 +256,47 @@ export function useTeamsEmbeddedCall(meetingId: string) {
       })
       call.on('isMutedChanged', refresh)
       call.on('isScreenSharingOnChanged', refresh)
-      call.lobby.on('lobbyParticipantsUpdated', refreshLobby)
+      call.lobby.on('lobbyParticipantsUpdated', () => {
+        refreshLobby()
+        void autoAdmitKnownGuests()
+      })
       call.remoteParticipants.forEach(watchParticipant)
       refresh()
       refreshLobby()
+      joiningRef.current = false
     } catch (err) {
+      joiningRef.current = false
       setErrorMessage(extractErrorMessage(err))
       setPhase('error')
       callRef.current = null
       agentRef.current?.dispose().catch(() => {})
       agentRef.current = null
     }
-  }, [meetingId, refresh, refreshLobby, watchParticipant])
+  }, [meetingId, refresh, refreshLobby, watchParticipant, autoAdmitKnownGuests])
+
+  /**
+   * بدء الدخول حسب جلسة المنصة: دخل بحساب Microsoft ⇒ توكن Teams صامت (بهويته)،
+   * وإلا ضيف. interactive=true فقط من ضغطة زر (يسمح بنافذة Microsoft لو انتهت
+   * جلستها) — بدونه ننتقل لـneeds_signin بدل نافذة يحجبها المتصفح.
+   */
+  const start = useCallback(
+    async (interactive = false) => {
+      if (callRef.current || joiningRef.current) return
+      if (useAuthStore.getState().authMethod !== 'microsoft') {
+        await join(null)
+        return
+      }
+      setPhase('joining')
+      setErrorMessage(null)
+      const token = await getMicrosoftTeamsToken(interactive).catch(() => null)
+      if (!token) {
+        setPhase('needs_signin')
+        return
+      }
+      await join(token)
+    },
+    [join],
+  )
 
   const leave = useCallback(async () => {
     const call = callRef.current
@@ -264,6 +349,15 @@ export function useTeamsEmbeddedCall(meetingId: string) {
     if (target) await call.lobby.admit(target.identifier)
   }, [])
 
+  /** رفض منتظر من قاعة الانتظار (يطلع من الاجتماع). */
+  const reject = useCallback(async (key: string) => {
+    const call = callRef.current
+    const idOf = idOfRef.current
+    if (!call || !idOf) return
+    const target = call.lobby.participants.find((p) => idOf(p) === key)
+    if (target) await call.lobby.reject(target.identifier)
+  }, [])
+
   // إغلاق الغرفة (unmount) ⇒ إنهاء المكالمة وتحرير الموارد حتى لا يبقى المستخدم
   // "داخل" اجتماع Teams بعد مغادرة الصفحة.
   useEffect(() => {
@@ -284,6 +378,8 @@ export function useTeamsEmbeddedCall(meetingId: string) {
     identity,
     lobbyParticipants,
     admit,
+    reject,
+    start,
     join,
     leave,
     toggleMic,

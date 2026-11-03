@@ -9,6 +9,7 @@ import type {
   MeetingAttachmentKind,
   MeetingCreatePayload,
   TeamsCallTokenResponse,
+  TeamsKnownGuest,
   TeamsJoinResponse,
   TeamsRecording,
   MeetingListItem,
@@ -132,6 +133,15 @@ export async function getTeamsCallToken(
     `/meetings/${meetingId}/teams/call-token`,
     microsoftToken ? { microsoft_token: microsoftToken } : undefined,
   )
+  return data
+}
+
+/**
+ * ضيوف الاجتماع اللي دخلوا من المنصة (أعضاء مصرّح لهم) — جهاز الموظف الداخل
+ * بحساب Microsoft يقبلهم من قاعة الانتظار تلقائيًا (meetings.join).
+ */
+export async function getTeamsKnownGuests(meetingId: string): Promise<TeamsKnownGuest[]> {
+  const { data } = await apiClient.get<TeamsKnownGuest[]>(`/meetings/${meetingId}/teams/known-guests`)
   return data
 }
 
