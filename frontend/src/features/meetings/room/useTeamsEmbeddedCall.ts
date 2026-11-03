@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   CallClient,
   DeviceManager,
+  TeamsCaptions,
+  TeamsCaptionsInfo,
   Reaction,
   CallAgentCommon,
   CallCommon,
@@ -36,6 +38,24 @@ export interface FloatingReaction {
   id: string
   key: string
   type: Reaction
+}
+
+/** سطر ترجمة نصية ظاهر (آخر كلام كل متحدث؛ final=true جملة مكتملة). */
+export interface CaptionLine {
+  id: string
+  speakerName: string
+  text: string
+  final: boolean
+}
+
+/** جملة مكتملة تُرسل للحفظ (جهاز الرئيس). */
+export interface FinalCaption {
+  clientKey: string
+  speakerRawId: string | null
+  speakerName: string
+  text: string
+  spokenAt: string
+  language: string | null
 }
 
 /** جودة الاتصال (UserFacingDiagnostics): good/poor/bad، أو offline لو انقطع النت. */
@@ -101,7 +121,7 @@ function normalizeAcsId(rawId: string): string {
  */
 export function useTeamsEmbeddedCall(
   meetingId: string,
-  options: { onAutoAdmitted?: (name: string) => void } = {},
+  options: { onAutoAdmitted?: (name: string) => void; onFinalCaption?: (c: FinalCaption) => void } = {},
 ) {
   const [phase, setPhase] = useState<EmbeddedCallPhase>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -116,6 +136,17 @@ export function useTeamsEmbeddedCall(
   const [networkQuality, setNetworkQuality] = useState<NetworkQuality>('good')
   // مشاكل الأجهزة الحالية (رسائل عربية) — من UserFacingDiagnostics.
   const [mediaIssues, setMediaIssues] = useState<string[]>([])
+  // الترجمة النصية الحية (قرار لاما 2026-11-03).
+  const [captionsActive, setCaptionsActive] = useState(false)
+  const [captionsError, setCaptionsError] = useState<string | null>(null)
+  const [captionLines, setCaptionLines] = useState<CaptionLine[]>([])
+  const captionsRef = useRef<TeamsCaptions | null>(null)
+  const captionsStartingRef = useRef(false)
+  const captionsHandlerRef = useRef<((d: TeamsCaptionsInfo) => void) | null>(null)
+  const onFinalCaptionRef = useRef(options.onFinalCaption)
+  useEffect(() => {
+    onFinalCaptionRef.current = options.onFinalCaption
+  }, [options.onFinalCaption])
   const callClientRef = useRef<CallClient | null>(null)
   const deviceManagerRef = useRef<DeviceManager | null>(null)
   const sdkRef = useRef<typeof import('@azure/communication-calling') | null>(null)
@@ -392,6 +423,82 @@ export function useTeamsEmbeddedCall(
     }
   }
 
+  /**
+   * تشغيل الترجمة النصية بلغة الكلام (افتراضي العربي السعودي). لو اللغة غير
+   * مدعومة بهالاجتماع نرجع خطأ واضح بدل ما تطلع إنجليزي غلط.
+   */
+  const startCaptions = useCallback(async (language = 'ar-sa') => {
+    const call = callRef.current
+    const sdk = sdkRef.current
+    // حارس: الغرفة تنادي هذي الدالة مع كل تحديث لين تشتغل — نمنع تشغيل متكرر،
+    // ولو فشلت مرة (لغة غير مدعومة) ما نعيد المحاولة بشكل متواصل.
+    if (!call || !sdk || captionsStartingRef.current) return
+    captionsStartingRef.current = true
+    setCaptionsError(null)
+    try {
+      const feature = call.feature(sdk.Features.Captions).captions
+      if (feature.kind !== 'TeamsCaptions') {
+        setCaptionsError('الترجمة النصية غير متاحة بهالاجتماع')
+        return
+      }
+      const captions = feature as TeamsCaptions
+      const supported = captions.supportedSpokenLanguages.map((l) => l.toLowerCase())
+      const wanted = supported.includes(language.toLowerCase())
+        ? language
+        : supported.find((l) => l.startsWith('ar')) ?? null
+      if (!wanted) {
+        setCaptionsError('اللغة العربية غير مدعومة بالترجمة النصية هنا')
+        console.info('[captions] اللغات المدعومة:', captions.supportedSpokenLanguages)
+        return
+      }
+      if (!captionsHandlerRef.current) {
+        const handler = (d: TeamsCaptionsInfo) => {
+          const rawId = d.speaker.identifier && rawIdRef.current ? rawIdRef.current(d.speaker.identifier) : null
+          const speakerName = d.speaker.displayName || 'مشارك'
+          const lineId = `${rawId ?? speakerName}`
+          const text = (d.spokenText || d.captionText || '').trim()
+          if (!text) return
+          setCaptionLines((prev) => {
+            const withoutPartial = prev.filter((l) => !(l.id === lineId && !l.final))
+            const next = [...withoutPartial, { id: d.resultType === 'Final' ? `${lineId}-${Date.now()}` : lineId, speakerName, text, final: d.resultType === 'Final' }]
+            return next.slice(-4)
+          })
+          if (d.resultType === 'Final') {
+            const spokenAt = new Date(d.timestamp ?? Date.now()).toISOString()
+            onFinalCaptionRef.current?.({
+              clientKey: `${spokenAt}|${rawId ?? speakerName}`,
+              speakerRawId: rawId,
+              speakerName,
+              text,
+              spokenAt,
+              language: d.spokenLanguage || wanted,
+            })
+          }
+        }
+        captions.on('CaptionsReceived', handler)
+        captionsHandlerRef.current = handler
+      }
+      captionsRef.current = captions
+      if (!captions.isCaptionsFeatureActive) await captions.startCaptions({ spokenLanguage: wanted })
+      else if (captions.activeSpokenLanguage?.toLowerCase() !== wanted.toLowerCase()) await captions.setSpokenLanguage(wanted)
+      setCaptionsActive(true)
+    } catch (err) {
+      setCaptionsError(`تعذّر تشغيل الترجمة النصية: ${extractErrorMessage(err)}`)
+    }
+  }, [])
+
+  const stopCaptions = useCallback(async () => {
+    captionsStartingRef.current = false
+    setCaptionsError(null)
+    const captions = captionsRef.current
+    if (captions && captionsHandlerRef.current) captions.off('CaptionsReceived', captionsHandlerRef.current)
+    captionsHandlerRef.current = null
+    captionsRef.current = null
+    setCaptionsActive(false)
+    setCaptionLines([])
+    await captions?.stopCaptions().catch(() => {})
+  }, [])
+
   /** إرسال تفاعل للكل (ويظهر فوق فيديوي فورًا). */
   const sendReaction = useCallback(async (type: Reaction) => {
     const call = callRef.current
@@ -546,6 +653,11 @@ export function useTeamsEmbeddedCall(
     mediaIssues,
     listDevices,
     switchDevices,
+    captionsActive,
+    captionsError,
+    captionLines,
+    startCaptions,
+    stopCaptions,
     start,
     join,
     leave,

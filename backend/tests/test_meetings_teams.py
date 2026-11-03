@@ -778,3 +778,72 @@ async def test_automatic_attendance_sessions_and_summary(
     assert summary[0]["last_left_at"] is not None
     assert summary[0]["total_seconds"] >= 0
     assert (await client.get(base, headers=ctx["outsider_headers"])).status_code == 403
+
+
+async def test_live_transcript_catch_up_and_insights(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user: User, fake_teams: FakeTeams, monkeypatch
+) -> None:
+    """الدفعة 3 (migration 0044): حفظ الترجمة النصية (الرئيس فقط، بدون تكرار)،
+    "وش فاتني؟" عبر Gemini، والإحصائيات (المتحدثين + وقت البنود + الحضور)."""
+    from app.services import meeting_service
+
+    ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+    await _grant_committee_role_permissions(
+        ["meetings.join", "meetings.view", "meetings.agenda.item.update"], slug="chair"
+    )
+    start, end = _slot()
+    created = await client.post(
+        "/api/v1/meetings",
+        json={
+            "committee_id": ctx["committee_id"], "title": "اجتماع إحصائيات", "mode": "remote",
+            "scheduled_at": start, "scheduled_end_at": end,
+            "agenda_items": [{"title": "الميزانية", "sort_order": 0}],
+        },
+        headers=ctx["chair_headers"],
+    )
+    assert created.status_code == 201, created.text
+    meeting_id = created.json()["meeting_id"]
+    item_id = created.json()["agenda_items"][0]["agenda_item_id"]
+
+    # فترة مناقشة بند بمؤقت 10 دقائق (كما يسجّلها Socket.IO).
+    async with AsyncSessionLocal() as db:
+        await meeting_service.open_agenda_session(db, meeting_id=uuid.UUID(meeting_id), agenda_item_id=item_id, planned_seconds=600)
+    async with AsyncSessionLocal() as db:
+        await meeting_service.close_agenda_sessions(db, meeting_id=uuid.UUID(meeting_id))
+
+    now = datetime.now(UTC).isoformat()
+    segments = {
+        "segments": [
+            {"client_key": "k1", "speaker_name": "أ ب ج", "text": "نبدأ بالبند الأول الميزانية", "spoken_at": now, "agenda_item_id": item_id},
+            {"client_key": "k2", "speaker_name": "عضو", "text": "موافق على الميزانية", "spoken_at": now},
+        ]
+    }
+    url = f"/api/v1/meetings/{meeting_id}/transcript/segments"
+    saved = await client.post(url, json=segments, headers=ctx["chair_headers"])
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"saved": 2}
+    again = await client.post(url, json=segments, headers=ctx["chair_headers"])
+    assert again.json() == {"saved": 0}  # نفس client_key ما يتكرر
+    assert (await client.post(url, json=segments, headers=ctx["member_headers"])).status_code == 403
+
+    captured: dict = {}
+
+    async def fake_summary(*, meeting_title, minutes, transcript):
+        captured["transcript"] = transcript
+        return "• تمت مناقشة الميزانية"
+
+    monkeypatch.setattr(gemini_client, "summarize_catch_up", fake_summary)
+    caught = await client.post(f"/api/v1/meetings/{meeting_id}/catch-up", json={"minutes": 10}, headers=ctx["chair_headers"])
+    assert caught.status_code == 200, caught.text
+    assert caught.json() == {"summary": "• تمت مناقشة الميزانية", "segments": 2}
+    assert "موافق على الميزانية" in captured["transcript"]
+
+    insights = await client.get(f"/api/v1/meetings/{meeting_id}/insights", headers=ctx["chair_headers"])
+    assert insights.status_code == 200, insights.text
+    body = insights.json()
+    assert body["has_transcript"] is True
+    assert {s["name"] for s in body["speakers"]} == {"أ ب ج", "عضو"}
+    assert body["agenda"][0]["title"] == "الميزانية"
+    assert body["agenda"][0]["planned_seconds"] == 600
+    assert body["total_members"] >= 1
+    assert (await client.get(f"/api/v1/meetings/{meeting_id}/insights", headers=ctx["outsider_headers"])).status_code == 403

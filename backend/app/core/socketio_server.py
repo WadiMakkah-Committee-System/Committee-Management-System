@@ -48,7 +48,7 @@ from app.core.security import InvalidTokenError, decode_token
 from app.db.session import AsyncSessionLocal
 from app.models.user import User, UserStatus
 from app.schemas.meeting_chat import MeetingChatMessageOut
-from app.services import meeting_chat_service, user_service
+from app.services import meeting_chat_service, meeting_service, user_service
 from app.services.meeting_chat_service import MeetingChatForbiddenError, MeetingChatNotFoundError
 
 # تحديث 2026-09-12 (نشر المنصة): نفس تقييد main.py CORSMiddleware —
@@ -84,6 +84,10 @@ def _discussing_key(meeting_id: str) -> str:
     return f"meeting:{meeting_id}:discussing"
 
 
+def _captions_key(meeting_id: str) -> str:
+    return f"meeting:{meeting_id}:captions"
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -92,6 +96,7 @@ async def _room_state(meeting_id: str) -> dict[str, Any]:
     """الصورة الحالية للغرفة: طابور الأيدي المرفوعة (بالترتيب) + بند المناقشة الحالي."""
     hands: list[dict[str, Any]] = []
     discussing: dict[str, Any] | None = None
+    captions: dict[str, Any] | None = None
     try:
         raw_hands = await redis_client.hgetall(_hands_key(meeting_id))
         for user_id, value in raw_hands.items():
@@ -101,9 +106,12 @@ async def _room_state(meeting_id: str) -> dict[str, Any]:
         raw_discussing = await redis_client.get(_discussing_key(meeting_id))
         if raw_discussing:
             discussing = json.loads(raw_discussing)
+        raw_captions = await redis_client.get(_captions_key(meeting_id))
+        if raw_captions:
+            captions = json.loads(raw_captions)
     except Exception:  # noqa: BLE001 — حالة مساعدة فقط، ما توقف الاتصال
         logger.warning("room.state: تعذّر قراءة حالة الغرفة من Redis (meeting=%s)", meeting_id, exc_info=True)
-    return {"hands": hands, "discussing": discussing}
+    return {"hands": hands, "discussing": discussing, "captions": captions}
 
 
 async def _user_has_other_connection(meeting_id: str, user_id: str, exclude_sid: str) -> bool:
@@ -436,6 +444,14 @@ async def agenda_discussing(sid: str, data: dict[str, Any] | None) -> dict[str, 
         await redis_client.set(_discussing_key(meeting_id), json.dumps(payload, ensure_ascii=False), ex=_ROOM_STATE_TTL)
     except Exception:  # noqa: BLE001
         logger.warning("agenda.discussing: تعذّر حفظ البند الحالي بـRedis", exc_info=True)
+    # فترة مناقشة البند تُحفظ للإحصائيات (migration 0044) — فشلها ما يوقف البث.
+    try:
+        async with AsyncSessionLocal() as db:
+            await meeting_service.open_agenda_session(
+                db, meeting_id=uuid.UUID(meeting_id), agenda_item_id=str(agenda_item_id), planned_seconds=duration_seconds
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("agenda.discussing: تعذّر حفظ فترة المناقشة (meeting=%s)", meeting_id, exc_info=True)
     await sio.emit("agenda.discussing", payload, room=_room(meeting_id))
     return {"ok": True}
 
@@ -465,11 +481,49 @@ async def agenda_stop(sid: str, _data: dict[str, Any] | None = None) -> dict[str
         await redis_client.delete(_discussing_key(meeting_id))
     except Exception:  # noqa: BLE001
         logger.warning("agenda.stop: تعذّر تحديث Redis", exc_info=True)
+    try:
+        async with AsyncSessionLocal() as db:
+            await meeting_service.close_agenda_sessions(db, meeting_id=uuid.UUID(meeting_id))
+    except Exception:  # noqa: BLE001
+        logger.warning("agenda.stop: تعذّر إقفال فترة المناقشة", exc_info=True)
     await sio.emit(
         "agenda.stopped",
         {"agenda_item_id": (stopped or {}).get("agenda_item_id"), "title": (stopped or {}).get("title")},
         room=_room(meeting_id),
     )
+    return {"ok": True}
+
+
+@sio.on("captions.set")
+async def captions_set(sid: str, data: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    الهدف (الترجمة النصية الحية — قرار لاما 2026-11-03): رئيس اللجنة يشغّل/يوقف
+    الترجمة النصية للكل ⇒ كل الأجهزة تشغّلها عندها (وكل عضو يقدر يخفي العرض).
+    تُحفظ الحالة (Redis) للي يدخل متأخر. الصلاحية: إدارة الأجندة.
+    """
+    resolved = await _session_user_and_room(sid)
+    if resolved is None:
+        return {"ok": False, "error": "انتهت صلاحية جلسة الاتصال — أعيدي تحميل الصفحة."}
+    user, meeting_id = resolved
+    enabled = bool((data or {}).get("enabled"))
+    language = str((data or {}).get("language") or "ar-sa")[:20]
+    try:
+        async with AsyncSessionLocal() as db:
+            await meeting_chat_service.require_agenda_manage_access(db, actor=user, meeting_id=uuid.UUID(meeting_id))
+    except (MeetingChatForbiddenError, MeetingChatNotFoundError) as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception:
+        logger.exception("captions.set: فشل غير متوقع — meeting_id=%s", meeting_id)
+        return {"ok": False, "error": "تعذر تغيير الترجمة النصية بسبب خطأ بالخادم."}
+    state = {"enabled": enabled, "language": language}
+    try:
+        if enabled:
+            await redis_client.set(_captions_key(meeting_id), json.dumps(state), ex=_ROOM_STATE_TTL)
+        else:
+            await redis_client.delete(_captions_key(meeting_id))
+    except Exception:  # noqa: BLE001
+        logger.warning("captions.set: تعذّر حفظ الحالة بـRedis", exc_info=True)
+    await sio.emit("captions.state", state, room=_room(meeting_id))
     return {"ok": True}
 
 

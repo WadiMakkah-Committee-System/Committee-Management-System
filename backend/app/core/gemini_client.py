@@ -455,6 +455,49 @@ async def extract_meeting_items(*, summary: str) -> list[str]:
     return [item.strip() for item in items if item.strip()]
 
 
+_CATCH_UP_PROMPT_TEMPLATE = """أنت مساعد لاجتماع لجنة رسمي اسمه "{meeting_title}".
+هذا نص آخر {minutes} دقيقة من الاجتماع (ترجمة نصية حية، قد تحتوي أخطاء تعرّف بسيطة):
+
+{transcript}
+
+اكتب لعضو دخل متأخرًا ملخصًا قصيرًا باللغة العربية الفصحى البسيطة:
+- 3 إلى 6 نقاط مختصرة عن أهم ما قيل، مع اسم المتحدث عند الحاجة.
+- اذكر أي قرار أو طلب أو مهمة أو سؤال مفتوح لو وُجد.
+- لا تخترع معلومات غير موجودة بالنص.
+"""
+
+_CATCH_UP_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {"points": {"type": "array", "items": {"type": "string"}}},
+    "required": ["points"],
+}
+
+
+async def summarize_catch_up(*, meeting_title: str, minutes: int, transcript: str) -> str:
+    """
+    الهدف ("وش فاتني؟" — قرار لاما 2026-11-03): ملخص نقاط لآخر دقائق من الاجتماع.
+    المدخلات: عنوان الاجتماع، عدد الدقائق، النص (متحدث: جملة لكل سطر).
+    المخرجات: نقاط مفصولة بأسطر تبدأ بـ"• ".
+    الأخطاء: GeminiNotConfiguredError، GeminiError.
+    """
+    api_key = _require_api_key()
+    prompt = _CATCH_UP_PROMPT_TEMPLATE.format(meeting_title=meeting_title, minutes=minutes, transcript=transcript[:60000])
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await _generate_text_only_with_retry(
+            client, api_key, prompt=prompt, response_schema=_CATCH_UP_RESPONSE_SCHEMA
+        )
+    if response.status_code >= 400:
+        raise GeminiError(f"فشل استدعاء Gemini لملخص وش فاتني: {response.status_code} — {response.text[:300]}")
+    try:
+        points = json.loads(response.json()["candidates"][0]["content"]["parts"][0]["text"])["points"]
+    except (KeyError, IndexError, json.JSONDecodeError) as exc:
+        raise GeminiError("استجابة Gemini لا تطابق الشكل المتوقع") from exc
+    clean = [p.strip() for p in points if isinstance(p, str) and p.strip()]
+    if not clean:
+        raise GeminiError("استجابة Gemini فاضية")
+    return "\n".join(f"• {p}" for p in clean)
+
+
 async def generate_meeting_draft(
     *, meeting_title: str, participant_names: list[str], audio_segments: list[AudioSegment]
 ) -> dict:

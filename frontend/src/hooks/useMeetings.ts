@@ -249,6 +249,15 @@ export function useMeetingAttendance(meetingId: string | undefined) {
   })
 }
 
+/** إحصائيات الاجتماع (المدة، الحضور، المتحدثين، وقت البنود). */
+export function useMeetingInsights(meetingId: string | undefined) {
+  return useQuery({
+    queryKey: [...meetingsKeys.detail(meetingId ?? ''), 'insights'] as const,
+    queryFn: () => meetingsApi.fetchMeetingInsights(meetingId as string),
+    enabled: !!meetingId,
+  })
+}
+
 /** صلاحيات المستخدم على مرفقات الاجتماع (إظهار "إضافة"/"حذف" — بلاغ لاما 2026-11-03). */
 export function useMeetingAttachmentPermissions(meetingId: string | undefined) {
   return useQuery({

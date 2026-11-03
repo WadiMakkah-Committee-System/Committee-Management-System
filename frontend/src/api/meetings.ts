@@ -11,6 +11,7 @@ import type {
   TeamsCallTokenResponse,
   TeamsKnownGuest,
   MeetingAttendanceRow,
+  MeetingInsights,
   TeamsJoinResponse,
   TeamsRecording,
   MeetingListItem,
@@ -228,6 +229,39 @@ export function leaveAttendance(meetingId: string, attendanceId: string, accessT
 /** جدول الحضور المجمّع (meetings.view). */
 export async function fetchMeetingAttendance(meetingId: string): Promise<MeetingAttendanceRow[]> {
   const { data } = await apiClient.get<MeetingAttendanceRow[]>(`/meetings/${meetingId}/attendance`)
+  return data
+}
+
+// ============================== الترجمة النصية + وش فاتني + الإحصائيات (migration 0044) ==============================
+
+/** حفظ دفعة جمل مكتملة من الترجمة النصية (جهاز رئيس اللجنة). */
+export async function saveTranscriptSegments(
+  meetingId: string,
+  segments: {
+    client_key: string
+    speaker_raw_id: string | null
+    speaker_name: string
+    text: string
+    spoken_at: string
+    language: string | null
+    agenda_item_id: string | null
+  }[],
+): Promise<{ saved: number }> {
+  const { data } = await apiClient.post<{ saved: number }>(`/meetings/${meetingId}/transcript/segments`, { segments })
+  return data
+}
+
+/** "وش فاتني؟" — ملخص آخر دقائق (summary=null ⇒ ما فيه ترجمة نصية بهالفترة). */
+export async function fetchCatchUp(meetingId: string, minutes: number): Promise<{ summary: string | null; segments: number }> {
+  const { data } = await apiClient.post<{ summary: string | null; segments: number }>(`/meetings/${meetingId}/catch-up`, {
+    minutes,
+  })
+  return data
+}
+
+/** إحصائيات الاجتماع (meetings.view). */
+export async function fetchMeetingInsights(meetingId: string): Promise<MeetingInsights> {
+  const { data } = await apiClient.get<MeetingInsights>(`/meetings/${meetingId}/insights`)
   return data
 }
 

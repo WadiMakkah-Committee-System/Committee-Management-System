@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MeetingAttendanceCard } from './MeetingAttendanceCard'
+import { MeetingInsightsCard } from './MeetingInsightsCard'
 import { motion } from 'framer-motion'
 import {
   ArrowLeftRight,
@@ -1065,6 +1066,7 @@ export function MeetingDetailPage() {
 
       {/* الحضور التلقائي (migration 0043) — لاجتماعات Teams المدمجة فقط. */}
       {isTeamsMeeting && meetingId && <MeetingAttendanceCard meetingId={meetingId} />}
+      {isTeamsMeeting && meetingId && <MeetingInsightsCard meetingId={meetingId} />}
 
       {meetingEnded && (
         <Card id="recording-section" className="scroll-mt-4 p-0">

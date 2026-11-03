@@ -289,6 +289,66 @@ class MeetingAttendanceRowOut(BaseModel):
     sessions: int
 
 
+class TranscriptSegmentIn(BaseModel):
+    """جملة مكتملة من الترجمة النصية الحية (من جهاز رئيس اللجنة)."""
+
+    client_key: str = Field(min_length=1, max_length=200)
+    speaker_raw_id: str | None = Field(default=None, max_length=300)
+    speaker_name: str = Field(default="", max_length=200)
+    text: str = Field(min_length=1, max_length=4000)
+    spoken_at: datetime
+    language: str | None = Field(default=None, max_length=20)
+    agenda_item_id: uuid.UUID | None = None
+
+
+class TranscriptSegmentsIn(BaseModel):
+    """POST /meetings/{id}/transcript/segments — دفعة جمل (حتى 200)."""
+
+    segments: list[TranscriptSegmentIn] = Field(max_length=200)
+
+
+class TranscriptSegmentsSavedOut(BaseModel):
+    saved: int
+
+
+class CatchUpIn(BaseModel):
+    """POST /meetings/{id}/catch-up — آخر كم دقيقة (1–30)."""
+
+    minutes: int = Field(default=10, ge=1, le=30)
+
+
+class CatchUpOut(BaseModel):
+    """summary=None ⇒ ما فيه ترجمة نصية محفوظة بهالفترة."""
+
+    summary: str | None
+    segments: int
+
+
+class SpeakerStatOut(BaseModel):
+    user_id: uuid.UUID | None
+    name: str
+    estimated_seconds: int
+    segments: int
+
+
+class AgendaStatOut(BaseModel):
+    agenda_item_id: uuid.UUID
+    title: str
+    actual_seconds: int
+    planned_seconds: int | None
+
+
+class MeetingInsightsOut(BaseModel):
+    """GET /meetings/{id}/insights — إحصائيات الاجتماع (قرار لاما 2026-11-03)."""
+
+    duration_seconds: int | None
+    attended_members: int
+    total_members: int
+    speakers: list[SpeakerStatOut]
+    agenda: list[AgendaStatOut]
+    has_transcript: bool
+
+
 class TeamsKnownGuestOut(BaseModel):
     """عنصر GET /meetings/{id}/teams/known-guests — ضيف دخل من المنصة (عضو مصرّح
     له)، يُقبل من قاعة الانتظار تلقائيًا. acs_user_id يطابق معرّف المنتظر بـACS."""

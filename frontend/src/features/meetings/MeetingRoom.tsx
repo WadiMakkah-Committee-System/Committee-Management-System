@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Loader2, Settings2, TimerOff } from 'lucide-react'
+import { Captions, CaptionsOff, Loader2, Settings2, TimerOff } from 'lucide-react'
 import { useMeetingDetail } from '@/hooks/useMeetings'
 import { useCommittees } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
@@ -29,6 +29,10 @@ import { ReactionsButton } from './room/ReactionsButton'
 import { DeviceCheck } from './room/DeviceCheck'
 import { isDeviceCheckDone, type DevicePrefs } from './room/devicePrefs'
 import { useMeetingAttendance } from './room/useMeetingAttendance'
+import { CaptionsOverlay } from './room/CaptionsOverlay'
+import { CatchUpButton } from './room/CatchUpButton'
+import { saveTranscriptSegments } from '@/api/meetings'
+import type { FinalCaption } from './room/useTeamsEmbeddedCall'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
 
@@ -77,8 +81,16 @@ export function MeetingRoom({
   // تجربة الانضمام المدمج (Azure Communication Services): فيديو اجتماع Teams
   // داخل الغرفة نفسها بدل فتح تطبيق تيمز — راجعي useTeamsEmbeddedCall.ts.
   // onAutoAdmitted: أعضاء اللجنة اللي دخلوا كضيوف يُقبلون تلقائيًا — نبلّغ الموظف.
+  // جمل الترجمة النصية المكتملة — جهاز رئيس اللجنة يجمعها ويرسلها كل 5 ثواني
+  // (مصدر واحد للحفظ). البند الحالي يُربط مع كل جملة للإحصائيات.
+  const captionBufferRef = useRef<(FinalCaption & { agendaItemId: string | null })[]>([])
+  const discussingIdRef = useRef<string | null>(null)
+  const isCaptionsSaverRef = useRef(false)
   const embeddedCall = useTeamsEmbeddedCall(meetingId, {
     onAutoAdmitted: (name) => showToast(`دخل ${name} (عضو باللجنة)`, 'info'),
+    onFinalCaption: (c) => {
+      if (isCaptionsSaverRef.current) captionBufferRef.current.push({ ...c, agendaItemId: discussingIdRef.current })
+    },
   })
 
   const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
@@ -138,6 +150,47 @@ export function MeetingRoom({
   const meeting = meetingQuery.data
   // الحضور التلقائي: جلسة لحظة الدخول الفعلي للاجتماع + نبضات + خروج.
   useMeetingAttendance(meetingId, embeddedCall.phase === 'connected')
+
+  // الترجمة النصية (قرار لاما 2026-11-03): رئيس اللجنة يشغّلها للكل عبر القناة
+  // اللحظية ⇒ كل جهاز داخل الاجتماع يشغّلها عنده. كل عضو يقدر يخفي العرض عنده.
+  const [captionsHidden, setCaptionsHidden] = useState(false)
+  const captionsWanted = realtime.captionsState.enabled && embeddedCall.phase === 'connected'
+  useEffect(() => {
+    if (captionsWanted && !embeddedCall.captionsActive) void embeddedCall.startCaptions(realtime.captionsState.language)
+    if (!captionsWanted && (embeddedCall.captionsActive || embeddedCall.captionsError)) void embeddedCall.stopCaptions()
+  }, [captionsWanted, realtime.captionsState.language, embeddedCall])
+
+  useEffect(() => {
+    discussingIdRef.current = realtime.discussingAgendaItem?.id ?? null
+  }, [realtime.discussingAgendaItem])
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const batch = captionBufferRef.current.splice(0, 200)
+      if (batch.length === 0) return
+      saveTranscriptSegments(
+        meetingId,
+        batch.map((c) => ({
+          client_key: c.clientKey,
+          speaker_raw_id: c.speakerRawId,
+          speaker_name: c.speakerName,
+          text: c.text,
+          spoken_at: c.spokenAt,
+          language: c.language,
+          agenda_item_id: c.agendaItemId,
+        })),
+      ).catch(() => {
+        // فشل مؤقت (نت) ⇒ نرجعها للطابور ونحاول بعد 5 ثواني.
+        captionBufferRef.current.unshift(...batch)
+      })
+    }, 5000)
+    return () => clearInterval(id)
+  }, [meetingId])
+
+  async function toggleMeetingCaptions() {
+    const result = await realtime.setCaptions(!realtime.captionsState.enabled)
+    if (!result.ok) showToast(result.error || 'تعذر تغيير الترجمة النصية.', 'error')
+  }
 
   // تحديث لاما 2026-11-03: زر "دخول الاجتماع" (خارج الغرفة) هو الدخول نفسه —
   // أول ما تفتح الغرفة يبدأ الاتصال تلقائيًا، بدون زر انضمام ثاني داخل الإطار.
@@ -231,6 +284,11 @@ export function MeetingRoom({
           (c) => c.committee_id === meeting.committee_id && c.chair_user_id === currentUser.user_id,
         )),
   )
+
+  // جهاز رئيس اللجنة هو اللي يحفظ الترجمة النصية (مصدر واحد).
+  useEffect(() => {
+    isCaptionsSaverRef.current = canManageAgenda
+  }, [canManageAgenda])
 
   // يحدد ظهور تنبيه "شغّل التسجيل والتفريغ من داخل تيمز" (TeamsMeetingStage)
   // — نفس قاعدة من يسجّل (رئيس اللجنة أو meetings.record_audio عامة). أصل
@@ -398,6 +456,13 @@ export function MeetingRoom({
                 <TeamsMeetingStage meeting={meeting} canRecord={canRecord} />
               )}
 
+              {embeddedCall.captionsActive && !captionsHidden && (
+                <CaptionsOverlay lines={embeddedCall.captionLines} error={null} />
+              )}
+              {realtime.captionsState.enabled && embeddedCall.captionsError && (
+                <CaptionsOverlay lines={[]} error={embeddedCall.captionsError} />
+              )}
+
               {currentUser && (
                 <VotingOverlay
                   meetingId={meetingId}
@@ -411,6 +476,33 @@ export function MeetingRoom({
                   embeddedCall.phase === 'connected' ? (
                     <>
                       <ReactionsButton onReact={(type) => void embeddedCall.sendReaction(type)} />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          canManageAgenda ? void toggleMeetingCaptions() : setCaptionsHidden((v) => !v)
+                        }
+                        disabled={!canManageAgenda && !realtime.captionsState.enabled}
+                        aria-label="الترجمة النصية"
+                        title={
+                          canManageAgenda
+                            ? realtime.captionsState.enabled
+                              ? 'إيقاف الترجمة النصية للكل'
+                              : 'تشغيل الترجمة النصية للكل'
+                            : realtime.captionsState.enabled
+                              ? captionsHidden
+                                ? 'إظهار الترجمة النصية'
+                                : 'إخفاء الترجمة النصية عندي'
+                              : 'الترجمة النصية مطفية (يشغّلها رئيس اللجنة)'
+                        }
+                        className={
+                          realtime.captionsState.enabled && !captionsHidden
+                            ? 'flex h-11 w-11 items-center justify-center rounded-full bg-brand-primary text-white transition-all hover:brightness-110 active:scale-95'
+                            : 'flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white transition-all hover:bg-white/20 active:scale-95 disabled:opacity-40'
+                        }
+                      >
+                        {realtime.captionsState.enabled && !captionsHidden ? <Captions size={18} /> : <CaptionsOff size={18} />}
+                      </button>
+                      <CatchUpButton meetingId={meetingId} />
                       <button
                         type="button"
                         onClick={() => setDeviceSettingsOpen(true)}
