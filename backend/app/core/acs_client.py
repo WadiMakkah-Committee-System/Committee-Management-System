@@ -143,7 +143,10 @@ async def issue_teams_user_token(aad_token: str) -> tuple[AcsToken, TeamsUserIde
         token = await asyncio.to_thread(_exchange_sync, aad_token, object_id)
     except Exception as exc:
         status_code = getattr(exc, "status_code", None)
+        # تفاصيل رد ACS (رمز الخطأ ورسالته — بدون التوكن) تُكتب بسجل الخادم فقط
+        # لتشخيص سبب الرفض (رخصة/مستأجر/صلاحية)، ولا تصل للمستخدم.
+        detail = str(getattr(exc, "message", "") or exc).replace(aad_token, "<token>")[:500]
         if status_code in (400, 401, 403):
-            raise AcsTeamsIdentityError(f"رفض ACS توكن Microsoft ({status_code})") from exc
-        raise AcsError(f"تعذّر تبادل توكن Microsoft مع ACS: {type(exc).__name__}") from exc
+            raise AcsTeamsIdentityError(f"رفض ACS توكن Microsoft ({status_code}): {detail}") from exc
+        raise AcsError(f"تعذّر تبادل توكن Microsoft مع ACS: {type(exc).__name__}: {detail}") from exc
     return token, TeamsUserIdentity(object_id=object_id, username=username)
