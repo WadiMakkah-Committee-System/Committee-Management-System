@@ -10,7 +10,9 @@ WORKDIR /app
 
 # gcc: احتياطًا لبعض الحزم (مثل bcrypt) اللي أحيانًا تحتاج تُبنى من
 # المصدر على معماريات/نسخ بايثون معينة لو ما توفر wheel جاهز.
-RUN apt-get update && apt-get install -y --no-install-recommends gcc \
+# ffmpeg (2026-11-04): إصلاح مدة تسجيلات الاجتماعات بعد دمج قطعها (نسخ بدون
+# إعادة ترميز — راجعي recording_sessions._remux_with_duration).
+RUN apt-get update && apt-get install -y --no-install-recommends gcc ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ClipboardList, Loader2, PlayCircle, Timer } from 'lucide-react'
+import { ClipboardList, Loader2, PlayCircle, Plus, Timer } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { cn } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
@@ -10,7 +10,11 @@ export function AgendaPanel({
   onStartDiscussing,
   canManage,
   pendingItemId = null,
+  onAddItem,
 }: {
+  /** طلب لاما 2026-11-04: إضافة بند من داخل الاجتماع (لمن يملك الصلاحية فقط —
+   * الخادم يتحقق من meetings.agenda.item.add). غير مُمرَّر ⇒ ما يظهر الحقل. */
+  onAddItem?: (title: string) => Promise<boolean>
   agendaItems: MeetingAgendaItem[]
   discussingAgendaItemId: string | null
   /** durationSeconds: مؤقت البند الاختياري (null = بدون مؤقت) — قرار لاما 2026-11-03. */
@@ -28,16 +32,20 @@ export function AgendaPanel({
   // البند المفتوح عليه اختيار المؤقت (الرئيس يضغط البند ⇒ يختار المدة ⇒ يبدأ).
   const [chooserFor, setChooserFor] = useState<string | null>(null)
 
+  const addForm = onAddItem ? <AddAgendaItemForm onAdd={onAddItem} /> : null
+
   if (sorted.length === 0) {
     return (
-      <div className="p-4">
+      <div className="flex flex-col gap-3 p-4">
         <EmptyState icon={<ClipboardList size={22} />} title="لا توجد بنود بجدول الأعمال" />
+        {addForm}
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto p-3">
+      {addForm}
       {sorted.map((item, index) => {
         const isCurrent = item.agenda_item_id === discussingAgendaItemId
         const isPending = pendingItemId === item.agenda_item_id
@@ -164,6 +172,61 @@ function TimerChooser({ onPick, onCancel }: { onPick: (seconds: number | null) =
           إلغاء
         </button>
       </div>
+    </div>
+  )
+}
+
+/** حقل "إضافة بند" داخل الاجتماع — يمسح الحقل بعد النجاح، ويوضح لو الحقل فاضي. */
+function AddAgendaItemForm({ onAdd }: { onAdd: (title: string) => Promise<boolean> }) {
+  const [title, setTitle] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [hint, setHint] = useState<string | null>(null)
+
+  async function submit() {
+    const clean = title.trim()
+    if (clean.length < 2) {
+      setHint('اكتب عنوان البند (حرفين على الأقل)')
+      return
+    }
+    setHint(null)
+    setBusy(true)
+    try {
+      if (await onAdd(clean)) setTitle('')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1 rounded-md border border-dashed border-border-default bg-bg-surface p-2">
+      <div className="flex items-center gap-2">
+        <input
+          value={title}
+          onChange={(e) => {
+            setTitle(e.target.value)
+            if (hint) setHint(null)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void submit()
+            }
+          }}
+          placeholder="عنوان بند جديد..."
+          maxLength={255}
+          className="h-9 min-w-0 flex-1 rounded-sm border border-border-default bg-bg-app px-2.5 text-[13px] text-text-primary placeholder:text-text-muted focus:border-brand-primary focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={busy}
+          className="flex h-9 shrink-0 items-center gap-1 rounded-sm bg-brand-primary px-3 text-[12px] font-semibold text-white transition-all hover:brightness-110 disabled:opacity-60"
+        >
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+          إضافة بند
+        </button>
+      </div>
+      {hint && <p className="text-[11px] font-medium text-danger">{hint}</p>}
     </div>
   )
 }

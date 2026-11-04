@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { Captions, CaptionsOff, Circle, Loader2, Settings2, Square, TimerOff } from 'lucide-react'
-import { useMeetingDetail } from '@/hooks/useMeetings'
+import { useAddAgendaItem, useMeetingDetail } from '@/hooks/useMeetings'
 import { useCommittees } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
 import { useMeetingRealtime } from '@/hooks/useMeetingRealtime'
@@ -35,6 +35,7 @@ import { useMeetingAttendance } from './room/useMeetingAttendance'
 import { CaptionsOverlay } from './room/CaptionsOverlay'
 import { CatchUpButton } from './room/CatchUpButton'
 import { saveTranscriptSegments } from '@/api/meetings'
+import { extractErrorMessage } from '@/lib/utils'
 import type { CaptionLine, FinalCaption } from './room/useTeamsEmbeddedCall'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
@@ -202,8 +203,12 @@ export function MeetingRoom({
   }, [captionsWanted, realtime.captionsState.language, embeddedCall])
 
   // Agora: كل جهاز يتعرف على كلام صاحبه فقط (وما يسمع وهو كاتم)، ويبثه ويحفظه.
+  // طلب لاما 2026-11-04: الترجمة النصية **لكل شخص** — كل واحد يشغّل العرض عنده
+  // بزر CC بدون ما يعتمد على الرئيس. التعرف نفسه شغّال لكل الحاضرين (غير الكاتمين)
+  // عشان يكون عند أي أحد يشغّل CC كلام الكل، و"وش فاتني؟" يلقى نص يلخصه.
+  const [myCaptionsOn, setMyCaptionsOn] = useState(false)
   const speech = useSpeechCaptions({
-    enabled: isAgoraMeeting && realtime.captionsState.enabled && agoraCall.phase === 'connected',
+    enabled: isAgoraMeeting && agoraCall.phase === 'connected',
     muted: agoraCall.micMuted,
     language: realtime.captionsState.language,
     onLine: realtime.sendCaptionLine,
@@ -330,6 +335,22 @@ export function MeetingRoom({
     if (floorGiven.userId === currentUser?.user_id) showToast('رئيس اللجنة أعطاك الكلمة 🎤', 'success')
     else if (floorGiven.fullName) showToast(`الكلمة الآن لـ ${floorGiven.fullName}`, 'info')
   }, [floorGiven, currentUser?.user_id, showToast])
+
+  // إضافة بند من داخل الاجتماع (طلب لاما 2026-11-04).
+  const addAgendaItemMutation = useAddAgendaItem()
+  async function handleAddAgendaItem(title: string): Promise<boolean> {
+    try {
+      await addAgendaItemMutation.mutateAsync({
+        meetingId,
+        payload: { title, sort_order: meetingQuery.data?.agenda_items.length ?? 0 },
+      })
+      showToast(`انضاف البند: ${title}`, 'success')
+      return true
+    } catch (err) {
+      showToast(extractErrorMessage(err), 'error')
+      return false
+    }
+  }
 
   async function handleStopDiscussing() {
     const result = await realtime.stopDiscussing()
@@ -500,6 +521,7 @@ export function MeetingRoom({
                     onStartDiscussing={handleStartDiscussing}
                     canManage={canManageAgenda}
                     pendingItemId={pendingAgendaItemId}
+                    onAddItem={canManageAgenda ? handleAddAgendaItem : undefined}
                   />
                 )}
                 {activePanel === 'decisions' && (
@@ -546,6 +568,13 @@ export function MeetingRoom({
                 />
               )}
 
+              {recorder.status === 'recording' && recorder.silent && (
+                <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-[12px] font-medium text-warning">
+                  <TimerOff size={14} className="shrink-0" />
+                  <span>التسجيل ما يلتقط أي صوت من 15 ثانية — تأكد إن المايك شغّال وإن الأعضاء يتكلمون.</span>
+                </div>
+              )}
+
               {meetingEnded && (
                 <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning-bg px-3 py-2 text-[12px] font-medium text-warning">
                   <TimerOff size={14} className="shrink-0" />
@@ -577,7 +606,7 @@ export function MeetingRoom({
               {realtime.captionsState.enabled && embeddedCall.captionsError && (
                 <CaptionsOverlay lines={[]} error={embeddedCall.captionsError} />
               )}
-              {isAgoraMeeting && realtime.captionsState.enabled && !captionsHidden && (
+              {isAgoraMeeting && myCaptionsOn && (
                 <CaptionsOverlay lines={agoraCaptionLines} error={speech.error} />
               )}
 
@@ -622,6 +651,15 @@ export function MeetingRoom({
                             : recorder.status === 'stopping'
                               ? 'جاري الحفظ...'
                               : 'تسجيل'}
+                          {recorder.status === 'recording' && (
+                            // مؤشر مستوى الصوت المسجَّل — يتحرك مع الكلام (يتأكد الرئيس إن الصوت ينسجل).
+                            <span className="flex h-4 w-1.5 items-end overflow-hidden rounded-full bg-white/30">
+                              <span
+                                className="w-full rounded-full bg-white transition-[height] duration-200"
+                                style={{ height: `${Math.round(recorder.level * 100)}%` }}
+                              />
+                            </span>
+                          )}
                         </button>
                       )}
                       <ReactionsButton
@@ -631,6 +669,21 @@ export function MeetingRoom({
                             : void embeddedCall.sendReaction(type)
                         }
                       />
+                      {isAgoraMeeting ? (
+                        <button
+                          type="button"
+                          onClick={() => setMyCaptionsOn((v) => !v)}
+                          aria-label="الترجمة النصية"
+                          title={myCaptionsOn ? 'إخفاء الترجمة النصية' : 'إظهار الترجمة النصية'}
+                          className={
+                            myCaptionsOn
+                              ? 'flex h-11 w-11 items-center justify-center rounded-full bg-brand-primary text-white transition-all hover:brightness-110 active:scale-95'
+                              : 'flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white transition-all hover:bg-white/20 active:scale-95'
+                          }
+                        >
+                          {myCaptionsOn ? <Captions size={18} /> : <CaptionsOff size={18} />}
+                        </button>
+                      ) : (
                       <button
                         type="button"
                         onClick={() =>
@@ -657,6 +710,7 @@ export function MeetingRoom({
                       >
                         {realtime.captionsState.enabled && !captionsHidden ? <Captions size={18} /> : <CaptionsOff size={18} />}
                       </button>
+                      )}
                       <CatchUpButton meetingId={meetingId} />
                       <button
                         type="button"

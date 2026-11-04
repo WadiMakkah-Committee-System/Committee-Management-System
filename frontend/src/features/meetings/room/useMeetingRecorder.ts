@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { startRecordingSession, stopRecordingSession, uploadRecordingChunk, type RecordingState } from '@/api/meetings'
 import { extractErrorMessage } from '@/lib/utils'
+import type { IMicrophoneAudioTrack, IRemoteAudioTrack } from 'agora-rtc-sdk-ng'
 import type { AudioSources } from './useAgoraCall'
 
 /** طول القطعة: كل 30 ثانية تنرفع قطعة ⇒ أقصى خسارة لو انقفلت الصفحة فجأة. */
@@ -19,25 +20,39 @@ function pickMimeType(): string | null {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** أي مسار Agora صوتي يعطي قطع الصوت المفكوكة (مايكي أو عضو). */
+type FrameTrack = Pick<IMicrophoneAudioTrack | IRemoteAudioTrack, 'setAudioFrameCallback'>
+
+/** حجم القطعة من Agora (عينات): 2048 ≈ 43ms عند 48kHz. */
+const FRAME_SIZE = 2048
+/** هامش تأخير بسيط يمتص تذبذب وصول القطع (بدون تقطيع بالصوت). */
+const JITTER_SECONDS = 0.15
+/** أقل مستوى نعتبره "صوت" (مو صمت تام). */
+const SOUND_THRESHOLD = 0.01
+/** تنبيه الرئيس لو التسجيل ما التقط أي صوت هالمدة. */
+const SILENCE_WARNING_MS = 15_000
+
 /**
  * الهدف (الرجوع لـAgora — قرار لاما 2026-11-04):
  * تسجيل صوت **كل أعضاء الاجتماع** من جهاز رئيس اللجنة، صوت فقط، بزر.
  *
+ * إصلاح 2026-11-04 (بلاغ لاما — "سجّلنا 10 دقايق والتسجيل صامت"): النسخة الأولى
+ * كانت تربط MediaStreamTrack الخام بـWeb Audio، وكروم يطلّع صمت لمسارات WebRTC
+ * بهالطريقة في حالات معروفة. الحين ناخذ الصوت **المفكوك من Agora نفسها**
+ * (setAudioFrameCallback — نفس الصوت اللي يطلع بالسماعة) لكل عضو ولمايك الرئيس.
+ *
  * كيف (أدوات مدمجة بالمتصفح — بدون مكتبات إضافية):
- * 1) AudioContext يخلط مايك الرئيس + صوت كل عضو (من Agora مباشرة — مو من
- *    السماعات، فالجودة نظيفة) في مسار واحد (MediaStreamAudioDestinationNode).
- *    كأنها InputStream كثير تندمج في OutputStream واحد (Java).
- * 2) MediaRecorder يسجّل المسار المخلوط ويطلّع قطعة كل 30 ثانية.
- * 3) كل قطعة ترتفع بالترتيب للخادم مع إعادة محاولة لو النت تقطّع
- *    (القطع تنتظر بالذاكرة لين ترتفع — ما يضيع شي).
- * 4) عضو جديد يدخل/يطلع أو يكتم ويرجع ⇒ يُضاف/يُشال من الخلط بدون إيقاف التسجيل
- *    (audioVersion من useAgoraCall).
- * 5) إيقاف ⇒ آخر قطعة + انتظار رفع الكل ⇒ الخادم يدمجها بملف واحد للمسودة.
+ * 1) كل مصدر (مايك الرئيس + كل عضو) يعطينا قطع صوت (AudioBuffer) كل ~40ms.
+ * 2) كل قطعة تنجدول بالترتيب بمسار المصدر داخل AudioContext واحد، وكل المصادر
+ *    تصب بنفس الوجهة فتنخلط (مثل عدة InputStream تندمج في OutputStream واحد بـJava).
+ * 3) MediaRecorder يسجّل الوجهة المخلوطة ويطلّع قطعة كل 30 ثانية ⇒ ترتفع بالترتيب
+ *    مع إعادة محاولة لو النت تقطّع (القطع تنتظر بالذاكرة لين ترتفع).
+ * 4) عضو يدخل/يطلع ⇒ يُضاف/يُشال من الخلط بدون إيقاف (audioVersion من useAgoraCall).
+ * 5) مؤشر مستوى الصوت (level) + تنبيه لو التسجيل صامت 15 ثانية — تنكشف المشكلة
+ *    وقت الاجتماع مو بعده.
+ * 6) إيقاف ⇒ آخر قطعة + انتظار رفع الكل ⇒ الخادم يدمجها ويكتب المدة الصحيحة (ffmpeg).
  *
  * لو انقفلت الصفحة فجأة: الخادم يدمج اللي وصل تلقائيًا بعد 3 دقائق (المجدوِل).
- *
- * المدخلات: meetingId، getAudioSources + audioVersion (من useAgoraCall)،
- * onStateChange (تحديث مؤشر "جاري التسجيل" فورًا عندي).
  */
 export function useMeetingRecorder(
   meetingId: string,
@@ -51,9 +66,15 @@ export function useMeetingRecorder(
   const [error, setError] = useState<string | null>(null)
   const [pendingUploads, setPendingUploads] = useState(0)
 
+  const [level, setLevel] = useState(0)
+  const [silent, setSilent] = useState(false)
+
   const ctxRef = useRef<AudioContext | null>(null)
   const destRef = useRef<MediaStreamAudioDestinationNode | null>(null)
-  const sourcesRef = useRef(new Map<string, { track: MediaStreamTrack; node: MediaStreamAudioSourceNode }>())
+  // لكل مصدر: مسار Agora + وقت تشغيل القطعة الجاية بالـAudioContext (جدولة متتالية بدون فجوات).
+  const sourcesRef = useRef(new Map<string, { track: FrameTrack; nextTime: number }>())
+  const peakRef = useRef(0)
+  const lastSoundAtRef = useRef(0)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const sessionRef = useRef<string | null>(null)
   const seqRef = useRef(0)
@@ -68,21 +89,56 @@ export function useMeetingRecorder(
     const dest = destRef.current
     if (!ctx || !dest) return
     const { local, remote } = optionsRef.current.getAudioSources()
-    const wanted = new Map<string, MediaStreamTrack>(remote)
+    const wanted = new Map<string, FrameTrack>(remote)
     if (local) wanted.set('__local__', local)
     for (const [key, entry] of sourcesRef.current) {
       if (wanted.get(key) !== entry.track) {
-        entry.node.disconnect()
+        entry.track.setAudioFrameCallback(null)
         sourcesRef.current.delete(key)
       }
     }
     for (const [key, track] of wanted) {
-      if (sourcesRef.current.has(key) || track.readyState !== 'live') continue
-      const node = ctx.createMediaStreamSource(new MediaStream([track]))
-      node.connect(dest)
-      sourcesRef.current.set(key, { track, node })
+      if (sourcesRef.current.has(key)) continue
+      const entry = { track, nextTime: 0 }
+      sourcesRef.current.set(key, entry)
+      track.setAudioFrameCallback((buffer: AudioBuffer) => {
+        const liveCtx = ctxRef.current
+        const liveDest = destRef.current
+        if (!liveCtx || !liveDest) return
+        // مستوى الصوت (للمؤشر وكشف الصمت) — أعلى قيمة بالقطعة.
+        const data = buffer.getChannelData(0)
+        let peak = 0
+        for (let i = 0; i < data.length; i += 16) peak = Math.max(peak, Math.abs(data[i]))
+        if (peak > peakRef.current) peakRef.current = peak
+        // جدولة القطعة مباشرة بعد سابقتها لنفس المصدر؛ لو تأخرنا (فجوة) نبدأ من الآن + هامش.
+        const now = liveCtx.currentTime
+        if (entry.nextTime < now + 0.02) entry.nextTime = now + JITTER_SECONDS
+        const node = liveCtx.createBufferSource()
+        node.buffer = buffer
+        node.connect(liveDest)
+        node.start(entry.nextTime)
+        entry.nextTime += buffer.duration
+      }, FRAME_SIZE)
     }
   }, [])
+
+  // مؤشر المستوى + كشف الصمت (كل ربع ثانية أثناء التسجيل).
+  useEffect(() => {
+    if (status !== 'recording') return
+    lastSoundAtRef.current = Date.now()
+    const id = setInterval(() => {
+      const peak = peakRef.current
+      peakRef.current = 0
+      setLevel(Math.min(1, peak * 3))
+      if (peak > SOUND_THRESHOLD) lastSoundAtRef.current = Date.now()
+      setSilent(Date.now() - lastSoundAtRef.current > SILENCE_WARNING_MS)
+    }, 250)
+    return () => {
+      clearInterval(id)
+      setLevel(0)
+      setSilent(false)
+    }
+  }, [status])
 
   useEffect(() => {
     if (status === 'recording') syncSources()
@@ -125,7 +181,7 @@ export function useMeetingRecorder(
   }, [meetingId])
 
   const teardownAudio = useCallback(() => {
-    for (const entry of sourcesRef.current.values()) entry.node.disconnect()
+    for (const entry of sourcesRef.current.values()) entry.track.setAudioFrameCallback(null)
     sourcesRef.current.clear()
     void ctxRef.current?.close().catch(() => {})
     ctxRef.current = null
@@ -232,5 +288,5 @@ export function useMeetingRecorder(
     }
   }, [])
 
-  return { status, error, pendingUploads, start, stop, isSupported: pickMimeType() !== null }
+  return { status, error, pendingUploads, level, silent, start, stop, isSupported: pickMimeType() !== null }
 }
