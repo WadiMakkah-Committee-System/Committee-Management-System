@@ -87,6 +87,22 @@ class Settings(BaseSettings):
       SUPABASE_STORAGE_BUCKET: str = "documents"
       MAX_DOCUMENT_UPLOAD_MB: int = 25
 
+    # --- مزوّد الاجتماعات عن بعد (قرار لاما 2026-11-04 — الرجوع لـAgora مع حفظ Teams) ---
+    # MEETING_PROVIDER: "agora" (الافتراضي) أو "teams". يتحكم فقط بالاجتماعات
+    # الجديدة: "teams" ⇒ يُنشأ لها اجتماع Teams (يتطلب TEAMS_* أدناه)، "agora" ⇒
+    # غرفة Agora داخل المنصة. الاجتماعات القديمة المربوطة بـTeams تبقى تفتح بـTeams
+    # بغض النظر عن هذا الإعداد. الرجوع لـTeams = تغيير هذا الإعداد بـRender فقط
+    # (راجعي docs/meeting-provider-switch.md).
+      MEETING_PROVIDER: str = "agora"
+
+    # --- Agora (اجتماعات الفيديو/الصوت داخل المنصة) ---
+    # AGORA_APP_ID/AGORA_APP_CERTIFICATE من Agora Console → Projects. الشهادة سر —
+    # على الباك-إند فقط (app.core.agora_client يبني توكن قصير العمر)، ولا تصل
+    # للواجهة أبدًا. فارغة ⇒ الانضمام لاجتماعات Agora معطّل (503 واضح).
+      AGORA_APP_ID: str = ""
+      AGORA_APP_CERTIFICATE: str = ""
+      AGORA_TOKEN_TTL_SECONDS: int = 4 * 60 * 60
+
     # --- Microsoft Teams (الاجتماعات عن بعد — migration 0041، قرار لاما
     # 2026-11-02 بالانتقال من Agora إلى Teams) ---
     # بيانات تطبيق "Committee Management System" المسجّل بـEntra ID (Client
@@ -109,6 +125,10 @@ class Settings(BaseSettings):
     # يُحوَّل لنافذة Microsoft تلقائيًا بدل خانة كلمة المرور. ليست أسرارًا
     # (تُرجَع للواجهة عبر GET /auth/login-options).
       MICROSOFT_LOGIN_DOMAINS: str = ""
+    # MICROSOFT_LOGIN_ENABLED (قرار لاما 2026-11-04): مفتاح إظهار/إخفاء الدخول
+    # بـMicrosoft بصفحة الدخول. False (الافتراضي) ⇒ مخفي ومرفوض حتى لو مفاتيح
+    # Entra موجودة — الكود محفوظ، والرجوع له = True بـRender.
+      MICROSOFT_LOGIN_ENABLED: bool = False
 
     # --- Azure Communication Services (تجربة: فيديو اجتماع Teams داخل واجهة
     # المنصة نفسها — 2026-11-02، فرع poc/acs-teams-embed) ---

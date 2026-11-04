@@ -305,6 +305,9 @@ class TranscriptSegmentsIn(BaseModel):
     """POST /meetings/{id}/transcript/segments — دفعة جمل (حتى 200)."""
 
     segments: list[TranscriptSegmentIn] = Field(max_length=200)
+    # Agora (قرار لاما 2026-11-04): True = كل عضو يرسل كلامه هو (المتحدث يُفرض
+    # بالباك-إند = المرسل). False = جهاز الرئيس يرسل الكل (اجتماعات Teams القديمة).
+    own_speech: bool = False
 
 
 class TranscriptSegmentsSavedOut(BaseModel):
@@ -384,3 +387,46 @@ class MeetingCreateWithAttachmentsOut(BaseModel):
 
     meeting: MeetingOut
     failed_files: list[str] = Field(default_factory=list)
+
+
+# ============================== Agora + التسجيل على دفعات (قرار لاما 2026-11-04) ==============================
+
+
+class AgoraJoinOut(BaseModel):
+    """POST /meetings/{id}/agora/join — جاهز لـclient.join(app_id, channel, token, account)."""
+
+    app_id: str
+    channel: str
+    token: str
+    account: str
+    expires_at: int
+
+
+class RecordingSessionStartIn(BaseModel):
+    """POST /meetings/{id}/recording-sessions — صيغة MediaRecorder بالمتصفح (مثل audio/webm;codecs=opus)."""
+
+    mime_type: str = Field(min_length=1, max_length=100)
+
+
+class RecordingStateOut(BaseModel):
+    """حالة التسجيل (مؤشر "جاري التسجيل" عند كل الحضور)."""
+
+    active: bool
+    session_id: str | None = None
+    started_by: str | None = None
+    started_by_name: str | None = None
+    started_at: str | None = None
+
+
+class RecordingChunkOut(BaseModel):
+    """نتيجة رفع قطعة: آخر رقم محفوظ (الواجهة تكمل من بعده)."""
+
+    last_seq: int
+
+
+class RecordingSessionStopOut(BaseModel):
+    """نتيجة الإيقاف: هل انحفظ تسجيل (recording_id) أو ما وصل صوت (error_message)."""
+
+    status: str
+    recording_id: uuid.UUID | None
+    error_message: str | None

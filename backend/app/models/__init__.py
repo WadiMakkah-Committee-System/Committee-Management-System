@@ -22,6 +22,7 @@ from app.models.meeting_insights import MeetingAgendaSession, MeetingTranscriptS
 from app.models.meeting_chat import MeetingChatMessage
 from app.models.document_chat import DocumentChatConversation, DocumentChatMessage
 from app.models.meeting_draft import MeetingDraft, MeetingDraftStatus, MeetingRecording
+from app.models.meeting_recording_session import MeetingRecordingSession
 from app.models.meeting_extracted_item import MeetingExtractedItem, MeetingExtractedItemStatus
 from app.models.meeting_minutes import (
     MeetingMinutes,
@@ -58,6 +59,7 @@ __all__ = [
     "DocumentChatConversation",
     "DocumentChatMessage",
     "MeetingDraft",
+    "MeetingRecordingSession",
     "MeetingDraftStatus",
     "MeetingExtractedItem",
     "MeetingExtractedItemStatus",

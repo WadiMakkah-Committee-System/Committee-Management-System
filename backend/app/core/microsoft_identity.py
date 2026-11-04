@@ -56,8 +56,13 @@ class MicrosoftIdentity:
 
 
 def is_enabled() -> bool:
-    """هل الدخول بحساب Microsoft مفعّل (تطبيق Entra مُعرَّف بالبيئة)."""
-    return bool(settings.TEAMS_TENANT_ID.strip() and settings.TEAMS_CLIENT_ID.strip())
+    """هل الدخول بحساب Microsoft مفعّل: المفتاح MICROSOFT_LOGIN_ENABLED (قرار لاما
+    2026-11-04 — مخفي افتراضيًا بعد الرجوع لـAgora) + تطبيق Entra مُعرَّف بالبيئة."""
+    return bool(
+        settings.MICROSOFT_LOGIN_ENABLED
+        and settings.TEAMS_TENANT_ID.strip()
+        and settings.TEAMS_CLIENT_ID.strip()
+    )
 
 
 def company_domains() -> list[str]:

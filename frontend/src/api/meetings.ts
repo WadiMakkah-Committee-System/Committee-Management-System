@@ -246,8 +246,77 @@ export async function saveTranscriptSegments(
     language: string | null
     agenda_item_id: string | null
   }[],
+  /** Agora (قرار لاما 2026-11-04): true = كلامي أنا فقط — الخادم يحدد المتحدث = أنا. */
+  ownSpeech = false,
 ): Promise<{ saved: number }> {
-  const { data } = await apiClient.post<{ saved: number }>(`/meetings/${meetingId}/transcript/segments`, { segments })
+  const { data } = await apiClient.post<{ saved: number }>(`/meetings/${meetingId}/transcript/segments`, {
+    segments,
+    own_speech: ownSpeech,
+  })
+  return data
+}
+
+// ============================== Agora + التسجيل على دفعات (قرار لاما 2026-11-04) ==============================
+
+/** توكن غرفة Agora — account = user_id بالمنصة (الخادم يحدده، مو المتصفح). */
+export interface AgoraJoinInfo {
+  app_id: string
+  channel: string
+  token: string
+  account: string
+  expires_at: number
+}
+
+export async function joinAgora(meetingId: string): Promise<AgoraJoinInfo> {
+  const { data } = await apiClient.post<AgoraJoinInfo>(`/meetings/${meetingId}/agora/join`)
+  return data
+}
+
+/** حالة التسجيل (مؤشر "جاري التسجيل" عند كل الحضور). */
+export interface RecordingState {
+  active: boolean
+  session_id: string | null
+  started_by: string | null
+  started_by_name: string | null
+  started_at: string | null
+}
+
+export async function fetchRecordingState(meetingId: string): Promise<RecordingState> {
+  const { data } = await apiClient.get<RecordingState>(`/meetings/${meetingId}/recording-sessions/state`)
+  return data
+}
+
+export async function startRecordingSession(meetingId: string, mimeType: string): Promise<RecordingState> {
+  const { data } = await apiClient.post<RecordingState>(`/meetings/${meetingId}/recording-sessions`, {
+    mime_type: mimeType,
+  })
+  return data
+}
+
+/** رفع قطعة رقم seq (بايتات الصوت كما هي). */
+export async function uploadRecordingChunk(
+  meetingId: string,
+  sessionId: string,
+  seq: number,
+  chunk: Blob,
+): Promise<{ last_seq: number }> {
+  const { data } = await apiClient.put<{ last_seq: number }>(
+    `/meetings/${meetingId}/recording-sessions/${sessionId}/chunks/${seq}`,
+    chunk,
+    { headers: { 'Content-Type': 'application/octet-stream' }, timeout: 60_000 },
+  )
+  return data
+}
+
+export async function stopRecordingSession(
+  meetingId: string,
+  sessionId: string,
+): Promise<{ status: string; recording_id: string | null; error_message: string | null }> {
+  const { data } = await apiClient.post<{ status: string; recording_id: string | null; error_message: string | null }>(
+    `/meetings/${meetingId}/recording-sessions/${sessionId}/stop`,
+    undefined,
+    { timeout: 120_000 },
+  )
   return data
 }
 

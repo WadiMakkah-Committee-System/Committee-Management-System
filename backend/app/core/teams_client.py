@@ -120,6 +120,16 @@ _USER_ID_TTL_FOUND_SECONDS = 60 * 60
 _USER_ID_TTL_MISSING_SECONDS = 5 * 60
 
 
+def creates_new_meetings() -> bool:
+    """
+    الهدف (قرار لاما 2026-11-04 — الرجوع لـAgora مع حفظ Teams): هل الاجتماعات
+    عن بعد **الجديدة** تُنشأ بـTeams. True فقط لو MEETING_PROVIDER = "teams"
+    والتكامل مهيّأ. الاجتماعات القديمة المربوطة تبقى تُزامَن (تعديل/حذف) عبر
+    is_configured() بغض النظر عن هذا.
+    """
+    return settings.MEETING_PROVIDER.strip().lower() == "teams" and is_configured()
+
+
 def is_configured() -> bool:
     """
     الهدف: معرفة هل تكامل Teams مفعّل بهذه البيئة.

@@ -7,7 +7,7 @@ from fastapi import (
     status,
 )
 
-from app.core import acs_client, storage_client, teams_client
+from app.core import acs_client, agora_client, storage_client, teams_client
 from app.services.meeting_minutes_service import (
     MinutesForbiddenError,
     MinutesInvalidStateError,
@@ -75,6 +75,8 @@ _SERVICE_ERRORS = (
     teams_client.TeamsError,
     # تجربة الانضمام المدمج عبر Azure Communication Services.
     acs_client.AcsError,
+    # الرجوع لـAgora (قرار لاما 2026-11-04) — راجعي app/core/agora_client.py.
+    agora_client.AgoraError,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,14 @@ def _handle_errors(exc: Exception) -> Exception:
         return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if isinstance(exc, teams_client.TeamsError):
         return _teams_error_to_http(exc)
+    if isinstance(exc, agora_client.AgoraNotConfiguredError):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="غرفة الاجتماع غير مُهيّأة بعد (إعدادات AGORA_* ناقصة بالخادم)",
+        )
+    if isinstance(exc, agora_client.AgoraError):
+        logger.warning("Agora error: %s", exc)
+        return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="تعذّر تجهيز غرفة الاجتماع، حاول مرة أخرى")
     if isinstance(exc, acs_client.AcsError):
         logger.warning("Azure Communication Services error: %s", exc)
         if isinstance(exc, acs_client.AcsTeamsIdentityError):

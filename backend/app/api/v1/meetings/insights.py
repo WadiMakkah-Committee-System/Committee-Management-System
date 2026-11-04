@@ -39,7 +39,8 @@ async def save_transcript_segments(
 ) -> TranscriptSegmentsSavedOut:
     """
     حفظ دفعة جمل مكتملة من الترجمة النصية الحية (جهاز رئيس اللجنة كل ثواني).
-    - Authorization: meetings.agenda.item.update. المكرر (نفس client_key) يُتجاهل.
+    - Authorization: own_speech=false ⇒ meetings.agenda.item.update (جهاز الرئيس، Teams)؛
+      own_speech=true ⇒ meetings.join والمتحدث = المرسل (Agora). المكرر (نفس client_key) يُتجاهل.
     """
     try:
         saved = await meeting_service.save_transcript_segments(
@@ -47,6 +48,7 @@ async def save_transcript_segments(
             actor=current_user,
             meeting_id=meeting_id,
             segments=[meeting_service.TranscriptSegmentIn(**s.model_dump()) for s in payload.segments],
+            own_speech=payload.own_speech,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc

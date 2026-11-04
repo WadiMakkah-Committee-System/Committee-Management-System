@@ -114,6 +114,9 @@ def fake_teams(monkeypatch: pytest.MonkeyPatch) -> FakeTeams:
     monkeypatch.setattr(settings, "TEAMS_CLIENT_ID", "client")
     monkeypatch.setattr(settings, "TEAMS_CLIENT_SECRET", "secret")
     monkeypatch.setattr(settings, "TEAMS_ORGANIZER_EMAIL", "meetings@example.com")
+    # الاجتماعات الجديدة بـAgora افتراضيًا (قرار لاما 2026-11-04) — اختبارات Teams
+    # تشغّل وضع Teams صراحة (نفس ما يسويه MEETING_PROVIDER=teams بـRender).
+    monkeypatch.setattr(settings, "MEETING_PROVIDER", "teams")
     for name in (
         "get_user_id",
         "get_organizer_id",
@@ -649,6 +652,9 @@ def _mock_graph(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]
     monkeypatch.setattr(settings, "TEAMS_CLIENT_ID", "client")
     monkeypatch.setattr(settings, "TEAMS_CLIENT_SECRET", "secret")
     monkeypatch.setattr(settings, "TEAMS_ORGANIZER_EMAIL", "meetings@example.com")
+    # الاجتماعات الجديدة بـAgora افتراضيًا (قرار لاما 2026-11-04) — اختبارات Teams
+    # تشغّل وضع Teams صراحة (نفس ما يسويه MEETING_PROVIDER=teams بـRender).
+    monkeypatch.setattr(settings, "MEETING_PROVIDER", "teams")
     monkeypatch.setattr(teams_client, "_token_cache", {"token": None, "expires_at": 0.0})
     monkeypatch.setattr(teams_client, "_user_id_cache", {})
     monkeypatch.setattr(

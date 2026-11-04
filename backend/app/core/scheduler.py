@@ -112,6 +112,39 @@ async def _scheduler_loop() -> None:
         await asyncio.sleep(_CHECK_INTERVAL_SECONDS)
 
 
+# التسجيل على دفعات (migration 0045 — قرار لاما 2026-11-04): كل دقيقة نفحص
+# جلسات التسجيل "اليتيمة" (صفحة الرئيس انقفلت/انقطع النت بدون إيقاف) وندمجها
+# تلقائيًا — فما يضيع شي سُجّل. حلقة مستقلة لأن فاصلها دقيقة (مو ساعة).
+_RECORDING_CHECK_INTERVAL_SECONDS = 60
+
+
+async def _finalize_stale_recordings() -> None:
+    from app.core.socketio_server import sio
+    from app.services.meeting_service import finalize_stale_recording_sessions
+
+    async with AsyncSessionLocal() as db:
+        closed = await finalize_stale_recording_sessions(db)
+    for meeting_id in closed:
+        await sio.emit("recording.state", {"active": False}, room=f"meeting:{meeting_id}")
+
+
+async def _recordings_loop() -> None:
+    while True:
+        await asyncio.sleep(_RECORDING_CHECK_INTERVAL_SECONDS)
+        try:
+            await _finalize_stale_recordings()
+        except Exception:  # noqa: BLE001 — فشل دورة لا يوقف الحلقة
+            logger.exception("فشل فحص جلسات التسجيل اليتيمة")
+
+
+_background_loops: set[asyncio.Task] = set()
+
+
 def start_scheduler() -> asyncio.Task:
-    """يُستدعى مرة واحدة عند إقلاع التطبيق (app/main.py) — راجعي lifespan هناك."""
-    return asyncio.create_task(_scheduler_loop())
+    """يُستدعى مرة واحدة عند إقلاع التطبيق (app/main.py) — راجعي lifespan هناك.
+    يشغّل حلقة التسجيلات بجانبها (مرجع قوي بـ_background_loops)، ويُلغيها مع إلغاء الرئيسية."""
+    recordings_task = asyncio.create_task(_recordings_loop())
+    _background_loops.add(recordings_task)
+    main_task = asyncio.create_task(_scheduler_loop())
+    main_task.add_done_callback(lambda _t: recordings_task.cancel())
+    return main_task

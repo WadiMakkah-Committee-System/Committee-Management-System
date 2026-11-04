@@ -1065,8 +1065,9 @@ export function MeetingDetailPage() {
       </Card>
 
       {/* الحضور التلقائي (migration 0043) — لاجتماعات Teams المدمجة فقط. */}
-      {isTeamsMeeting && meetingId && <MeetingAttendanceCard meetingId={meetingId} />}
-      {isTeamsMeeting && meetingId && <MeetingInsightsCard meetingId={meetingId} />}
+      {/* Agora (2026-11-04): الحضور والإحصائيات لكل اجتماع عن بعد (Agora أو Teams). */}
+      {meeting?.mode === 'remote' && meetingId && <MeetingAttendanceCard meetingId={meetingId} />}
+      {meeting?.mode === 'remote' && meetingId && <MeetingInsightsCard meetingId={meetingId} />}
 
       {meetingEnded && (
         <Card id="recording-section" className="scroll-mt-4 p-0">

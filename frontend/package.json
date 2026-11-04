@@ -17,6 +17,7 @@
     "@hookform/resolvers": "^5.9.1",
     "@tanstack/react-query": "^5.101.4",
     "@types/react-signature-canvas": "^1.0.7",
+    "agora-rtc-sdk-ng": "^4.24.9",
     "axios": "^1.19.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",

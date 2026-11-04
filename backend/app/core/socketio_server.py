@@ -97,6 +97,7 @@ async def _room_state(meeting_id: str) -> dict[str, Any]:
     hands: list[dict[str, Any]] = []
     discussing: dict[str, Any] | None = None
     captions: dict[str, Any] | None = None
+    recording: dict[str, Any] | None = None
     try:
         raw_hands = await redis_client.hgetall(_hands_key(meeting_id))
         for user_id, value in raw_hands.items():
@@ -109,9 +110,13 @@ async def _room_state(meeting_id: str) -> dict[str, Any]:
         raw_captions = await redis_client.get(_captions_key(meeting_id))
         if raw_captions:
             captions = json.loads(raw_captions)
+        # مؤشر "جاري التسجيل" (Agora — قرار لاما 2026-11-04): للي يدخل والتسجيل شغّال.
+        raw_recording = await redis_client.get(f"meeting:{meeting_id}:recording")
+        if raw_recording:
+            recording = json.loads(raw_recording)
     except Exception:  # noqa: BLE001 — حالة مساعدة فقط، ما توقف الاتصال
         logger.warning("room.state: تعذّر قراءة حالة الغرفة من Redis (meeting=%s)", meeting_id, exc_info=True)
-    return {"hands": hands, "discussing": discussing, "captions": captions}
+    return {"hands": hands, "discussing": discussing, "captions": captions, "recording": recording}
 
 
 async def _user_has_other_connection(meeting_id: str, user_id: str, exclude_sid: str) -> bool:
@@ -525,6 +530,76 @@ async def captions_set(sid: str, data: dict[str, Any] | None) -> dict[str, Any]:
         logger.warning("captions.set: تعذّر حفظ الحالة بـRedis", exc_info=True)
     await sio.emit("captions.state", state, room=_room(meeting_id))
     return {"ok": True}
+
+
+_CAPTION_LINE_MAX_CHARS = 500
+
+
+@sio.on("captions.line")
+async def captions_line(sid: str, data: dict[str, Any] | None) -> None:
+    """
+    الهدف (Agora — قرار لاما 2026-11-04، التعرف على الكلام المجاني بالمتصفح):
+    كل عضو يحوّل كلامه هو لنص بمتصفحه ويبث السطر هنا ⇒ يظهر تحت الفيديو عند الكل.
+    - الهوية من جلسة السوكِت (المسجّل دخوله) — مو من البيانات، فما أحد يتكلم باسم غيره.
+    - الحفظ الدائم (للمسودة و"وش فاتني؟") بمسار منفصل: POST transcript/segments (own_speech).
+    - بلا حفظ هنا: أسطر جزئية كثيرة تتغير وهو يتكلم — بث لحظي فقط.
+    """
+    resolved = await _session_user_and_room(sid)
+    if resolved is None:
+        return
+    user, meeting_id = resolved
+    payload = data or {}
+    text = str(payload.get("text") or "").strip()[:_CAPTION_LINE_MAX_CHARS]
+    key = str(payload.get("key") or "")[:100]
+    if not text or not key:
+        return
+    await sio.emit(
+        "captions.line",
+        {
+            "user_id": str(user.user_id),
+            "full_name": user.full_name,
+            "text": text,
+            "final": bool(payload.get("final")),
+            "key": key,
+            "at": _now_iso(),
+        },
+        room=_room(meeting_id),
+        skip_sid=sid,
+    )
+
+
+_REACTION_TYPES = {"like", "heart", "laugh", "surprised", "applause"}
+
+
+@sio.on("room.signal")
+async def room_signal(sid: str, data: dict[str, Any] | None) -> None:
+    """
+    الهدف (Agora — قرار لاما 2026-11-04): إشارات لحظية خفيفة بين الحضور كانت
+    توفّرها Teams سابقًا:
+    - reaction: تفاعل (👍 ❤️ 😂 😮 👏) يطير فوق فيديو صاحبه.
+    - screen: بدأ/أوقف مشاركة الشاشة (الكل يعرض الشاشة كبيرة تلقائيًا).
+    الهوية من جلسة السوكِت، والقيم من قائمة مسموحة فقط. بث لحظي بلا حفظ.
+    """
+    resolved = await _session_user_and_room(sid)
+    if resolved is None:
+        return
+    user, meeting_id = resolved
+    payload = data or {}
+    signal_type = str(payload.get("type") or "")
+    if signal_type == "reaction":
+        value: Any = str(payload.get("value") or "")
+        if value not in _REACTION_TYPES:
+            return
+    elif signal_type == "screen":
+        value = bool(payload.get("value"))
+    else:
+        return
+    await sio.emit(
+        "room.signal",
+        {"user_id": str(user.user_id), "full_name": user.full_name, "type": signal_type, "value": value},
+        room=_room(meeting_id),
+        skip_sid=sid,
+    )
 
 
 @sio.on("minutes.editing")

@@ -81,6 +81,54 @@ export interface LiveActivityEvent {
   at: string
 }
 
+/** حالة التسجيل المبثوثة (مؤشر "جاري التسجيل" — Agora، قرار لاما 2026-11-04). */
+export interface LiveRecordingState {
+  active: boolean
+  sessionId: string | null
+  startedBy: string | null
+  startedByName: string | null
+  startedAt: string | null
+}
+
+/** سطر ترجمة نصية من عضو ثاني (كلامه هو، من متصفحه) — آخر سطر لكل متحدث. */
+export interface RemoteCaptionLine {
+  id: string
+  userId: string
+  speakerName: string
+  text: string
+  final: boolean
+  at: number
+}
+
+/** نوع التفاعل (👍 ❤️ 😂 😮 👏). */
+export type ReactionType = 'like' | 'heart' | 'laugh' | 'surprised' | 'applause'
+
+/** تفاعل ظاهر مؤقتًا فوق فيديو صاحبه (userId). */
+export interface LiveReaction {
+  id: string
+  userId: string
+  type: ReactionType
+}
+
+const REACTION_VISIBLE_MS = 4000
+const CAPTION_LINE_TTL_MS = 8000
+
+function toRecordingState(payload: {
+  active?: boolean
+  session_id?: string | null
+  started_by?: string | null
+  started_by_name?: string | null
+  started_at?: string | null
+} | null | undefined): LiveRecordingState {
+  return {
+    active: Boolean(payload?.active),
+    sessionId: payload?.session_id ?? null,
+    startedBy: payload?.started_by ?? null,
+    startedByName: payload?.started_by_name ?? null,
+    startedAt: payload?.started_at ?? null,
+  }
+}
+
 export function useMeetingRealtime(meetingId: string | undefined) {
   const [status, setStatus] = useState<MeetingConnectionStatus>('connecting')
   const [liveMessages, setLiveMessages] = useState<MeetingChatMessage[]>([])
@@ -95,6 +143,11 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   const [floorGiven, setFloorGiven] = useState<{ userId: string; fullName: string; at: number } | null>(null)
   const [activityEvents, setActivityEvents] = useState<LiveActivityEvent[]>([])
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
+  // Agora (قرار لاما 2026-11-04): التسجيل، الترجمة النصية من أجهزة الأعضاء، والتفاعلات/مشاركة الشاشة.
+  const [recordingState, setRecordingState] = useState<LiveRecordingState>(() => toRecordingState(null))
+  const [remoteCaptions, setRemoteCaptions] = useState<RemoteCaptionLine[]>([])
+  const [reactions, setReactions] = useState<LiveReaction[]>([])
+  const [screenSharerIds, setScreenSharerIds] = useState<Set<string>>(new Set())
 
   const socketRef = useRef<Socket | null>(null)
   const queryClient = useQueryClient()
@@ -143,8 +196,10 @@ export function useMeetingRealtime(meetingId: string | undefined) {
         hands: { user_id: string; full_name: string; raised_at: string | null }[]
         discussing: DiscussingPayload | null
         captions?: { enabled: boolean; language: string } | null
+        recording?: Parameters<typeof toRecordingState>[0]
       }) => {
         setCaptionsState(payload.captions ?? { enabled: false, language: 'ar-sa' })
+        setRecordingState(toRecordingState(payload.recording))
         setRaisedHands(
           sortHands(
             payload.hands.map((h) => ({ userId: h.user_id, fullName: h.full_name, raisedAt: h.raised_at ?? '' })),
@@ -170,6 +225,59 @@ export function useMeetingRealtime(meetingId: string | undefined) {
       setCaptionsState(payload)
       pushActivity(payload.enabled ? 'شُغّلت الترجمة النصية' : 'أُوقفت الترجمة النصية')
     })
+
+    socket.on('recording.state', (payload: Parameters<typeof toRecordingState>[0]) => {
+      const next = toRecordingState(payload)
+      setRecordingState(next)
+      pushActivity(next.active ? `بدأ التسجيل${next.startedByName ? ` — ${next.startedByName}` : ''}` : 'توقف التسجيل')
+    })
+
+    // سطر ترجمة نصية من عضو ثاني: نحدّث آخر سطر له (الجملة اللي لسا تنقال
+    // تتبدل وهو يتكلم)، ونشيل الأسطر القديمة بعد ثواني.
+    socket.on(
+      'captions.line',
+      (payload: { user_id: string; full_name: string; text: string; final: boolean; key: string }) => {
+        const now = Date.now()
+        setRemoteCaptions((prev) => {
+          const id = `${payload.user_id}:${payload.key}`
+          const fresh = prev.filter((l) => l.id !== id && now - l.at < CAPTION_LINE_TTL_MS)
+          return [
+            ...fresh,
+            {
+              id,
+              userId: payload.user_id,
+              speakerName: payload.full_name,
+              text: payload.text,
+              final: payload.final,
+              at: now,
+            },
+          ].slice(-6)
+        })
+      },
+    )
+
+    socket.on(
+      'room.signal',
+      (payload: { user_id: string; full_name: string; type: string; value: unknown }) => {
+        if (payload.type === 'reaction') {
+          const reaction: LiveReaction = {
+            id: `${Date.now()}-${Math.random()}`,
+            userId: payload.user_id,
+            type: payload.value as ReactionType,
+          }
+          setReactions((prev) => [...prev, reaction])
+          setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== reaction.id)), REACTION_VISIBLE_MS)
+        } else if (payload.type === 'screen') {
+          setScreenSharerIds((prev) => {
+            const next = new Set(prev)
+            if (payload.value) next.add(payload.user_id)
+            else next.delete(payload.user_id)
+            return next
+          })
+          if (payload.value) pushActivity(`${payload.full_name} بدأ مشاركة الشاشة`)
+        }
+      },
+    )
 
     socket.on('floor.given', (payload: { user_id: string; full_name: string }) => {
       setFloorGiven({ userId: payload.user_id, fullName: payload.full_name, at: Date.now() })
@@ -232,6 +340,12 @@ export function useMeetingRealtime(meetingId: string | undefined) {
         return next
       })
       setRaisedHands((prev) => prev.filter((h) => h.userId !== payload.user_id))
+      setScreenSharerIds((prev) => {
+        if (!prev.has(payload.user_id)) return prev
+        const next = new Set(prev)
+        next.delete(payload.user_id)
+        return next
+      })
     })
 
     return () => {
@@ -395,7 +509,36 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     [],
   )
 
+  /** بث سطر من كلامي (الترجمة النصية من متصفحي) — الهوية يحددها الخادم. */
+  const sendCaptionLine = useCallback((key: string, text: string, final: boolean) => {
+    socketRef.current?.emit('captions.line', { key, text, final })
+  }, [])
+
+  /** تفاعل يطير فوق فيديو صاحبه عند الكل (ويظهر عندي فورًا). */
+  const sendReaction = useCallback((type: ReactionType, selfUserId: string) => {
+    socketRef.current?.emit('room.signal', { type: 'reaction', value: type })
+    const reaction: LiveReaction = { id: `${Date.now()}-${Math.random()}`, userId: selfUserId, type }
+    setReactions((prev) => [...prev, reaction])
+    setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== reaction.id)), REACTION_VISIBLE_MS)
+  }, [])
+
+  /** أبلّغ الكل إني بدأت/أوقفت مشاركة الشاشة (يعرضونها كبيرة تلقائيًا). */
+  const announceScreenShare = useCallback((sharing: boolean) => {
+    socketRef.current?.emit('room.signal', { type: 'screen', value: sharing })
+  }, [])
+
+  /** تحديث محلي فوري لحالة التسجيل (بعد بدء/إيقاف من جهازي) قبل وصول البث. */
+  const applyRecordingState = useCallback((state: LiveRecordingState) => setRecordingState(state), [])
+
   return {
+    recordingState,
+    applyRecordingState,
+    remoteCaptions,
+    sendCaptionLine,
+    reactions,
+    sendReaction,
+    screenSharerIds,
+    announceScreenShare,
     status,
     liveMessages,
     raisedHands,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Reaction } from '@azure/communication-calling'
+import type { ReactionType as Reaction } from '@/hooks/useMeetingRealtime'
 import { SmilePlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { REACTION_EMOJI } from './reactions'
