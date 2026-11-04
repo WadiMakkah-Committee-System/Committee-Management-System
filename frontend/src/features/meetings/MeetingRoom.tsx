@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Captions, CaptionsOff, Loader2, Settings2, TimerOff } from 'lucide-react'
+import { Captions, CaptionsOff, Circle, Loader2, Settings2, Square, TimerOff } from 'lucide-react'
 import { useMeetingDetail } from '@/hooks/useMeetings'
 import { useCommittees } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
@@ -11,7 +11,10 @@ import { useToast } from '@/components/ui/Toast'
 import { MeetingRoomAppRail } from './room/MeetingRoomAppRail'
 import { MeetingRoomSidebar, type RoomPanelKey } from './room/MeetingRoomSidebar'
 import { MeetingRoomHeader } from './room/MeetingRoomHeader'
-import { TeamsMeetingStage } from './room/TeamsMeetingStage'
+import { AgoraMeetingStage } from './room/AgoraMeetingStage'
+import { useAgoraCall } from './room/useAgoraCall'
+import { useMeetingRecorder } from './room/useMeetingRecorder'
+import { useSpeechCaptions, type OwnFinalCaption } from './room/useSpeechCaptions'
 import { EmbeddedTeamsStage } from './room/EmbeddedTeamsStage'
 import { useTeamsEmbeddedCall } from './room/useTeamsEmbeddedCall'
 import { MeetingControls } from './room/MeetingControls'
@@ -32,7 +35,7 @@ import { useMeetingAttendance } from './room/useMeetingAttendance'
 import { CaptionsOverlay } from './room/CaptionsOverlay'
 import { CatchUpButton } from './room/CatchUpButton'
 import { saveTranscriptSegments } from '@/api/meetings'
-import type { FinalCaption } from './room/useTeamsEmbeddedCall'
+import type { CaptionLine, FinalCaption } from './room/useTeamsEmbeddedCall'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
 
@@ -46,7 +49,13 @@ const MEETING_STATUS_POLL_MS = 20_000
 const AUTO_LEAVE_GRACE_MS = 6_000
 
 /**
- * غرفة الاجتماع — مساحة إدارة الجلسة بجانب Microsoft Teams (تحديث 2026-11-02:
+ * تحديث 2026-11-04 (قرار لاما — الرجوع لـAgora مع حفظ Teams):
+ * - اجتماع عن بعد غير مربوط بـTeams ⇒ فيديو/صوت Agora داخل الغرفة (AgoraMeetingStage +
+ *   useAgoraCall)، تسجيل صوت كل الأعضاء بزر الرئيس (useMeetingRecorder)، وترجمة نصية
+ *   مجانية من متصفح كل عضو (useSpeechCaptions). التفاعلات ومشاركة الشاشة عبر القناة اللحظية.
+ * - اجتماع Teams قديم ⇒ نفس مساره السابق (EmbeddedTeamsStage) بدون أي تغيير.
+ *
+ * (السابق) غرفة الاجتماع — مساحة إدارة الجلسة بجانب Microsoft Teams (تحديث 2026-11-02:
  * أُزيل فيديو Agora بالكامل بقرار لاما، والصوت/الفيديو/التسجيل داخل تيمز).
  * التصميم نفسه (تعديل 2026-09-06 لمطابقة الواجهة المرجعية) باقٍ كما هو:
  * شريط عام داكن (MeetingRoomAppRail.tsx)، ولوحة ديناميكية بيضاء (340px)
@@ -92,6 +101,33 @@ export function MeetingRoom({
       if (isCaptionsSaverRef.current) captionBufferRef.current.push({ ...c, agendaItemId: discussingIdRef.current })
     },
   })
+
+  // ============================== Agora (قرار لاما 2026-11-04) ==============================
+  // الاجتماعات عن بعد غير المربوطة بـTeams تفتح بـAgora داخل المنصة. اجتماعات Teams
+  // القديمة تبقى على مسارها أعلاه (embeddedCall) — الاثنين محفوظين.
+  const meetingForNames = meetingQuery.data
+  const namesById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const p of meetingForNames?.participants ?? []) map.set(p.user_id, `${p.first_name} ${p.last_name}`)
+    return map
+  }, [meetingForNames?.participants])
+  const namesRef = useRef(namesById)
+  namesRef.current = namesById
+  const agoraCall = useAgoraCall(meetingId, { nameOf: (id) => namesRef.current.get(id) ?? 'مشارك' })
+  const recorder = useMeetingRecorder(meetingId, {
+    getAudioSources: agoraCall.getAudioSources,
+    audioVersion: agoraCall.audioVersion,
+    onStateChange: (state) =>
+      realtime.applyRecordingState({
+        active: state.active,
+        sessionId: state.session_id,
+        startedBy: state.started_by,
+        startedByName: state.started_by_name,
+        startedAt: state.started_at,
+      }),
+  })
+  // الترجمة النصية المجانية (Web Speech): كل عضو يحوّل كلامه هو ويحفظه (own_speech).
+  const ownCaptionBufferRef = useRef<(OwnFinalCaption & { agendaItemId: string | null })[]>([])
 
   const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
@@ -143,13 +179,18 @@ export function MeetingRoom({
   // المستخدم من تيمز نفسه (لا يوجد اتصال وسائط بالمتصفح لإنهائه بعد Agora).
   async function handleConfirmLeave() {
     setConfirmLeaveOpen(false)
+    // التسجيل شغّال ⇒ نوقفه ونرفع آخر قطعة قبل الخروج (ما يضيع شي).
+    if (recorder.status === 'recording') await recorder.stop()
     await embeddedCall.leave()
+    await agoraCall.leave()
     onClose()
   }
 
   const meeting = meetingQuery.data
+  const isAgoraMeeting = Boolean(meeting && meeting.mode === 'remote' && !meeting.has_teams_meeting)
+  const connected = isAgoraMeeting ? agoraCall.phase === 'connected' : embeddedCall.phase === 'connected'
   // الحضور التلقائي: جلسة لحظة الدخول الفعلي للاجتماع + نبضات + خروج.
-  useMeetingAttendance(meetingId, embeddedCall.phase === 'connected')
+  useMeetingAttendance(meetingId, connected)
 
   // الترجمة النصية (قرار لاما 2026-11-03): رئيس اللجنة يشغّلها للكل عبر القناة
   // اللحظية ⇒ كل جهاز داخل الاجتماع يشغّلها عنده. كل عضو يقدر يخفي العرض عنده.
@@ -160,9 +201,54 @@ export function MeetingRoom({
     if (!captionsWanted && (embeddedCall.captionsActive || embeddedCall.captionsError)) void embeddedCall.stopCaptions()
   }, [captionsWanted, realtime.captionsState.language, embeddedCall])
 
+  // Agora: كل جهاز يتعرف على كلام صاحبه فقط (وما يسمع وهو كاتم)، ويبثه ويحفظه.
+  const speech = useSpeechCaptions({
+    enabled: isAgoraMeeting && realtime.captionsState.enabled && agoraCall.phase === 'connected',
+    muted: agoraCall.micMuted,
+    language: realtime.captionsState.language,
+    onLine: realtime.sendCaptionLine,
+    onFinal: (c) => ownCaptionBufferRef.current.push({ ...c, agendaItemId: discussingIdRef.current }),
+  })
+  const agoraCaptionLines = useMemo<CaptionLine[]>(() => {
+    const lines: CaptionLine[] = realtime.remoteCaptions.map((l) => ({
+      id: l.id,
+      speakerName: l.speakerName,
+      text: l.text,
+      final: l.final,
+    }))
+    if (speech.ownLine) {
+      lines.push({ id: `me:${speech.ownLine.key}`, speakerName: 'أنت', text: speech.ownLine.text, final: speech.ownLine.final })
+    }
+    return lines
+  }, [realtime.remoteCaptions, speech.ownLine])
+
   useEffect(() => {
     discussingIdRef.current = realtime.discussingAgendaItem?.id ?? null
   }, [realtime.discussingAgendaItem])
+
+  // Agora: جملي المكتملة تنحفظ كل 5 ثواني (الخادم يحدد المتحدث = أنا).
+  useEffect(() => {
+    const id = setInterval(() => {
+      const batch = ownCaptionBufferRef.current.splice(0, 200)
+      if (batch.length === 0) return
+      saveTranscriptSegments(
+        meetingId,
+        batch.map((c) => ({
+          client_key: c.clientKey,
+          speaker_raw_id: null,
+          speaker_name: '',
+          text: c.text,
+          spoken_at: c.spokenAt,
+          language: c.language,
+          agenda_item_id: c.agendaItemId,
+        })),
+        true,
+      ).catch(() => {
+        ownCaptionBufferRef.current.unshift(...batch)
+      })
+    }, 5000)
+    return () => clearInterval(id)
+  }, [meetingId])
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -201,19 +287,41 @@ export function MeetingRoom({
   const [deviceSettingsOpen, setDeviceSettingsOpen] = useState(false)
   const autoStartedRef = useRef(false)
   useEffect(() => {
-    if (!meeting?.has_teams_meeting || autoStartedRef.current || needsDeviceCheck) return
+    if (!meeting || autoStartedRef.current || needsDeviceCheck) return
+    if (!meeting.has_teams_meeting && !isAgoraMeeting) return
     if (meeting.status === 'finished' || meeting.status === 'recorded') return
     autoStartedRef.current = true
-    void embeddedCall.start(false)
-  }, [meeting?.has_teams_meeting, meeting?.status, embeddedCall, needsDeviceCheck])
+    if (isAgoraMeeting) void agoraCall.start()
+    else void embeddedCall.start(false)
+  }, [meeting, isAgoraMeeting, embeddedCall, agoraCall, needsDeviceCheck])
 
   /** حفظ إعدادات الأجهزة أثناء الاجتماع ⇒ تبديل الأجهزة + الكاميرا/المايك حسب الاختيار. */
   async function applyDeviceSettings(prefs: DevicePrefs) {
     setDeviceSettingsOpen(false)
-    await embeddedCall.switchDevices(prefs)
-    if (prefs.micOn === embeddedCall.micMuted) await embeddedCall.toggleMic()
-    if (prefs.cameraOn !== embeddedCall.cameraOn) await embeddedCall.toggleCamera()
+    const active = isAgoraMeeting ? agoraCall : embeddedCall
+    await active.switchDevices(prefs)
+    if (prefs.micOn === active.micMuted) await active.toggleMic()
+    if (prefs.cameraOn !== active.cameraOn) await active.toggleCamera()
   }
+
+  /** مشاركة الشاشة (Agora): نبلّغ الكل عشان يعرضونها كبيرة تلقائيًا. */
+  async function handleAgoraScreenShare() {
+    const sharing = await agoraCall.toggleScreenShare()
+    if (sharing !== null) realtime.announceScreenShare(sharing)
+  }
+
+  /** زر التسجيل (رئيس اللجنة): بدء/إيقاف — صوت كل الأعضاء. */
+  async function handleToggleRecording() {
+    if (recorder.status === 'recording') {
+      await recorder.stop()
+      showToast('توقف التسجيل — انحفظ للمسودة', 'success')
+    } else if (recorder.status === 'idle') {
+      await recorder.start()
+    }
+  }
+  useEffect(() => {
+    if (recorder.error) showToast(recorder.error, 'error')
+  }, [recorder.error, showToast])
 
   // طابور المتحدثين: تنبيه لما الرئيس يعطي أحد الكلمة.
   const floorGiven = realtime.floorGiven
@@ -348,7 +456,7 @@ export function MeetingRoom({
           <Loader2 size={28} className="animate-spin" />
           <p className="text-sm">جاري تحميل بيانات الاجتماع...</p>
         </div>
-      ) : needsDeviceCheck && meeting.has_teams_meeting ? (
+      ) : needsDeviceCheck && (meeting.has_teams_meeting || isAgoraMeeting) ? (
         <DeviceCheck mode="prejoin" onDone={() => setNeedsDeviceCheck(false)} />
       ) : showGuestGate ? (
         <GuestWaitingScreen meeting={meeting} call={embeddedCall} onLeave={() => setConfirmLeaveOpen(true)} />
@@ -453,7 +561,14 @@ export function MeetingRoom({
                   canRecord={canRecord}
                 />
               ) : (
-                <TeamsMeetingStage meeting={meeting} canRecord={canRecord} />
+                <AgoraMeetingStage
+                  call={agoraCall}
+                  localName={currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'أنت'}
+                  selfUserId={currentUser?.user_id ?? ''}
+                  reactions={realtime.reactions}
+                  screenSharerIds={realtime.screenSharerIds}
+                  recordingState={realtime.recordingState}
+                />
               )}
 
               {embeddedCall.captionsActive && !captionsHidden && (
@@ -461,6 +576,9 @@ export function MeetingRoom({
               )}
               {realtime.captionsState.enabled && embeddedCall.captionsError && (
                 <CaptionsOverlay lines={[]} error={embeddedCall.captionsError} />
+              )}
+              {isAgoraMeeting && realtime.captionsState.enabled && !captionsHidden && (
+                <CaptionsOverlay lines={agoraCaptionLines} error={speech.error} />
               )}
 
               {currentUser && (
@@ -473,9 +591,46 @@ export function MeetingRoom({
 
               <MeetingControls
                 extra={
-                  embeddedCall.phase === 'connected' ? (
+                  connected ? (
                     <>
-                      <ReactionsButton onReact={(type) => void embeddedCall.sendReaction(type)} />
+                      {isAgoraMeeting && canRecord && (
+                        <button
+                          type="button"
+                          onClick={() => void handleToggleRecording()}
+                          disabled={recorder.status === 'starting' || recorder.status === 'stopping'}
+                          aria-label={recorder.status === 'recording' ? 'إيقاف التسجيل' : 'تسجيل صوت الاجتماع'}
+                          title={
+                            recorder.status === 'recording'
+                              ? 'إيقاف التسجيل (يُحفظ للمسودة)'
+                              : 'تسجيل صوت كل الأعضاء'
+                          }
+                          className={
+                            recorder.status === 'recording'
+                              ? 'flex h-11 items-center gap-1.5 rounded-full bg-danger px-4 text-[12px] font-semibold text-white transition-all hover:brightness-110 active:scale-95'
+                              : 'flex h-11 items-center gap-1.5 rounded-full bg-white/10 px-4 text-[12px] font-semibold text-white transition-all hover:bg-white/20 active:scale-95 disabled:opacity-50'
+                          }
+                        >
+                          {recorder.status === 'recording' ? (
+                            <Square size={14} className="fill-white" />
+                          ) : recorder.status === 'idle' ? (
+                            <Circle size={14} className="fill-danger text-danger" />
+                          ) : (
+                            <Loader2 size={14} className="animate-spin" />
+                          )}
+                          {recorder.status === 'recording'
+                            ? 'إيقاف التسجيل'
+                            : recorder.status === 'stopping'
+                              ? 'جاري الحفظ...'
+                              : 'تسجيل'}
+                        </button>
+                      )}
+                      <ReactionsButton
+                        onReact={(type) =>
+                          isAgoraMeeting
+                            ? realtime.sendReaction(type, currentUser?.user_id ?? '')
+                            : void embeddedCall.sendReaction(type)
+                        }
+                      />
                       <button
                         type="button"
                         onClick={() =>
@@ -519,7 +674,16 @@ export function MeetingRoom({
                 onToggleHand={() => (iRaisedHand ? realtime.lowerHand() : realtime.raiseHand())}
                 onLeave={() => setConfirmLeaveOpen(true)}
                 media={
-                  embeddedCall.phase === 'connected'
+                  isAgoraMeeting && agoraCall.phase === 'connected'
+                    ? {
+                        micMuted: agoraCall.micMuted,
+                        cameraOn: agoraCall.cameraOn,
+                        screenSharing: agoraCall.screenSharing,
+                        onToggleMic: () => void agoraCall.toggleMic(),
+                        onToggleCamera: () => void agoraCall.toggleCamera(),
+                        onToggleScreenShare: () => void handleAgoraScreenShare(),
+                      }
+                    : embeddedCall.phase === 'connected'
                     ? {
                         micMuted: embeddedCall.micMuted,
                         cameraOn: embeddedCall.cameraOn,

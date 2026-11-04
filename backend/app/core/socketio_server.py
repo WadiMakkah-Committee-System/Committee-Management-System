@@ -568,6 +568,40 @@ async def captions_line(sid: str, data: dict[str, Any] | None) -> None:
     )
 
 
+_REACTION_TYPES = {"like", "heart", "laugh", "surprised", "applause"}
+
+
+@sio.on("room.signal")
+async def room_signal(sid: str, data: dict[str, Any] | None) -> None:
+    """
+    الهدف (Agora — قرار لاما 2026-11-04): إشارات لحظية خفيفة بين الحضور كانت
+    توفّرها Teams سابقًا:
+    - reaction: تفاعل (👍 ❤️ 😂 😮 👏) يطير فوق فيديو صاحبه.
+    - screen: بدأ/أوقف مشاركة الشاشة (الكل يعرض الشاشة كبيرة تلقائيًا).
+    الهوية من جلسة السوكِت، والقيم من قائمة مسموحة فقط. بث لحظي بلا حفظ.
+    """
+    resolved = await _session_user_and_room(sid)
+    if resolved is None:
+        return
+    user, meeting_id = resolved
+    payload = data or {}
+    signal_type = str(payload.get("type") or "")
+    if signal_type == "reaction":
+        value: Any = str(payload.get("value") or "")
+        if value not in _REACTION_TYPES:
+            return
+    elif signal_type == "screen":
+        value = bool(payload.get("value"))
+    else:
+        return
+    await sio.emit(
+        "room.signal",
+        {"user_id": str(user.user_id), "full_name": user.full_name, "type": signal_type, "value": value},
+        room=_room(meeting_id),
+        skip_sid=sid,
+    )
+
+
 @sio.on("minutes.editing")
 async def minutes_editing(sid: str, data: dict[str, Any] | None) -> None:
     """حدث عابر بحت (لا يُحفَظ) — راجعي تعليق meeting_live_socket القديم."""
