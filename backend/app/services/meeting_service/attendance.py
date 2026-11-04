@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.meeting import MeetingMode
 from app.models.meeting_attendance import MeetingAttendance
 from app.models.user import User
 from app.services.meeting_service.access import _require_access
@@ -47,8 +48,11 @@ async def start_session(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID)
     await _require_access(
         db, actor, meeting.committee, "meetings.join", "ليست لديك صلاحية الانضمام لهذا الاجتماع"
     )
-    if meeting.teams_meeting_id is None:
-        raise MeetingInvalidStateError("الحضور التلقائي لاجتماعات Teams فقط")
+    # إصلاح 2026-11-04 (بلاغ لاما — نسبة الحضور طلعت 0 وهي ولجين حضروا اجتماع Agora):
+    # كان الشرط "Teams فقط" من قبل الرجوع لـAgora، فكل طلبات الحضور كانت ترجع 409.
+    # الحين أي اجتماع عن بعد (Agora أو Teams). الحضوري ما له غرفة اتصال.
+    if meeting.mode != MeetingMode.remote:
+        raise MeetingInvalidStateError("الحضور التلقائي للاجتماعات عن بعد فقط")
     await db.execute(
         update(MeetingAttendance)
         .where(

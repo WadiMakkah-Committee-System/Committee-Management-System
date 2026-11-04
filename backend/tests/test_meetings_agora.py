@@ -266,3 +266,46 @@ async def test_member_saves_own_speech_and_speaker_is_enforced(
     # بدون own_speech يبقى المسار القديم لرئيس اللجنة فقط (Teams).
     payload["own_speech"] = False
     assert (await client.post(url, json=payload, headers=ctx["member_headers"])).status_code == 403
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="ffmpeg غير موجود")
+async def test_finalized_recording_gets_real_duration(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user: User
+) -> None:
+    """بلاغ لاما 2026-11-04: ملف MediaRecorder بدون مدة ⇒ المشغّل يعرضه قصير.
+    نولّد ملف WebM بدون مدة (نفس حالة المتصفح)، نرفعه على قطعتين، ونتأكد إن الملف
+    النهائي صار فيه مدة صحيحة (~6 ثواني)."""
+    import subprocess
+
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
+         "-c:a", "libopus", "-b:a", "32k", "-f", "webm", "pipe:1"],
+        check=True, capture_output=True,
+    ).stdout
+    ctx = await _setup(client, auth_headers, roles_by_name)
+    session_id = (await _start(client, ctx)).json()["session_id"]
+    half = len(raw) // 2
+    await _chunk(client, ctx, session_id, 0, raw[:half])
+    await _chunk(client, ctx, session_id, 1, raw[half:])
+    stopped = await client.post(
+        f"/api/v1/meetings/{ctx['meeting_id']}/recording-sessions/{session_id}/stop", headers=ctx["chair_headers"]
+    )
+    assert stopped.json()["status"] == "finalized", stopped.text
+    final = (await client.get(f"/api/v1/meetings/{ctx['meeting_id']}/recording/download", headers=ctx["chair_headers"])).content
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", "-i", "pipe:0"],
+        input=final, capture_output=True, check=True,
+    )
+    assert 5.5 < float(probe.stdout.strip()) < 6.6
+
+
+async def test_attendance_is_recorded_for_agora_meetings(
+    client: AsyncClient, auth_headers, roles_by_name, super_admin_user: User
+) -> None:
+    """بلاغ لاما 2026-11-04: نسبة الحضور طلعت 0 باجتماع Agora (الحضور كان لـTeams فقط)."""
+    ctx = await _setup(client, auth_headers, roles_by_name)
+    started = await client.post(f"/api/v1/meetings/{ctx['meeting_id']}/attendance", headers=ctx["member_headers"])
+    assert started.status_code in (200, 201), started.text
+    rows = await client.get(f"/api/v1/meetings/{ctx['meeting_id']}/attendance", headers=ctx["chair_headers"])
+    assert rows.status_code == 200, rows.text
+    assert any(r["user"]["user_id"] == ctx["member_id"] for r in rows.json())

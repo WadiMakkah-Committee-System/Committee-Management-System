@@ -1,4 +1,4 @@
-import { BarChart3, Clock, MessageSquareText, Users } from 'lucide-react'
+import { BarChart3, Clock, Users } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { useMeetingInsights } from '@/hooks/useMeetings'
 import { cn } from '@/lib/utils'
@@ -14,16 +14,15 @@ function duration(totalSeconds: number): string {
 
 /**
  * إحصائيات الاجتماع (قرار لاما 2026-11-03، البند 15): المدة، نسبة الحضور،
- * مدة كلام كل متحدث (تقديرية من الترجمة النصية)، ووقت كل بند مقابل مؤقته.
+ * ووقت كل بند مقابل مؤقته. (2026-11-04: شِلنا "مدة كلام كل عضو" بطلب لاما — مو مهمة.)
  * مصادرها: الحضور التلقائي + الترجمة النصية + فترات مناقشة البنود.
  */
 export function MeetingInsightsCard({ meetingId }: { meetingId: string }) {
   const { data, isLoading } = useMeetingInsights(meetingId)
   if (isLoading || !data) return null
-  const nothing = data.duration_seconds === null && !data.has_transcript && data.agenda.length === 0
+  const nothing = data.duration_seconds === null && data.attended_members === 0 && data.agenda.length === 0
   if (nothing) return null
 
-  const maxSpeak = Math.max(1, ...data.speakers.map((s) => s.estimated_seconds))
   const rate = data.total_members ? Math.round((data.attended_members / data.total_members) * 100) : 0
 
   return (
@@ -51,28 +50,6 @@ export function MeetingInsightsCard({ meetingId }: { meetingId: string }) {
             </p>
           </div>
         </div>
-
-        {data.speakers.length > 0 && (
-          <div>
-            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-text-secondary">
-              <MessageSquareText size={13} /> مدة الكلام (تقديرية)
-            </p>
-            <ul className="flex flex-col gap-2">
-              {data.speakers.map((s) => (
-                <li key={s.user_id ?? s.name} className="flex items-center gap-3 text-xs">
-                  <span className="w-32 shrink-0 truncate text-text-primary">{s.name}</span>
-                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-bg-elevated">
-                    <span
-                      className="block h-full rounded-full bg-brand-primary"
-                      style={{ width: `${(s.estimated_seconds / maxSpeak) * 100}%` }}
-                    />
-                  </span>
-                  <span className="w-20 shrink-0 text-end text-text-secondary">{duration(s.estimated_seconds)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         {data.agenda.length > 0 && (
           <div>

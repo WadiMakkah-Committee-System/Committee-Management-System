@@ -531,7 +531,13 @@ export function MeetingDetailPage() {
   }
 
   function handleAddItem() {
-    if (!meetingId || !newItemTitle.trim()) return
+    if (!meetingId) return
+    // بلاغ لاما 2026-11-04 ("زر الإضافة ما يشتغل"): الزر كان معطّل لين يُكتب عنوان،
+    // وعنوان بحرف واحد يرفضه الخادم برسالة غير واضحة — الحين الزر دايم شغّال ويوضح السبب.
+    if (newItemTitle.trim().length < 2) {
+      setAddItemError('اكتب عنوان البند أولًا (حرفين على الأقل)')
+      return
+    }
     setAddItemError(null)
     addAgendaItemMutation.mutate(
       {
@@ -539,7 +545,10 @@ export function MeetingDetailPage() {
         payload: { title: newItemTitle.trim(), sort_order: meeting!.agenda_items.length },
       },
       {
-        onSuccess: () => setNewItemTitle(''),
+        onSuccess: () => {
+          showToast(`انضاف البند: ${newItemTitle.trim()}`, 'success')
+          setNewItemTitle('')
+        },
         onError: (err) => setAddItemError(extractErrorMessage(err)),
       },
     )
@@ -907,7 +916,6 @@ export function MeetingDetailPage() {
               icon={<Plus size={14} />}
               onClick={handleAddItem}
               loading={addAgendaItemMutation.isPending}
-              disabled={!newItemTitle.trim()}
             >
               إضافة
             </Button>

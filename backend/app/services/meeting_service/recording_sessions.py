@@ -23,8 +23,12 @@
 - حدود حجم: القطعة ≤ 10MB، والجلسة ≤ 500MB.
 """
 
+import asyncio
 import logging
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -86,6 +90,42 @@ class RecordingState:
             "started_by_name": self.started_by_name,
             "started_at": self.started_at,
         }
+
+
+_REMUX_TIMEOUT_SECONDS = 120
+
+
+async def _remux_with_duration(content: bytes, extension: str) -> bytes:
+    """
+    الهدف (بلاغ لاما 2026-11-04 — "سجّلنا 10 دقايق وطلع التسجيل قصير"):
+    ملف MediaRecorder يطلع **بدون مدة مكتوبة بترويسته** (يُكتب وهو يسجّل)، فمشغّلات
+    الصوت تعرض مدة غلط/قصيرة وما تقدر تقدّم فيه. نعيد تغليفه بـffmpeg (`-c copy`:
+    بدون إعادة ترميز — ثواني حتى لاجتماع طويل) فتنكتب المدة الصحيحة.
+    أي فشل (ffmpeg غير موجود بالبيئة/ملف غريب) ⇒ نرجع الملف الأصلي كما هو (ما نخسر التسجيل).
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logger.warning("ffmpeg غير موجود — التسجيل ينحفظ بدون إصلاح المدة")
+        return content
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / f"in.{extension}"
+        dst = Path(tmp) / f"out.{extension}"
+        src.write_bytes(content)
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src), "-c", "copy", str(dst),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=_REMUX_TIMEOUT_SECONDS)
+        except TimeoutError:
+            proc.kill()
+            logger.warning("ffmpeg تجاوز المهلة — التسجيل ينحفظ بدون إصلاح المدة")
+            return content
+        if proc.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+            logger.warning("ffmpeg فشل بإصلاح مدة التسجيل: %s", (stderr or b"")[:300])
+            return content
+        return dst.read_bytes()
 
 
 def _chunk_path(session: MeetingRecordingSession, seq: int) -> str:
@@ -161,9 +201,9 @@ async def _finalize(db: AsyncSession, session: MeetingRecordingSession) -> Meeti
         return session
 
     parts = [await storage_client.download_object(_chunk_path(session, seq)) for seq in range(session.last_seq + 1)]
-    content = b"".join(parts)
     base_mime = _base_mime(session.mime_type)
     extension = _EXTENSIONS.get(base_mime, "webm")
+    content = await _remux_with_duration(b"".join(parts), extension)
     recording_id = uuid.uuid4()
     local_started = session.started_at.astimezone(UTC).strftime("%Y%m%d-%H%M")
     file_name = f"meeting-recording-{local_started}.{extension}"

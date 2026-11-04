@@ -29,10 +29,14 @@ export interface AgoraParticipant {
   video: IRemoteVideoTrack | null
 }
 
-/** مصادر صوت الاجتماع الحالية — يستهلكها مسجّل الرئيس (useMeetingRecorder). */
+/**
+ * مصادر صوت الاجتماع الحالية — يستهلكها مسجّل الرئيس (useMeetingRecorder).
+ * مسارات Agora نفسها (مو MediaStreamTrack الخام): المسجّل ياخذ منها الصوت المفكوك
+ * عبر setAudioFrameCallback — إصلاح 2026-11-04 (التسجيل طلع صامت).
+ */
 export interface AudioSources {
-  local: MediaStreamTrack | null
-  remote: Map<string, MediaStreamTrack>
+  local: IMicrophoneAudioTrack | null
+  remote: Map<string, IRemoteAudioTrack>
 }
 
 const SPEAKING_LEVEL = 8
@@ -364,12 +368,11 @@ export function useAgoraCall(meetingId: string, options: { nameOf: (userId: stri
     }
   }, [])
 
-  /** مصادر الصوت الحالية للتسجيل: مايكي + صوت كل عضو (MediaStreamTrack خام). */
-  const getAudioSources = useCallback((): AudioSources => {
-    const remote = new Map<string, MediaStreamTrack>()
-    for (const [userId, track] of remoteAudioRef.current) remote.set(userId, track.getMediaStreamTrack())
-    return { local: micRef.current?.getMediaStreamTrack() ?? null, remote }
-  }, [])
+  /** مصادر الصوت الحالية للتسجيل: مايكي + صوت كل عضو (مسارات Agora). */
+  const getAudioSources = useCallback(
+    (): AudioSources => ({ local: micRef.current, remote: new Map(remoteAudioRef.current) }),
+    [],
+  )
 
   // إغلاق الغرفة ⇒ خروج من القناة وتحرير الكاميرا/المايك.
   useEffect(() => {
