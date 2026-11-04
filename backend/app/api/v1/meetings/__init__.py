@@ -35,10 +35,10 @@ join/leave الخاصين بـAgora — أُزيلا 2026-11-02 مع الانت�
 
 from fastapi import APIRouter
 
-from app.api.v1.meetings import ai, attachments, attendance, chat, core, insights, minutes, teams
+from app.api.v1.meetings import agora, ai, attachments, attendance, chat, core, insights, minutes, teams
 
 # كل راوتر فرعي يحمل البادئة /meetings بنفسه (FastAPI لا يسمح بمسار
 # فارغ "" تحت راوتر بلا بادئة)، وهذا الراوتر يجمعها بنفس الترتيب الأصلي.
 router = APIRouter()
-for _sub in (core, attachments, attendance, insights, ai, minutes, chat, teams):
+for _sub in (core, attachments, attendance, insights, ai, minutes, chat, teams, agora):
     router.include_router(_sub.router)

@@ -1,6 +1,7 @@
 """
 الهدف (الدفعة 3 من تحسينات الاجتماع — migration 0044، قرار لاما 2026-11-03):
-- save_transcript_segments: حفظ جمل الترجمة النصية الحية (من جهاز الرئيس).
+- save_transcript_segments: حفظ جمل الترجمة النصية الحية (جهاز الرئيس بـTeams، أو
+  كل عضو كلامه هو بـAgora — own_speech).
 - catch_up: "وش فاتني؟" — ملخص Gemini لآخر دقائق من النص.
 - meeting_insights: إحصائيات الاجتماع (الحضور، مدة كلام كل عضو، وقت البنود).
 - open_agenda_session / close_agenda_sessions: فترات مناقشة البنود (من Socket.IO).
@@ -92,16 +93,34 @@ async def _resolve_speakers(db: AsyncSession, meeting_id: uuid.UUID, raw_ids: se
 
 
 async def save_transcript_segments(
-    db: AsyncSession, *, actor: User, meeting_id: uuid.UUID, segments: list[SegmentIn]
+    db: AsyncSession,
+    *,
+    actor: User,
+    meeting_id: uuid.UUID,
+    segments: list[SegmentIn],
+    own_speech: bool = False,
 ) -> int:
     """
     يحفظ دفعة جمل مكتملة (تُتجاهل المكررة بنفس client_key).
-    الصلاحية: meetings.agenda.item.update (رئيس اللجنة). المخرجات: عدد الجديد.
+
+    وضعين:
+    - own_speech=False (اجتماعات Teams القديمة): جهاز الرئيس يرسل جمل الكل —
+      الصلاحية meetings.agenda.item.update، والمتحدث يُستنتج من معرّف Teams.
+    - own_speech=True (Agora — قرار لاما 2026-11-04، التعرف على الكلام المجاني
+      بالمتصفح): كل عضو يرسل **كلامه هو فقط** — الصلاحية meetings.join، والمتحدث
+      يُفرض بالباك-إند = المستخدم نفسه (أي speaker_* من الواجهة يُتجاهل)، فما
+      يقدر أحد ينسب كلام لغيره.
+    المخرجات: عدد الجديد.
     """
     meeting = await load_meeting(db, meeting_id)
-    await _require_access(
-        db, actor, meeting.committee, "meetings.agenda.item.update", "حفظ الترجمة النصية لرئيس اللجنة فقط"
-    )
+    if own_speech:
+        await _require_access(
+            db, actor, meeting.committee, "meetings.join", "ليست لديك صلاحية الوصول لهذا الاجتماع"
+        )
+    else:
+        await _require_access(
+            db, actor, meeting.committee, "meetings.agenda.item.update", "حفظ الترجمة النصية لرئيس اللجنة فقط"
+        )
     clean = [s for s in segments[:_MAX_SEGMENTS_PER_BATCH] if s.text.strip() and s.client_key.strip()]
     if not clean:
         return 0
@@ -111,13 +130,19 @@ async def save_transcript_segments(
             select(MeetingAgendaItem.agenda_item_id).where(MeetingAgendaItem.meeting_id == meeting.meeting_id)
         )
         item_ids = set(rows.scalars().all())
-    speakers = await _resolve_speakers(db, meeting.meeting_id, {s.speaker_raw_id for s in clean if s.speaker_raw_id})
+    if own_speech:
+        speakers: dict[str, uuid.UUID] = {}
+    else:
+        speakers = await _resolve_speakers(
+            db, meeting.meeting_id, {s.speaker_raw_id for s in clean if s.speaker_raw_id}
+        )
     values = [
         {
             "meeting_id": meeting.meeting_id,
-            "client_key": s.client_key.strip()[:200],
-            "speaker_user_id": speakers.get(s.speaker_raw_id or ""),
-            "speaker_name": s.speaker_name.strip()[:200],
+            # own_speech: المفتاح يُربط بالمستخدم — جملتين من شخصين بنفس اللحظة ما يتعارضون.
+            "client_key": (f"{actor.user_id}:{s.client_key.strip()}" if own_speech else s.client_key.strip())[:200],
+            "speaker_user_id": actor.user_id if own_speech else speakers.get(s.speaker_raw_id or ""),
+            "speaker_name": (actor.full_name if own_speech else s.speaker_name.strip())[:200],
             "text": s.text.strip()[:4000],
             "spoken_at": s.spoken_at,
             "language": (s.language or None) and s.language[:20],

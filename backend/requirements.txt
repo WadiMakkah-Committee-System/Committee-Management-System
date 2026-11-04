@@ -12,6 +12,7 @@ python-multipart==0.0.9
 email-validator==2.2.0
 aiosmtplib==3.0.2
 httpx==0.27.2
+agora-token-builder==1.0.0
 # تجربة ACS (2026-11-02): إصدار توكن قصير العمر لمستخدم Azure Communication
 # Services ينضم لاجتماع Teams من داخل واجهة المنصة — راجعي app/core/acs_client.py.
 azure-communication-identity==1.5.0

@@ -135,7 +135,9 @@ async def attach_to_new_meeting(meeting: Meeting, committee: Committee) -> bool:
     التأثيرات الجانبية: يعبّئ meeting.teams_* + ينشئ اجتماعًا فعليًا بـTeams.
     الأخطاء: TeamsError ⇒ الطبقة المستدعية ترفض إنشاء الاجتماع.
     """
-    if meeting.mode != MeetingMode.remote or not teams_client.is_configured():
+    # قرار لاما 2026-11-04: الاجتماعات الجديدة بـAgora افتراضيًا — Teams فقط لو
+    # MEETING_PROVIDER = "teams" (راجعي teams_client.creates_new_meetings).
+    if meeting.mode != MeetingMode.remote or not teams_client.creates_new_meetings():
         return False
     await _create_and_attach(meeting, committee)
     return True
@@ -200,10 +202,15 @@ async def sync_after_update(db: AsyncSession, meeting: Meeting, *, details_chang
             )
         return False
 
-    committee = await load_committee(db, meeting.committee_id, with_members=True)
     if not linked:
+        # اجتماع غير مربوط (Agora، أو تحوّل من حضوري): يُربط بـTeams فقط لو
+        # الاجتماعات الجديدة بـTeams (MEETING_PROVIDER) — غير كذا يبقى Agora.
+        if not teams_client.creates_new_meetings():
+            return False
+        committee = await load_committee(db, meeting.committee_id, with_members=True)
         await _create_and_attach(meeting, committee)
         return True
+    committee = await load_committee(db, meeting.committee_id, with_members=True)
     if not details_changed:
         return False
 

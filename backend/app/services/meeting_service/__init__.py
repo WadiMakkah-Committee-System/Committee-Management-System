@@ -110,6 +110,15 @@ from app.services.meeting_service.teams import list_known_guests as list_teams_k
 from app.services.meeting_service.teams import get_join_url as get_teams_join_url
 from app.services.meeting_service.teams import list_recordings as list_teams_recordings
 from app.services.meeting_service.teams import open_recording as open_teams_recording
+from app.services.meeting_service.agora import AgoraJoinInfo, join_agora
+from app.services.meeting_service.recording_sessions import (
+    RecordingState,
+    finalize_stale_sessions as finalize_stale_recording_sessions,
+    get_state as get_recording_state,
+    start_session as start_recording_session,
+    stop_session as stop_recording_session,
+    upload_chunk as upload_recording_chunk,
+)
 from app.services.meeting_service.recordings import (
     download_recording,
     generate_draft,
@@ -119,6 +128,14 @@ from app.services.meeting_service.recordings import (
 )
 
 __all__ = [
+    "AgoraJoinInfo",
+    "RecordingState",
+    "finalize_stale_recording_sessions",
+    "get_recording_state",
+    "join_agora",
+    "start_recording_session",
+    "stop_recording_session",
+    "upload_recording_chunk",
     "AgendaItemNotFoundError",
     "AttachmentNotFoundError",
     "DraftNotFoundError",

@@ -67,6 +67,7 @@ def _microsoft_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "TEAMS_TENANT_ID", TENANT)
     monkeypatch.setattr(settings, "TEAMS_CLIENT_ID", CLIENT)
     monkeypatch.setattr(settings, "MICROSOFT_LOGIN_DOMAINS", "wadimakkah.sa, @Tilal.sa")
+    monkeypatch.setattr(settings, "MICROSOFT_LOGIN_ENABLED", True)
 
     async def fake_jwks() -> list[dict]:
         return [_PUBLIC_JWK]
@@ -116,6 +117,18 @@ async def test_login_options_exposes_public_config_only(client: AsyncClient, mon
     }
     monkeypatch.setattr(settings, "TEAMS_CLIENT_ID", "")
     assert (await client.get("/api/v1/auth/login-options")).json()["microsoft_enabled"] is False
+
+
+async def test_microsoft_login_hidden_and_rejected_when_switched_off(client: AsyncClient, monkeypatch) -> None:
+    """قرار لاما 2026-11-04: MICROSOFT_LOGIN_ENABLED=false ⇒ مخفي بصفحة الدخول ومرفوض بالباك-إند
+    حتى لو مفاتيح Entra موجودة (الكود محفوظ للرجوع)."""
+    monkeypatch.setattr(settings, "MICROSOFT_LOGIN_ENABLED", False)
+    assert (await client.get("/api/v1/auth/login-options")).json()["microsoft_enabled"] is False
+    await _make_user(email="off@wadimakkah.sa", username="off_user")
+    response = await client.post(
+        "/api/v1/auth/microsoft", json={"id_token": _id_token(oid=str(uuid.uuid4()), email="off@wadimakkah.sa")}
+    )
+    assert response.status_code == 503
 
 
 async def test_first_microsoft_login_links_account_and_revokes_temp_password(client: AsyncClient) -> None:
