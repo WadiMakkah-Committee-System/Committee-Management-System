@@ -907,13 +907,24 @@ export function MeetingMinutesPage() {
               </div>
               <div className="bg-bg-elevated p-4 md:p-8">
                 <article className="mx-auto max-w-3xl rounded-md border border-border-default bg-bg-surface p-8 md:p-12">
-                  <div className="mb-6 border-b-2 border-brand-primary pb-4 text-center">
+                  {/* شعار شركة وادي مكة للتقنية — أعلى المحضر، أقصى اليسار دائمًا
+                      بغض النظر عن اتجاه الصفحة (RTL)، لذا dir="ltr" هنا تحديدًا. */}
+                  <div className="mb-4 flex" dir="ltr">
+                    <img src="/wadi-makkah-logo.png" alt="شعار شركة وادي مكة للتقنية" className="h-12 w-auto md:h-14" />
+                  </div>
+                  <div className="mb-6 pb-4 text-center">
                     <p className="text-xs tracking-wide text-text-muted">{committee?.name}</p>
                     <h2 className="mt-2 text-xl font-bold text-text-primary">محضر {meeting.title}</h2>
                     <p className="mt-2 text-xs text-text-muted">
                       {formatDateTime(meeting.scheduled_at)}
                       {meeting.location ? ` · ${meeting.location}` : ''}
                     </p>
+                    {/* خط مزدوج أسود بدل الخط الملوّن السابق (مواءمة مع نموذج محضر
+                        الشركة الرسمي). */}
+                    <div className="mt-4">
+                      <div className="h-[3px] bg-text-primary" />
+                      <div className="mt-[3px] h-px bg-text-primary" />
+                    </div>
                   </div>
 
                   <section className="mb-6">
@@ -995,6 +1006,16 @@ export function MeetingMinutesPage() {
                       </div>
                     )}
                   </section>
+
+                  {/* شريط الفوتر الملوّن — بألوان شعار الشركة. dir="ltr" هنا
+                      تحديدًا عشان الترتيب (بنفسجي/برتقالي/فيروزي/أخضر من
+                      اليسار لليمين) يبقى ثابت بغض النظر عن اتجاه الصفحة RTL. */}
+                  <div className="mt-10 flex h-[7px] overflow-hidden rounded-xs" dir="ltr">
+                    <span className="flex-1 bg-[#8e4f9e]" />
+                    <span className="flex-1 bg-[#f0a435]" />
+                    <span className="flex-1 bg-[#43bcd4]" />
+                    <span className="flex-1 bg-[#8dc63f]" />
+                  </div>
                 </article>
               </div>
             </Card>
