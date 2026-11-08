@@ -69,6 +69,7 @@ from app.models.notification import Notification
 from app.models.role import Permission, RolePermission
 from app.models.task import Task, TaskStatus
 from app.models.user import User
+from app.models.user_role import UserRole
 
 
 class NotificationNotFoundError(Exception):
@@ -448,16 +449,20 @@ async def _write_notifications(rows: list[dict]) -> None:
 
 async def _users_with_permission(session, code: str) -> list[uuid.UUID]:
     """
-    كل مستخدم نشِط (status=active، غير محذوف) يملك -عبر دوره النظامي-
+    كل مستخدم نشِط (status=active، غير محذوف) يملك -عبر أي من أدواره النظامية-
     الصلاحية `code` بنطاق department أو all. نطاق own لا يكفي لبثّ جماعي
     — نفس القيد المطبَّق فعليًا بـcommittee_service._require_access لهذه
     الصلاحيات بالضبط (مثال: تعديل الطلب بعد إرساله "متاح فقط للمكتب
     التنفيذي"، أي department/all فقط). Snapshot وقت الاستدعاء فقط (راجعي
     ملاحظة التصميم 1 برأس migration 0027) — لا استعلام حي لاحقًا.
     """
+    # تعدد الأدوار (migration 0046): عبر كل أدوار المستخدم المسندة (user_roles)
+    # وليس دوره الحالي فقط — طلب تشكيل جديد للمكتب التنفيذي يوصل لنائب الرئيس
+    # حتى لو كان دوره الحالي "ادمن" وقت الإرسال.
     stmt = (
         select(User.user_id)
-        .join(RolePermission, RolePermission.role_id == User.role_id)
+        .join(UserRole, UserRole.user_id == User.user_id)
+        .join(RolePermission, RolePermission.role_id == UserRole.role_id)
         .join(Permission, Permission.permission_id == RolePermission.permission_id)
         .where(
             Permission.code == code,

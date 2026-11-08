@@ -27,6 +27,7 @@ from sqlalchemy.orm import noload, selectinload
 
 from app.models.role import VALID_SCOPES, Permission, Role, RolePermission
 from app.models.user import User
+from app.models.user_role import UserRole
 from app.services import audit_service
 
 
@@ -102,10 +103,13 @@ async def list_roles(db: AsyncSession) -> list[dict]:
     )
     roles = list(result.scalars().all())
 
+    # تعدد الأدوار (migration 0046): "عدد مستخدمي الدور" = كل من أُسند له
+    # الدور (user_roles)، وليس فقط من دوره الحالي هو هذا الدور.
     counts_result = await db.execute(
-        select(User.role_id, func.count())
+        select(UserRole.role_id, func.count())
+        .join(User, User.user_id == UserRole.user_id)
         .where(User.deleted_at.is_(None))
-        .group_by(User.role_id)
+        .group_by(UserRole.role_id)
     )
     user_counts = dict(counts_result.all())
 
@@ -149,8 +153,9 @@ async def get_role_detail(db: AsyncSession, role_id: uuid.UUID) -> dict | None:
         return None
     count_result = await db.execute(
         select(func.count())
-        .select_from(User)
-        .where(User.role_id == role_id, User.deleted_at.is_(None))
+        .select_from(UserRole)
+        .join(User, User.user_id == UserRole.user_id)
+        .where(UserRole.role_id == role_id, User.deleted_at.is_(None))
     )
     return {
         "role": role,
@@ -274,10 +279,14 @@ async def delete_role(db: AsyncSession, *, actor_user_id: uuid.UUID, role_id: uu
     if role.kind == "committee":
         raise ValueError("لا يمكن حذف أدوار اللجان الثابتة (رئيس اللجنة/عضو اللجنة)")
 
+    # تعدد الأدوار (migration 0046): الدور مسند لمستخدم = مرتبط به، حتى لو
+    # ما هو دوره الحالي. قاعدة البيانات ترفض الحذف أيضًا (user_roles_role_id_fkey)
+    # — هذا الفحص يسبقها برسالة واضحة.
     count_result = await db.execute(
         select(func.count())
-        .select_from(User)
-        .where(User.role_id == role_id, User.deleted_at.is_(None))
+        .select_from(UserRole)
+        .join(User, User.user_id == UserRole.user_id)
+        .where(UserRole.role_id == role_id, User.deleted_at.is_(None))
     )
     if count_result.scalar_one() > 0:
         raise ValueError("لا يمكن حذف هذا الدور — لا يزال هناك مستخدمون مرتبطون به")

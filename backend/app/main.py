@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
     yield
     scheduler_task.cancel()
 
+from app.core.request_context import RequestContextMiddleware
 from app.core.socketio_server import sio
 
 app = FastAPI(
@@ -70,6 +71,10 @@ app.add_middleware(
 # يقلل حجم البيانات المنقولة عبر الشبكة (خصوصًا قوائم JSON الطويلة)،
 # تحسين بسيط وآمن تمامًا، لا يمس أي منطق عمل.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# تعدد الأدوار (migration 0046): يصفّر سياق الفاعل (من + بأي صفة) لكل طلب —
+# راجعي app/core/request_context.py. يُستخدم لتسجيل الصفة بسجل التدقيق فقط.
+app.add_middleware(RequestContextMiddleware)
 
 app.include_router(api_router)
 

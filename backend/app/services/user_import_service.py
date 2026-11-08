@@ -54,6 +54,7 @@ from app.core.security import hash_password
 from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.role import Role
+from app.models.user_role import UserRole
 from app.models.user import User, UserStatus
 from app.services import audit_service
 
@@ -565,6 +566,11 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
         )
         db.add(user)
         await db.flush()
+        if role is not None:
+            # تعدد الأدوار (migration 0046): الدور المسند يُسجَّل بـuser_roles —
+            # قيد users_active_role_assigned_fkey (مؤجَّل لحد COMMIT) يشترط أن
+            # يكون الدور الحالي (role_id أعلاه) من أدوار المستخدم المسندة.
+            db.add(UserRole(user_id=user.user_id, role_id=role.role_id, assigned_by=actor.user_id))
 
         is_manager = bool(department_key and managers.get(department_key) == row.row)
         if is_manager and department is not None:

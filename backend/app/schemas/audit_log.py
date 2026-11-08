@@ -17,6 +17,9 @@ class AuditLogOut(BaseModel):
 
     log_id: uuid.UUID
     actor_name: str | None
+    # الصفة (الدور الحالي) اللي نُفّذت بها العملية — null للسجلات القبلية
+    # (قبل migration 0046) أو العمليات بدون مستخدم مسجَّل الدخول.
+    actor_role_name: str | None = None
     action_type: str
     target_type: str
     target_id: uuid.UUID
@@ -28,6 +31,7 @@ class AuditLogOut(BaseModel):
         return cls(
             log_id=entry.log_id,
             actor_name=entry.actor.full_name if entry.actor else None,
+            actor_role_name=entry.actor_role.name if entry.actor_role else None,
             action_type=entry.action_type,
             target_type=entry.target_type,
             target_id=entry.target_id,

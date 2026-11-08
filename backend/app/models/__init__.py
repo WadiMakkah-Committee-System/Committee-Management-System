@@ -36,6 +36,7 @@ from app.models.password_reset_token import PasswordResetToken
 from app.models.role import Permission, Role
 from app.models.task import Task, TaskAssignmentHistory, TaskStatus
 from app.models.user import User, UserStatus
+from app.models.user_role import UserRole
 
 __all__ = [
     "AuditAction",
@@ -80,4 +81,5 @@ __all__ = [
     "TaskStatus",
     "User",
     "UserStatus",
+    "UserRole",
 ]

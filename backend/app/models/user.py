@@ -21,10 +21,13 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, SmallInteger, String, func
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm.base import NO_VALUE
 
 from app.db.base import Base
+from app.models.user_role import UserRole  # noqa: F401 — يسجّل الموديل لعلاقة assigned_roles (مراجع نصية)
 
 
 class UserStatus(str, enum.Enum):
@@ -55,6 +58,12 @@ class User(Base):
     # لبياناته الأساسية فقط (GET /users/me)، وصفر صلاحيات إضافية، لحين
     # تعيين دور له. راجعي permission_codes/permission_scopes/scope_for
     # أدناه — كلها آمنة مع role=None (تُرجع فارغ بدل انهيار).
+    #
+    # تعدد الأدوار (migration 0046): هذا العمود صار "الدور الحالي" (Active
+    # Role) — أحد أدوار المستخدم المسندة في user_roles (مضمون بقيد قاعدة
+    # البيانات users_active_role_assigned_fkey). كل فحوصات الصلاحيات تبقى
+    # تقرأ هذا الدور وحده (role/permission_codes/scope_for)، فالمستخدم
+    # متعدد الأدوار يشتغل بصلاحيات دوره الحالي فقط حتى يبدّله.
     role_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("roles.role_id"), nullable=True
     )
@@ -96,6 +105,33 @@ class User(Base):
     job_title: Mapped["JobTitle | None"] = relationship(  # noqa: F821
         foreign_keys=[job_title_id], lazy="selectin"
     )
+    # كل الأدوار النظامية المسندة (migration 0046) — للقراءة فقط (viewonly):
+    # الكتابة صراحةً عبر جدول user_roles بطبقة الخدمة. lazy="raise_on_sql"
+    # عمدًا (وليس selectin كبقية العلاقات): لو كانت selectin، كل select(User)
+    # بأي مكان بالنظام (القوائم، المصادقة بكل طلب...) يضيف استعلامًا إضافيًا
+    # بلا داعٍ. هنا لا تُحمَّل إلا حين تُطلب صراحةً
+    # (selectinload(User.assigned_roles))، وأي وصول لها بدون تحميل يرمي خطأ
+    # واضحًا بدل استعلام خفي. للعرض استخدمي الخاصية roles أدناه (آمنة دائمًا).
+    assigned_roles: Mapped[list["Role"]] = relationship(  # noqa: F821
+        secondary="user_roles",
+        primaryjoin="User.user_id == UserRole.user_id",
+        secondaryjoin="UserRole.role_id == Role.role_id",
+        # ترتيب الإسناد، ثم الاسم (أدوار نفس الحفظ تتشارك نفس الوقت).
+        order_by="[UserRole.created_at, Role.name]",
+        viewonly=True,
+        lazy="raise_on_sql",
+    )
+
+    @property
+    def roles(self) -> list | None:
+        """
+        الأدوار المسندة لو حُمِّلت مسبقًا بنفس الاستعلام، وإلا None — بدون
+        أي استعلام إضافي أبدًا. يقرأها UserOut.roles: المسارات اللي تحتاج
+        عرض كل الأدوار (قائمة المستخدمين، تفاصيل مستخدم، إنشاء/تعديل) تحمّلها
+        صراحةً، والباقي يرجّع null بدل استعلام خفي.
+        """
+        loaded = sa_inspect(self).attrs.assigned_roles.loaded_value
+        return None if loaded is NO_VALUE else list(loaded)
 
     @property
     def is_deleted(self) -> bool:
