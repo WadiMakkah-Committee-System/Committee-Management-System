@@ -5,10 +5,13 @@ import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { AppFooter } from './AppFooter'
 import { ChangePasswordModal } from '@/features/auth/ChangePasswordModal'
+import { useActiveRoleSync } from '@/hooks/useUsers'
 
 export function AppShell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const location = useLocation()
+  // تعدد الأدوار: لو تغيّر الدور الحالي من نافذة أخرى، حدّث هذي النافذة.
+  useActiveRoleSync()
 
   return (
     <div className="relative isolate flex min-h-svh bg-bg-app">

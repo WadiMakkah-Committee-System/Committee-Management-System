@@ -8,21 +8,24 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { CreatableSelect } from '@/components/ui/CreatableSelect'
+import { MultiCheckPicker } from '@/components/ui/MultiCheckPicker'
 import { useToast } from '@/components/ui/Toast'
 import { useRoleOptions } from '@/hooks/useRoles'
+import { useUserDetail } from '@/hooks/useUsers'
 import { useCreateJobTitle, useJobTitles } from '@/hooks/useJobTitles'
 import { generateTemporaryPassword, suggestUsernameFromEmail } from '@/lib/credentialSuggestions'
-import { roleLabel } from '@/lib/utils'
-import type { Department, User, UserCreatePayload, UserUpdatePayload } from '@/types'
+import { assignedRoles, roleLabel } from '@/lib/utils'
+import type { Department, RoleOption, User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
 const baseFields = {
   first_name: z.string().min(1, 'الاسم الأول مطلوب').max(100),
   middle_name: z.string().min(1, 'الاسم الأوسط مطلوب').max(100),
   last_name: z.string().min(1, 'اسم العائلة مطلوب').max(100),
   email: z.string().email('بريد إلكتروني غير صحيح'),
-  // اختياري (مراجعة لاما 2026-08-30 — "لا تجعل حقل الدور إجباريًا عند إضافة مستخدم"):
-  // '' تعني "غير محدد"، تُحوَّل لـnull عند الإرسال (نفس نمط dep_id/job_title_id).
-  role_id: z.string(),
+  // اختياري (مراجعة لاما 2026-08-30 — "لا تجعل حقل الدور إجباريًا عند إضافة مستخدم").
+  // تعدد الأدوار (migration 0046): دور واحد أو أكثر — [] = بلا دور. أول دور
+  // مختار = دوره الحالي عند أول دخول (ويبدّل بينها من الشريط العلوي).
+  role_ids: z.array(z.string()),
   dep_id: z.string(),
   job_title_id: z.string(),
 }
@@ -47,6 +50,17 @@ const editSchema = z.object(baseFields)
 
 type CreateFormValues = z.infer<typeof createSchema>
 type EditFormValues = z.infer<typeof editSchema>
+
+/** معرّفات أدوار المستخدم: الدور الحالي أولًا ثم بقية أدواره المسندة (تعدد الأدوار). */
+function orderedRoleIds(user: User): string[] {
+  const currentId = user.role?.role_id
+  return [
+    ...(currentId ? [currentId] : []),
+    ...assignedRoles(user)
+      .map((r) => r.role_id)
+      .filter((id) => id !== currentId),
+  ]
+}
 
 interface UserFormModalProps {
   open: boolean
@@ -73,6 +87,11 @@ export function UserFormModal({
   serverError,
 }: UserFormModalProps) {
   const isEdit = !!user
+  // تعدد الأدوار (migration 0046): بعض الشاشات (أعضاء الإدارة) تمرّر مستخدمًا
+  // بدون قائمة أدواره كاملة (roles = null) — نجلب تفاصيله عند فتح النموذج حتى
+  // يعرض المنتقي كل أدواره، بدل أن يظهر الدور الحالي وحده ثم يُحفظ وحده.
+  const rolesUnknown = isEdit && open && !user?.roles
+  const { data: userDetail } = useUserDetail(rolesUnknown ? user?.user_id : undefined)
   // تحديث 2026-09-12 (بلاغ لاما — بطء ملحوظ بكل الصفحات): هذا المودال
   // يُركَّب (mount) ضمن شجرة UsersPage/MeetingFormModal بشكل دائم — كان
   // useRoles/useJobTitles يجلبان بياناتهما فورًا عند التركيب، حتى لو
@@ -87,10 +106,7 @@ export function UserFormModal({
   // مراجعة لاما 2026-08-31 ("أدوار اللجان"): "رئيس اللجنة"/"عضو اللجنة" لا
   // يظهران هنا إطلاقًا — ليسا من System Roles، ولا يُسندان كـuser.role_id
   // أبدًا (الباك-إند يرفضها فعليًا أيضًا — راجعي user_service.create_user).
-  const roleOptions = [
-    { value: '', label: 'غير محدد' },
-    ...(roles ?? []).filter((r) => r.kind === 'user').map((r) => ({ value: r.role_id, label: roleLabel(r) })),
-  ]
+  const systemRoles = (roles ?? []).filter((r) => r.kind === 'user')
   const jobTitleOptions = (jobTitles ?? []).map((jt) => ({ value: jt.job_title_id, label: jt.name }))
   const depOptions = [
     { value: '', label: 'بدون إدارة' },
@@ -110,7 +126,8 @@ export function UserFormModal({
     control,
     setValue,
     getValues,
-    formState: { errors, isSubmitted },
+    getFieldState,
+    formState: { errors, isSubmitted, dirtyFields },
   } = useForm<CreateFormValues | EditFormValues>({
     resolver: zodResolver(isEdit ? editSchema : createSchema),
   })
@@ -127,7 +144,7 @@ export function UserFormModal({
         middle_name: user?.middle_name ?? '',
         last_name: user?.last_name ?? '',
         email: user?.email ?? '',
-        role_id: user?.role?.role_id ?? '',
+        role_ids: user ? orderedRoleIds(user) : [],
         dep_id: user?.dep_id ?? defaultDepId ?? '',
         job_title_id: user?.job_title_id ?? '',
         // كلمة المرور المؤقتة تُقترح تلقائيًا عند فتح نموذج الإضافة (قابلة للتعديل)
@@ -135,6 +152,15 @@ export function UserFormModal({
       } as CreateFormValues)
     }
   }, [open, user, isEdit, defaultDepId, reset])
+
+  // وصلت أدوار المستخدم الكاملة (حين لم تكن مع بيانات الشاشة): نحدّث حقل
+  // الأدوار وحده — بدون مسح أي تعديل بدأه المسؤول بالحقول الأخرى، وبدون
+  // الكتابة فوق الأدوار لو عدّلها هو بنفسه قبل الوصول.
+  useEffect(() => {
+    if (!rolesUnknown || !userDetail) return
+    if (getFieldState('role_ids').isDirty) return
+    setValue('role_ids', orderedRoleIds(userDetail), { shouldDirty: false })
+  }, [rolesUnknown, userDetail, getFieldState, setValue])
 
   const email = useWatch({ control, name: 'email' })
 
@@ -174,7 +200,9 @@ export function UserFormModal({
         middle_name: v.middle_name,
         last_name: v.last_name,
         email: v.email,
-        role_id: v.role_id || undefined,
+        // تعدد الأدوار: الأدوار تُرسَل فقط لو عدّلها المسؤول فعلًا — حماية
+        // إضافية من استبدال أدوار المستخدم بقائمة ناقصة لو تعذّر جلبها كاملة.
+        ...((dirtyFields as { role_ids?: unknown }).role_ids ? { role_ids: v.role_ids } : {}),
         dep_id: v.dep_id || null,
         job_title_id: v.job_title_id || null,
       })
@@ -187,7 +215,7 @@ export function UserFormModal({
         username: v.username,
         email: v.email,
         password: v.password,
-        role_id: v.role_id || null,
+        role_ids: v.role_ids,
         dep_id: v.dep_id || null,
         job_title_id: v.job_title_id || null,
         status: v.status,
@@ -270,16 +298,33 @@ export function UserFormModal({
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Select
-            label="الدور"
-            placeholder="اختر الدور"
-            options={roleOptions}
-            error={errors.role_id?.message}
-            {...register('role_id')}
-          />
-          <Select label="الإدارة" placeholder="اختر الإدارة" options={depOptions} {...register('dep_id')} />
-        </div>
+        <Controller
+          name="role_ids"
+          control={control}
+          render={({ field }) => (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-text-primary">الأدوار</span>
+              <MultiCheckPicker<RoleOption>
+                items={systemRoles}
+                getId={(r) => r.role_id}
+                getLabel={(r) => roleLabel(r)}
+                getSublabel={(r) => r.description}
+                selected={field.value ?? []}
+                onChange={field.onChange}
+                searchPlaceholder="ابحث عن دور..."
+                emptyText="لا توجد أدوار مطابقة"
+                error={errors.role_ids?.message}
+              />
+              <p className="text-xs text-text-muted">
+                {isEdit
+                  ? 'يمكن اختيار أكثر من دور — يبقى دوره الحالي كما هو لو ما زال ضمن أدواره، والمستخدم يبدّل بينها من الشريط العلوي'
+                  : 'اختياري، ويمكن اختيار أكثر من دور — أول دور تختاره يكون دوره عند أول دخول، ويبدّل بينها من الشريط العلوي'}
+              </p>
+            </div>
+          )}
+        />
+
+        <Select label="الإدارة" placeholder="اختر الإدارة" options={depOptions} {...register('dep_id')} />
 
         <Controller
           name="job_title_id"

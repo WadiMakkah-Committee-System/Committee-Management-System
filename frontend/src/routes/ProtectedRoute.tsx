@@ -1,4 +1,6 @@
 import { Navigate, Outlet } from 'react-router-dom'
+import { RoleSwitchPrompt } from '@/components/layout/RoleSwitchPrompt'
+import { otherRolesGrantingAccess } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 
 interface ProtectedRouteProps {
@@ -25,6 +27,10 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
   if (user) {
     const isSuperAdmin = !!user.role?.is_super_admin
     if (superAdminOnly && !isSuperAdmin) {
+      // تعدد الأدوار (migration 0046): لو دور آخر من أدواره يفتح الصفحة،
+      // نعرض زر التبديل إليه بدل التحويل بصمت.
+      const candidates = otherRolesGrantingAccess(user, { superAdminOnly: true })
+      if (candidates.length > 0) return <RoleSwitchPrompt currentRole={user.role} candidates={candidates} />
       return <Navigate to="/profile" replace />
     }
     // بلاغ لاما 2026-09-01: عضو لجنة (رئيس/عضو) قد يملك وصولًا فعليًا
@@ -68,6 +74,10 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
       !hasMinutesMembershipBypass &&
       !hasDocumentsMembershipBypass
     ) {
+      // تعدد الأدوار (migration 0046): نفس فكرة superAdminOnly أعلاه — صفحة
+      // (أو رابط إشعار) تتبع دورًا آخر من أدواره → زر تبديل بدل تحويل صامت.
+      const candidates = otherRolesGrantingAccess(user, { anyPermission })
+      if (candidates.length > 0) return <RoleSwitchPrompt currentRole={user.role} candidates={candidates} />
       return <Navigate to="/profile" replace />
     }
   }

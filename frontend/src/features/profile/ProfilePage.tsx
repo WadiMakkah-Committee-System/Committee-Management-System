@@ -1,11 +1,11 @@
-import { Building2, Calendar, KeyRound, Mail, ShieldCheck, User } from 'lucide-react'
+import { Building2, Calendar, KeyRound, Layers, Mail, ShieldCheck, User } from 'lucide-react'
 import { useMe } from '@/hooks/useUsers'
 import { Card } from '@/components/ui/Card'
 import { Avatar } from '@/components/ui/Avatar'
 import { UserStatusBadge, RoleBadge } from '@/components/ui/StatusBadge'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { ErrorState } from '@/components/ui/ErrorState'
-import { roleLabel, formatDateTime } from '@/lib/utils'
+import { assignedRoles, roleLabel, formatDateTime } from '@/lib/utils'
 
 function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
   return (
@@ -57,7 +57,21 @@ export function ProfilePage() {
             label="الإدارة"
             value={me.department ? me.department.name : 'بدون إدارة (سوبر أدمن)'}
           />
-          <InfoRow icon={<ShieldCheck size={16} />} label="الدور" value={roleLabel(me.role)} />
+          <InfoRow
+            icon={<ShieldCheck size={16} />}
+            label={assignedRoles(me).length > 1 ? 'الدور الحالي' : 'الدور'}
+            value={roleLabel(me.role)}
+          />
+          {/* تعدد الأدوار (migration 0046): كل أدواره — التبديل من الشريط العلوي */}
+          {assignedRoles(me).length > 1 && (
+            <InfoRow
+              icon={<Layers size={16} />}
+              label="أدوارك"
+              value={assignedRoles(me)
+                .map((r) => roleLabel(r))
+                .join('، ')}
+            />
+          )}
           <InfoRow
             icon={<KeyRound size={16} />}
             label="آخر تسجيل دخول"

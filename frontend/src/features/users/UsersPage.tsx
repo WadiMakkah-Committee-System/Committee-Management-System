@@ -34,12 +34,12 @@ import { ActionMenu } from '@/components/ui/ActionMenu'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { StatCard } from '@/components/ui/StatCard'
 import { Avatar } from '@/components/ui/Avatar'
-import { UserStatusBadge, RoleBadge } from '@/components/ui/StatusBadge'
+import { UserStatusBadge, UserRolesBadges } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { UserFormModal } from './UserFormModal'
 import { UserImportModal } from './UserImportModal'
 import { MemberDetailModal } from './MemberDetailModal'
-import { extractErrorMessage, roleLabel, scopeFor } from '@/lib/utils'
+import { assignedRoles, extractErrorMessage, roleLabel, scopeFor } from '@/lib/utils'
 import type { User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
 const PAGE_SIZE = 10
@@ -99,7 +99,8 @@ export function UsersPage() {
         `${u.first_name} ${u.middle_name} ${u.last_name}`.toLowerCase().includes(q) ||
         u.username.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q)
-      const matchesRole = !roleFilter || u.role?.role_id === roleFilter
+      // تعدد الأدوار: المستخدم يطابق الفلتر لو الدور من أي أدواره المسندة.
+      const matchesRole = !roleFilter || assignedRoles(u).some((r) => r.role_id === roleFilter)
       const matchesStatus = !statusFilter || u.status === statusFilter
       return matchesQuery && matchesRole && matchesStatus
     })
@@ -114,7 +115,7 @@ export function UsersPage() {
       total: users.length,
       active: users.filter((u) => u.status === 'active').length,
       suspended: users.filter((u) => u.status === 'suspended').length,
-      roles: new Set(users.map((u) => u.role?.role_id).filter((id): id is string => !!id)).size,
+      roles: new Set(users.flatMap((u) => assignedRoles(u).map((r) => r.role_id))).size,
     }
   }, [users])
 
@@ -334,7 +335,7 @@ export function UsersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <RoleBadge role={user.role} />
+                      <UserRolesBadges user={user} compact />
                     </td>
                     <td className="px-4 py-3 text-text-secondary">{user.department?.name ?? '—'}</td>
                     <td className="px-4 py-3 text-text-secondary">{user.job_title?.name ?? '—'}</td>
