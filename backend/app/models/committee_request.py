@@ -109,6 +109,14 @@ class CommitteeFormationRequest(Base):
     chair_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True
     )
+    # أمين سر اللجنة المقترح — اختياري بعكس chair_user_id (طلب المدير
+    # 2026-11-08، أوصلته لجين)، نفس قيد "أحد proposed_members" لو تحدّد،
+    # يُتحقّق منه بطبقة الخدمة فقط (نفس نمط chair_user_id). committee_role_slug
+    # الفعلي 'secretary' بـmigration 0041 — لا علاقة بالدور النظامي "امين
+    # سر" الموجود مسبقًا (kind='user').
+    secretary_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True
+    )
     return_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # آخر من رفع الطلب للرئيس التنفيذي ومتى (طلب لاما 2026-11-01 — migration
@@ -127,6 +135,7 @@ class CommitteeFormationRequest(Base):
 
     requester: Mapped["User"] = relationship(foreign_keys=[requested_by], lazy="selectin")  # noqa: F821
     chair: Mapped["User | None"] = relationship(foreign_keys=[chair_user_id], lazy="selectin")  # noqa: F821
+    secretary: Mapped["User | None"] = relationship(foreign_keys=[secretary_user_id], lazy="selectin")  # noqa: F821
     escalator: Mapped["User | None"] = relationship(foreign_keys=[escalated_by], lazy="selectin")  # noqa: F821
     proposed_members: Mapped[list["User"]] = relationship(  # noqa: F821
         secondary=committee_formation_request_members, lazy="selectin"

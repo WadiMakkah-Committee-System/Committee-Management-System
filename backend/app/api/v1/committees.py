@@ -96,6 +96,7 @@ async def create_committee_request(
             end_date=payload.end_date,
             proposed_member_ids=payload.proposed_member_ids,
             chair_user_id=payload.chair_user_id,
+            secretary_user_id=payload.secretary_user_id,
         )
     except ValueError as exc:
         raise _handle_errors(exc) from exc
@@ -177,6 +178,7 @@ async def update_committee_request(
             end_date=payload.end_date,
             proposed_member_ids=payload.proposed_member_ids,
             chair_user_id=payload.chair_user_id,
+            secretary_user_id=payload.secretary_user_id,
         )
     except (
         CommitteeRequestNotFoundError,

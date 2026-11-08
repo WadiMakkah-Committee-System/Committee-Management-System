@@ -113,6 +113,10 @@ class CommitteeFormationRequestCreate(BaseModel):
     # يتم أدناه (نفس الطلب) وبطبقة الخدمة أيضًا عند التعديل (قائمة الأعضاء
     # قد تتغيّر لاحقًا بينما الرئيس لا).
     chair_user_id: uuid.UUID
+    # أمين سر اللجنة — اختياري بعكس chair_user_id الإلزامي (طلب
+    # المدير 2026-11-08)، لو تحدّد يجب أن يكون أحد proposed_member_ids
+    # نفس القيد المطبّق على chair_user_id أدناه.
+    secretary_user_id: uuid.UUID | None = None
 
     @field_validator("proposed_member_ids")
     @classmethod
@@ -145,6 +149,16 @@ class CommitteeFormationRequestCreate(BaseModel):
             raise ValueError("رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
         return v
 
+    @field_validator("secretary_user_id")
+    @classmethod
+    def _secretary_must_be_a_proposed_member(cls, v: uuid.UUID | None, info) -> uuid.UUID | None:
+        if v is None:
+            return v
+        members = info.data.get("proposed_member_ids")
+        if members is not None and v not in members:
+            raise ValueError("أمين سر اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
+        return v
+
 
 class CommitteeFormationRequestUpdate(BaseModel):
     """
@@ -167,6 +181,7 @@ class CommitteeFormationRequestUpdate(BaseModel):
     # القائمة الحالية المحفوظة، تُفرض بطبقة الخدمة لأنها تحتاج قراءة الطلب
     # الحالي من قاعدة البيانات، وهذا غير متاح هنا بمستوى Schema فقط).
     chair_user_id: uuid.UUID | None = None
+    secretary_user_id: uuid.UUID | None = None
 
     @field_validator("proposed_member_ids")
     @classmethod
@@ -207,6 +222,8 @@ class CommitteeFormationRequestOut(BaseModel):
     proposed_members: list[ProposedMemberOut]
     chair_user_id: uuid.UUID | None
     chair: CommitteeMemberUserOut | None
+    secretary_user_id: uuid.UUID | None = None
+    secretary: CommitteeMemberUserOut | None = None
     # اللجنة الناتجة عن اعتماد هذا الطلب — None قبل الاعتماد (Task #15،
     # للتنقّل المباشر من قائمة الطلبات لصفحة اللجنة نفسها عند approved).
     committee_id: uuid.UUID | None
@@ -238,6 +255,8 @@ class CommitteeOut(BaseModel):
     member_roles: list[CommitteeMemberRoleOut]
     chair_user_id: uuid.UUID | None
     chair: CommitteeMemberUserOut | None
+    secretary_user_id: uuid.UUID | None = None
+    secretary: CommitteeMemberUserOut | None = None
     created_at: datetime
     # محسوبة (لا تُخزَّن) — راجعي Committee.lifecycle_state_today
     # (app/models/committee.py)، جزء من "قاعدة فترة اللجنة" (طلب صاحبة

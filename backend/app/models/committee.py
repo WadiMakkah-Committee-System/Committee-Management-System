@@ -122,6 +122,12 @@ class Committee(Base):
     chair_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True
     )
+    # أمين سر اللجنة المعتمدة — يُنسَخ من
+    # committee_formation_requests.secretary_user_id لحظة الاعتماد (approve_request)،
+    # بنفس نمط chair_user_id بالضبط — اختياري (قد يكون None).
+    secretary_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=True
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -138,6 +144,7 @@ class Committee(Base):
         back_populates="committee", foreign_keys=[source_request_id]
     )
     chair: Mapped["User | None"] = relationship(foreign_keys=[chair_user_id], lazy="selectin")  # noqa: F821
+    secretary: Mapped["User | None"] = relationship(foreign_keys=[secretary_user_id], lazy="selectin")  # noqa: F821
     # للقراءة فقط (viewonly) — للتوافق الرجعي مع استعلامات لا تحتاج دور
     # العضو (راجعي docstring أعلى الملف). لإنشاء/قراءة عضوية مع دورها
     # استخدمي member_roles.

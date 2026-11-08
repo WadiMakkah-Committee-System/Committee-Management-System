@@ -46,7 +46,7 @@ export interface RolePermission extends Permission {
 export type RoleKind = 'user' | 'committee'
 
 /** 'chair'/'member' لدوري اللجان الثابتين فقط، وnull لكل الأدوار النظامية. */
-export type CommitteeRoleSlug = 'chair' | 'member' | null
+export type CommitteeRoleSlug = 'chair' | 'member' | 'secretary' | null
 
 export interface Role {
   role_id: string
@@ -344,6 +344,8 @@ export interface CommitteeFormationRequest {
   proposed_members: ProposedMember[]
   chair_user_id: string | null
   chair: CommitteeMemberUser | null
+  secretary_user_id: string | null
+  secretary: CommitteeMemberUser | null
   /** معرّف اللجنة المعتمدة الناتجة عن هذا الطلب — null قبل الاعتماد (approved فقط). */
   committee_id: string | null
   rejection_reason: string | null
@@ -364,6 +366,8 @@ export interface CommitteeFormationRequestCreatePayload {
   end_date: string | null
   proposed_member_ids: string[]
   chair_user_id: string
+  /** اختياري — null يعني بلا أمين سر محدَّد. */
+  secretary_user_id: string | null
 }
 
 export interface CommitteeFormationRequestUpdatePayload {
@@ -374,6 +378,7 @@ export interface CommitteeFormationRequestUpdatePayload {
   end_date?: string | null
   proposed_member_ids?: string[]
   chair_user_id?: string
+  secretary_user_id?: string | null
 }
 
 /** دور اللجنة (رئيس/عضو) — نسخة مختصرة تُستخدم داخل CommitteeMemberRole فقط. */
@@ -404,6 +409,8 @@ export interface Committee {
   member_roles: CommitteeMemberRole[]
   chair_user_id: string | null
   chair: CommitteeMemberUser | null
+  secretary_user_id: string | null
+  secretary: CommitteeMemberUser | null
   created_at: string
   /** الحالة الزمنية المحسوبة (upcoming/ongoing/ended) — راجعي Committee.lifecycle_state_today بالباك-إند. */
   lifecycle_state: 'upcoming' | 'ongoing' | 'ended'
