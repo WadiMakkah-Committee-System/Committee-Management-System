@@ -232,6 +232,7 @@ async def create_request(
     end_date: date | None,
     proposed_member_ids: list[uuid.UUID],
     chair_user_id: uuid.UUID,
+    secretary_user_id: uuid.UUID | None = None,
 ) -> CommitteeFormationRequest:
     """
     إنشاء طلب تشكيل لجنة جديد بحالة draft (RF-COM-100/200) — لا يُرسل
@@ -246,6 +247,8 @@ async def create_request(
     members = await _resolve_members(db, proposed_member_ids)
     if chair_user_id not in {m.user_id for m in members}:
         raise ValueError("رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
+    if secretary_user_id is not None and secretary_user_id not in {m.user_id for m in members}:
+        raise ValueError("أمين سر اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
 
     request = CommitteeFormationRequest(
         committee_name=committee_name,
@@ -257,6 +260,7 @@ async def create_request(
         requested_by=actor_user_id,
         proposed_members=members,
         chair_user_id=chair_user_id,
+        secretary_user_id=secretary_user_id,
     )
     db.add(request)
     await db.flush()
@@ -370,6 +374,7 @@ async def update_request(
     end_date: date | None,
     proposed_member_ids: list[uuid.UUID] | None,
     chair_user_id: uuid.UUID | None,
+    secretary_user_id: uuid.UUID | None = None,
 ) -> CommitteeFormationRequest:
     """
     تعديل طلب قائم. توحيد صلاحية التعديل (مراجعة لاما 2026-08-30 — "لا
@@ -437,6 +442,7 @@ async def update_request(
         "end_date": _iso(request.end_date),
         "member_ids": sorted(str(u.user_id) for u in request.proposed_members),
         "chair_user_id": str(request.chair_user_id) if request.chair_user_id else None,
+        "secretary_user_id": str(request.secretary_user_id) if request.secretary_user_id else None,
     }
 
     if committee_name is not None:
@@ -451,13 +457,18 @@ async def update_request(
 
     if chair_user_id is not None:
         request.chair_user_id = chair_user_id
+    if secretary_user_id is not None:
+        request.secretary_user_id = secretary_user_id
 
-    # التحقق النهائي: الرئيس (سواء الجديد أو المحفوظ سابقًا) يجب أن يبقى
-    # أحد الأعضاء الحاليين — يُعاد فحصه هنا لأن أيًّا من proposed_member_ids
-    # أو chair_user_id قد يتغيّر بمعزل عن الآخر بنفس طلب التعديل.
+    # التحقق النهائي: الرئيس وأمين السر (سواء الجديدان أو المحفوظان سابقًا)
+    # يجب أن يبقيا أحد الأعضاء الحاليين — يُعاد فحصه هنا لأن أيًّا من
+    # proposed_member_ids أو chair_user_id/secretary_user_id قد يتغيّر
+    # بمعزل عن الآخر بنفس طلب التعديل.
     current_member_ids = {u.user_id for u in request.proposed_members}
     if request.chair_user_id is not None and request.chair_user_id not in current_member_ids:
         raise ValueError("رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
+    if request.secretary_user_id is not None and request.secretary_user_id not in current_member_ids:
+        raise ValueError("أمين سر اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب")
 
     await audit_service.log_action(
         db,
@@ -670,6 +681,18 @@ async def approve_request(
     member_role_id = (
         await db.execute(select(Role.role_id).where(Role.committee_role_slug == "member"))
     ).scalar_one()
+    # أمين سر اللجنة (طلب المدير 2026-11-08) — نفس نمط رئيس/عضو
+    # بالضبط، لكنه اختياري (secretary_user_id قد يكون None).
+    secretary_role_id = (
+        await db.execute(select(Role.role_id).where(Role.committee_role_slug == "secretary"))
+    ).scalar_one()
+
+    def _role_for(member_user_id: uuid.UUID) -> uuid.UUID:
+        if member_user_id == request.chair_user_id:
+            return chair_role_id
+        if request.secretary_user_id is not None and member_user_id == request.secretary_user_id:
+            return secretary_role_id
+        return member_role_id
 
     committee = Committee(
         name=request.committee_name,
@@ -682,13 +705,12 @@ async def approve_request(
         member_roles=[
             CommitteeMember(
                 user_id=member.user_id,
-                committee_role_id=(
-                    chair_role_id if member.user_id == request.chair_user_id else member_role_id
-                ),
+                committee_role_id=_role_for(member.user_id),
             )
             for member in request.proposed_members
         ],
         chair_user_id=request.chair_user_id,
+        secretary_user_id=request.secretary_user_id,
     )
     db.add(committee)
 

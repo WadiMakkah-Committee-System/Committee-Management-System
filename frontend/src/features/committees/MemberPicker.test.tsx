@@ -32,7 +32,7 @@ const USERS: User[] = [
 ]
 
 /** Props مشتركة لاختيار الرئيس — بلا رئيس محدد افتراضيًا، تُستبدَل عند الحاجة داخل كل اختبار. */
-const noopChair = { chairId: null, onChairChange: () => {} }
+const noopChair = { chairId: null, onChairChange: () => {}, secretaryId: null, onSecretaryChange: () => {} }
 
 describe('MemberPicker', () => {
   it('يعرض عدّاد "0 محدد" عند عدم اختيار أي عضو', () => {
@@ -141,6 +141,8 @@ describe('MemberPicker', () => {
         onChange={() => {}}
         chairId={null}
         onChairChange={onChairChange}
+        secretaryId={null}
+        onSecretaryChange={() => {}}
       />,
     )
     const radios = screen.getAllByRole('radio')
@@ -150,7 +152,7 @@ describe('MemberPicker', () => {
 
   it('يمنع اختيار أكثر من رئيس واحد (Radio بدل Checkbox)', () => {
     render(
-      <MemberPicker users={USERS} selected={['u-1', 'u-2']} onChange={() => {}} chairId="u-1" onChairChange={() => {}} />,
+      <MemberPicker users={USERS} selected={['u-1', 'u-2']} onChange={() => {}} chairId="u-1" onChairChange={() => {}} secretaryId={null} onSecretaryChange={() => {}} />,
     )
     const radios = screen.getAllByRole('radio') as HTMLInputElement[]
     expect(radios).toHaveLength(2)
@@ -167,6 +169,8 @@ describe('MemberPicker', () => {
         onChange={onChange}
         chairId="u-1"
         onChairChange={onChairChange}
+        secretaryId={null}
+        onSecretaryChange={() => {}}
       />,
     )
     await userEvent.click(screen.getByLabelText('إزالة سارة العتيبي'))
@@ -182,6 +186,8 @@ describe('MemberPicker', () => {
         onChange={() => {}}
         chairId={null}
         onChairChange={() => {}}
+        secretaryId={null}
+        onSecretaryChange={() => {}}
         chairError="يجب اختيار رئيس للجنة"
       />,
     )

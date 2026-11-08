@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Crown, Search, Users as UsersIcon, X } from 'lucide-react'
+import { Crown, NotebookPen, Search, Users as UsersIcon, X } from 'lucide-react'
 import { Avatar } from '@/components/ui/Avatar'
 import { cn } from '@/lib/utils'
 import type { User } from '@/types'
@@ -15,9 +15,14 @@ interface MemberPickerProps {
   /** معرّف العضو المختار ليكون رئيسًا للجنة — null قبل الاختيار. */
   chairId: string | null
   onChairChange: (userId: string) => void
+  /** معرّف العضو المختار ليكون أمين سر اللجنة — null قبل الاختيار (اختياري، بعكس الرئيس). */
+  secretaryId: string | null
+  onSecretaryChange: (userId: string) => void
   error?: string
   /** رسالة خطأ خاصة باختيار الرئيس (مستقلة عن خطأ اختيار الأعضاء). */
   chairError?: string
+  /** رسالة خطأ خاصة باختيار أمين السر. */
+  secretaryError?: string
 }
 
 /**
@@ -41,8 +46,11 @@ export function MemberPicker({
   onChange,
   chairId,
   onChairChange,
+  secretaryId,
+  onSecretaryChange,
   error,
   chairError,
+  secretaryError,
 }: MemberPickerProps) {
   const [search, setSearch] = useState('')
   const selectedSet = useMemo(() => new Set(selected), [selected])
@@ -79,6 +87,7 @@ export function MemberPicker({
     if (selectedSet.has(userId)) {
       onChange(selected.filter((id) => id !== userId))
       if (chairId === userId) onChairChange('')
+      if (secretaryId === userId) onSecretaryChange('')
     } else {
       onChange([...selected, userId])
     }
@@ -120,6 +129,7 @@ export function MemberPicker({
                 className="flex items-center gap-1.5 rounded-xs bg-brand-primary/10 py-1 pl-1 pr-2 text-xs font-medium text-brand-primary"
               >
                 {chairId === u.user_id && <Crown size={11} className="shrink-0" aria-label="رئيس اللجنة" />}
+                {secretaryId === u.user_id && <NotebookPen size={11} className="shrink-0" aria-label="أمين سر اللجنة" />}
                 {u.first_name} {u.last_name}
                 <button
                   type="button"
@@ -240,6 +250,65 @@ export function MemberPicker({
                 ))}
               </div>
               {chairError && <p className="text-xs font-medium text-danger">{chairError}</p>}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence initial={false}>
+        {selectedUsers.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <div
+              className={cn(
+                'flex flex-col gap-2 rounded-sm border p-3 transition-colors',
+                secretaryError ? 'border-danger' : 'border-border-default',
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <NotebookPen size={13} className="text-brand-primary" />
+                  <p className="text-xs font-bold text-text-secondary">أمين سر اللجنة</p>
+                </div>
+                {secretaryId && (
+                  <button
+                    type="button"
+                    onClick={() => onSecretaryChange('')}
+                    className="text-[11px] font-medium text-text-muted transition-colors hover:text-text-primary"
+                  >
+                    إلغاء التحديد
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-text-muted">
+                اختياري — اختر عضوًا من الأعضاء المحددين أعلاه ليكون أمين سر اللجنة
+              </p>
+              <div className="flex flex-col gap-1">
+                {selectedUsers.map((u) => (
+                  <label
+                    key={u.user_id}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-xs px-2 py-1.5 text-sm transition-colors hover:bg-bg-elevated"
+                  >
+                    <input
+                      type="radio"
+                      name="committee-secretary"
+                      checked={secretaryId === u.user_id}
+                      onChange={() => onSecretaryChange(u.user_id)}
+                      className="h-4 w-4 shrink-0 border-border-default text-brand-primary focus:ring-brand-accent/40"
+                    />
+                    <span className="font-medium text-text-primary">
+                      {u.first_name} {u.last_name}
+                    </span>
+                    {u.job_title?.name && <span className="text-xs text-text-muted">({u.job_title.name})</span>}
+                  </label>
+                ))}
+              </div>
+              {secretaryError && <p className="text-xs font-medium text-danger">{secretaryError}</p>}
             </div>
           </motion.div>
         )}

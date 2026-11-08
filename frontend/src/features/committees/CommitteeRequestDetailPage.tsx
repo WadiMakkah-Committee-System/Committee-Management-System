@@ -7,6 +7,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Crown,
+  NotebookPen,
   FileText,
   Mail,
   Pencil,
@@ -530,6 +531,7 @@ export function CommitteeRequestDetailPage() {
         <ul>
           {request.proposed_members.map((member, i) => {
             const isChair = member.user_id === request.chair_user_id
+            const isSecretary = member.user_id === request.secretary_user_id
             return (
               <motion.li
                 key={member.user_id}
@@ -549,6 +551,12 @@ export function CommitteeRequestDetailPage() {
                         <span className="flex items-center gap-1 rounded-full bg-brand-primary/10 px-2 py-0.5 text-[11px] font-semibold text-brand-primary">
                           <Crown size={11} />
                           رئيس اللجنة المقترح
+                        </span>
+                      )}
+                      {isSecretary && (
+                        <span className="flex items-center gap-1 rounded-full bg-text-secondary/10 px-2 py-0.5 text-[11px] font-semibold text-text-secondary">
+                          <NotebookPen size={11} />
+                          أمين سر اللجنة المقترح
                         </span>
                       )}
                     </div>

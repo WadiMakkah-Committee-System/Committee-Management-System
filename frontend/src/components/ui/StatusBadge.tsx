@@ -5,6 +5,7 @@ import {
   ShieldCheck,
   User2,
   Crown,
+  NotebookPen,
   Briefcase,
   Sparkles,
   FileEdit,
@@ -139,9 +140,10 @@ export function CommitteeRequestStatusBadge({ status }: { status: CommitteeReque
  * من: شارة بارزة بأعلى الصفحة توضّح دور المستخدم الحالي نفسه، وشارة بجانب
  * كل عضو بقائمة الأعضاء.
  */
-const COMMITTEE_ROLE_META: Record<'chair' | 'member', { label: string; tone: BadgeTone; icon: ReactNode }> = {
+const COMMITTEE_ROLE_META: Record<'chair' | 'member' | 'secretary', { label: string; tone: BadgeTone; icon: ReactNode }> = {
   chair: { label: 'رئيس اللجنة', tone: 'warning', icon: <Crown size={13} /> },
   member: { label: 'عضو اللجنة', tone: 'info', icon: <User2 size={13} /> },
+  secretary: { label: 'أمين سر اللجنة', tone: 'neutral', icon: <NotebookPen size={13} /> },
 }
 
 export function CommitteeRoleBadge({ slug }: { slug: CommitteeRoleSlug }) {

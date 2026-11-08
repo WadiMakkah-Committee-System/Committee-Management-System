@@ -27,6 +27,8 @@ const schema = z
     // فقط، وليس دورًا عامًا بجدول الأدوار (System Role)؛ نفس القيد مطبّق
     // بالباك-إند (CommitteeFormationRequestCreate._chair_must_be_a_proposed_member).
     chair_user_id: z.string().min(1, 'يجب اختيار رئيس للجنة'),
+    // أمين سر اللجنة — اختياري بعكس الرئيس (طلب المدير 2026-11-08).
+    secretary_user_id: z.string().optional(),
   })
   .superRefine((v, ctx) => {
     // الدائمة بلا تواريخ إطلاقًا — لا تحقق عليها.
@@ -44,6 +46,10 @@ const schema = z
   .refine((v) => !v.chair_user_id || v.proposed_member_ids.includes(v.chair_user_id), {
     message: 'رئيس اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب',
     path: ['chair_user_id'],
+  })
+  .refine((v) => !v.secretary_user_id || v.proposed_member_ids.includes(v.secretary_user_id), {
+    message: 'أمين سر اللجنة يجب أن يكون أحد الأعضاء المقترحين بالطلب',
+    path: ['secretary_user_id'],
   })
 
 type FormValues = z.infer<typeof schema>
@@ -85,6 +91,7 @@ export interface CommitteeRequestFormSubmitValues {
   end_date: string | null
   proposed_member_ids: string[]
   chair_user_id: string
+  secretary_user_id: string | null
 }
 
 interface CommitteeRequestFormModalProps {
@@ -149,6 +156,7 @@ export function CommitteeRequestFormModal({
       end_date: values.duration_type === 'temporary' ? values.end_date || null : null,
       proposed_member_ids: values.proposed_member_ids,
       chair_user_id: values.chair_user_id,
+      secretary_user_id: values.secretary_user_id || null,
     }
   }
 
@@ -168,6 +176,7 @@ export function CommitteeRequestFormModal({
         end_date: request?.end_date ?? '',
         proposed_member_ids: request?.proposed_members.map((m) => m.user_id) ?? [],
         chair_user_id: request?.chair_user_id ?? '',
+        secretary_user_id: request?.secretary_user_id ?? '',
       })
     }
   }, [open, request, reset])
@@ -273,7 +282,7 @@ export function CommitteeRequestFormModal({
           )}
         </FormSection>
 
-        <FormSection icon={<UsersIcon size={13} />} title="الأعضاء المقترحون ورئيس اللجنة" required>
+        <FormSection icon={<UsersIcon size={13} />} title="الأعضاء المقترحون ورئيس اللجنة وأمين سرها" required>
           <Controller
             control={control}
             name="proposed_member_ids"
@@ -282,14 +291,23 @@ export function CommitteeRequestFormModal({
                 control={control}
                 name="chair_user_id"
                 render={({ field: chairField }) => (
-                  <MemberPicker
-                    users={users ?? []}
-                    selected={membersField.value ?? []}
-                    onChange={membersField.onChange}
-                    chairId={chairField.value || null}
-                    onChairChange={chairField.onChange}
-                    error={errors.proposed_member_ids?.message}
-                    chairError={errors.chair_user_id?.message}
+                  <Controller
+                    control={control}
+                    name="secretary_user_id"
+                    render={({ field: secretaryField }) => (
+                      <MemberPicker
+                        users={users ?? []}
+                        selected={membersField.value ?? []}
+                        onChange={membersField.onChange}
+                        chairId={chairField.value || null}
+                        onChairChange={chairField.onChange}
+                        secretaryId={secretaryField.value || null}
+                        onSecretaryChange={secretaryField.onChange}
+                        error={errors.proposed_member_ids?.message}
+                        chairError={errors.chair_user_id?.message}
+                        secretaryError={errors.secretary_user_id?.message}
+                      />
+                    )}
                   />
                 )}
               />
