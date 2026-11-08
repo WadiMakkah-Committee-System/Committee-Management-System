@@ -122,7 +122,14 @@ export interface User {
   last_name: string
   username: string
   email: string
+  /** الدور الحالي (Active Role) — كل الصلاحيات منه (تعدد الأدوار، migration 0046). */
   role: RoleSummary | null
+  /**
+   * كل أدوار المستخدم المسندة (بما فيها الحالي) — تعدد الأدوار، migration 0046.
+   * null/غائب حين لا يحمّلها المسار بالباك-إند (مثل أعضاء الإدارة) — استخدمي
+   * assignedRoles() من @/lib/utils بدل قراءة هذا الحقل مباشرة.
+   */
+  roles?: RoleSummary[] | null
   dep_id: string | null
   department: Department | null
   job_title_id: string | null
@@ -169,6 +176,13 @@ export interface UserDetail extends User {
    * مستوى System Role.
    */
   has_committee_documents_view_access: boolean
+  /**
+   * تعدد الأدوار (migration 0046): {role_id: أكواد صلاحيات ذلك الدور} لكل
+   * دور من أدوار المستخدم — يُعبَّأ فقط بـ/users/me ورد الدخول. يُستخدم
+   * لاقتراح "التبديل لدور يفتح هذه الصفحة" (ProtectedRoute) — لا يمنح أي
+   * صلاحية؛ الباك-إند يفحص الدور الحالي فقط. اختياري: جلسات محفوظة قبل الميزة.
+   */
+  roles_permissions?: Record<string, string[]>
 }
 
 export interface DepartmentDetail extends Department {
@@ -183,8 +197,11 @@ export interface UserCreatePayload {
   username: string
   email: string
   password: string
-  /** اختياري (مراجعة لاما 2026-08-30) — مستخدم بلا دور يُنشأ بنجاح. */
-  role_id: string | null
+  /**
+   * أدوار المستخدم (تعدد الأدوار، migration 0046) — دور واحد أو أكثر، أو []
+   * بلا دور (مراجعة لاما 2026-08-30). أول دور = دوره الحالي عند أول دخول.
+   */
+  role_ids: string[]
   dep_id: string | null
   job_title_id: string | null
   status: UserStatus
@@ -195,7 +212,12 @@ export interface UserUpdatePayload {
   middle_name?: string
   last_name?: string
   email?: string
-  role_id?: string
+  /**
+   * استبدال أدوار المستخدم بالكامل (تعدد الأدوار، migration 0046): [] = إزالة
+   * كل أدواره، غائب = بلا تغيير. دوره الحالي يبقى لو ما زال ضمنها، وإلا يصير
+   * أول دور بالقائمة.
+   */
+  role_ids?: string[]
   dep_id?: string | null
   job_title_id?: string | null
 }
@@ -246,6 +268,8 @@ export interface TokenResponse {
 export interface AuditLogEntry {
   log_id: string
   actor_name: string | null
+  /** الصفة (الدور الحالي) اللي نُفّذت بها العملية — null للسجلات القديمة. */
+  actor_role_name?: string | null
   action_type: string
   target_type: string
   target_id: string

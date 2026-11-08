@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { AxiosError } from 'axios'
-import { cn, extractErrorMessage, fileNameFromDisposition, getInitials, roleLabel } from './utils'
+import {
+  assignedRoles,
+  cn,
+  extractErrorMessage,
+  fileNameFromDisposition,
+  getInitials,
+  otherRolesGrantingAccess,
+  roleLabel,
+} from './utils'
 
 describe('cn', () => {
   it('يدمج classes الصحيحة ويتجاهل القيم الفارغة', () => {
@@ -66,5 +74,42 @@ describe('fileNameFromDisposition', () => {
   it('يرجع لـfilename العادي ثم للبديل', () => {
     expect(fileNameFromDisposition('attachment; filename="a.txt"', 'x')).toBe('a.txt')
     expect(fileNameFromDisposition('', 'x')).toBe('x')
+  })
+})
+
+// ============================ تعدد الأدوار (migration 0046) ============================
+
+describe('assignedRoles / otherRolesGrantingAccess', () => {
+  const role = (role_id: string, is_super_admin = false) => ({
+    role_id,
+    name: role_id,
+    description: null,
+    is_super_admin,
+  })
+  const office = role('office')
+  const admin = role('admin')
+  const root = role('root', true)
+
+  it('يرجع الدور الحالي وحده لو قائمة الأدوار غير محمّلة', () => {
+    expect(assignedRoles({ role: office, roles: null })).toEqual([office])
+    expect(assignedRoles({ role: null })).toEqual([])
+    expect(assignedRoles({ role: office, roles: [office, admin] })).toEqual([office, admin])
+  })
+
+  it('يقترح فقط الأدوار الأخرى اللي تملك إحدى صلاحيات الصفحة', () => {
+    const user = {
+      role: admin,
+      roles: [admin, office],
+      roles_permissions: { admin: ['committees.request.create'], office: ['committees.request.view'] },
+    }
+    expect(otherRolesGrantingAccess(user, { anyPermission: ['committees.request.view'] })).toEqual([office])
+    // الدور الحالي نفسه لا يُقترح أبدًا
+    expect(otherRolesGrantingAccess(user, { anyPermission: ['committees.request.create'] })).toEqual([])
+    expect(otherRolesGrantingAccess(user, { anyPermission: ['users.view'] })).toEqual([])
+  })
+
+  it('صفحات السوبر ادمن: يقترح دور is_super_admin فقط، وجلسة قديمة بلا roles_permissions آمنة', () => {
+    expect(otherRolesGrantingAccess({ role: admin, roles: [admin, root] }, { superAdminOnly: true })).toEqual([root])
+    expect(otherRolesGrantingAccess({ role: admin, roles: [admin, office] }, { anyPermission: ['x'] })).toEqual([])
   })
 })

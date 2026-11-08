@@ -33,7 +33,11 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     # اختياري (مراجعة لاما 2026-08-30 — "لا تجعل حقل الدور إجباريًا عند
     # إضافة مستخدم"): مستخدم بلا دور يُنشأ بنجاح؛ راجعي user_service.create_user.
+    # تعدد الأدوار (migration 0046): role_ids = كل أدوار المستخدم، وrole_id
+    # (اختياري) = دوره الحالي عند أول دخول (لازم يكون ضمن role_ids). role_id
+    # وحده = دور واحد (الطريقة القديمة — رفع ملف المستخدمين وعملاء قديمة).
     role_id: uuid.UUID | None = None
+    role_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
     dep_id: uuid.UUID | None = None
     job_title_id: uuid.UUID | None = None
     status: UserStatus = UserStatus.active
@@ -56,8 +60,17 @@ class UserUpdate(BaseModel):
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     email: EmailStr | None = None
     role_id: uuid.UUID | None = None
+    # تعدد الأدوار (migration 0046): None = بلا تغيير، [] = إزالة كل الأدوار،
+    # قائمة = استبدال الأدوار بالكامل — راجعي user_service.update_user.
+    role_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
     dep_id: uuid.UUID | None = None
     job_title_id: uuid.UUID | None = None
+
+
+class ActiveRoleSwitch(BaseModel):
+    """POST /users/me/active-role — الدور المطلوب من بين أدوار المستخدم المسندة."""
+
+    role_id: uuid.UUID
 
 
 class UserOut(BaseModel):
@@ -77,7 +90,12 @@ class UserOut(BaseModel):
     username: str
     email: str
     # اختياري (مراجعة لاما 2026-08-30): مستخدم بدون دور مُعيَّن بعد.
+    # تعدد الأدوار (migration 0046): هذا هو "الدور الحالي" — كل الصلاحيات منه.
     role: RoleSummaryOut | None = None
+    # كل أدوار المستخدم المسندة (بما فيها الحالي) بترتيب الإسناد. null حين
+    # لا يحمّلها المسار (مثل قائمة أعضاء الإدارة) — بدل استعلام إضافي خفي.
+    # راجعي User.roles.
+    roles: list[RoleSummaryOut] | None = None
     dep_id: uuid.UUID | None
     department: DepartmentOut | None = None
     job_title_id: uuid.UUID | None
@@ -133,6 +151,12 @@ class UserDetailOut(UserOut):
     # (راجعي committee_service.user_has_committee_role_documents_view_access
     # وapp/api/v1/documents.py::_require_documents_view_access).
     has_committee_documents_view_access: bool = False
+    # تعدد الأدوار (migration 0046): {role_id: [أكواد صلاحيات الدور]} لكل دور
+    # من أدوار المستخدم المسندة — يُعبَّأ فقط بـ/users/me وتسجيل الدخول.
+    # تستخدمه الواجهة لتعرف أي دور من أدواره يفتح صفحة/إشعارًا لا يفتحه
+    # دوره الحالي، فتعرض زر "التبديل لذلك الدور". لا يمنح أي صلاحية — كل
+    # الفحوصات الفعلية بالباك-إند على الدور الحالي فقط.
+    roles_permissions: dict[str, list[str]] = Field(default_factory=dict)
 
 
 # app.schemas.department.DepartmentDetailOut يشير إلى "UserOut" كـ Forward

@@ -61,6 +61,12 @@ class AuditLog(Base):
     metadata_: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata", JSONB, nullable=True
     )
+    # الصفة (الدور الحالي) اللي نفّذ بها الفاعل العملية — migration 0046
+    # (تعدد الأدوار). تُعبَّأ تلقائيًا بـaudit_service.log_action من سياق
+    # الطلب الحالي (app.core.request_context). NULL للسجلات القديمة.
+    actor_role_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("roles.role_id", ondelete="SET NULL"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -69,3 +75,8 @@ class AuditLog(Base):
     # علاقة أحادية الاتجاه فقط للقراءة (اسم من نفّذ العملية) — بدون
     # back_populates لأن User لا يحتاج قائمة سجلات التدقيق الخاصة به.
     actor: Mapped["User | None"] = relationship(lazy="selectin", foreign_keys=[actor_user_id])  # noqa: F821
+    # اسم الصفة للعرض فقط — raise_on_sql: لا تُحمَّل إلا صراحةً
+    # (joinedload بـaudit_service.list_audit_logs، بنفس استعلام السجلات).
+    actor_role: Mapped["Role | None"] = relationship(  # noqa: F821
+        lazy="raise_on_sql", foreign_keys=[actor_role_id]
+    )

@@ -1095,18 +1095,15 @@ async def user_has_committee_role_documents_view_access(db: AsyncSession, *, use
     return (result.scalar() or 0) > 0
 
 
-async def committee_membership_flags(
-    db: AsyncSession, *, user_id: uuid.UUID
-) -> tuple[bool, bool, bool]:
+def committee_membership_flag_columns(user_id: uuid.UUID) -> tuple:
     """
-    (has_committee_membership_access, has_any_committee_membership,
-    has_committee_documents_view_access) لـGET /users/me وauth.login
-    باستعلام واحد بدل 3 استعلامات متتالية (تحسين أداء 2026-10-24، وُسِّع
-    2026-11-01 ليشمل صلاحية الوثائق بنفس الاستعلام بدل استعلام رابع منفصل
-    على هذا المسار شائع الاستدعاء تحديدًا) — نفس شروط
-    user_has_committee_role_view_access وuser_has_any_committee_membership
-    وuser_has_committee_role_documents_view_access أعلاه حرفيًا، كـscalar
-    subqueries داخل SELECT واحد.
+    أعمدة الأعلام الثلاثة (scalar subqueries) لـcommittee_membership_flags —
+    مفصولة عنها (تعدد الأدوار، migration 0046) حتى تقدر build_my_profile
+    (/users/me وتسجيل الدخول) تدمجها مع عمود أدوار المستخدم بنفس الـSELECT
+    الواحد، بدل استعلام إضافي على هذا المسار شائع الاستدعاء.
+
+    المخرجات: (view_access, any_membership, documents_view_access) — أعداد
+    (count)، وأي قيمة > 0 تعني True.
     """
     view_access = (
         select(func.count())
@@ -1136,7 +1133,23 @@ async def committee_membership_flags(
         )
         .scalar_subquery()
     )
-    row = (await db.execute(select(view_access, any_membership, documents_view_access))).one()
+    return view_access, any_membership, documents_view_access
+
+
+async def committee_membership_flags(
+    db: AsyncSession, *, user_id: uuid.UUID
+) -> tuple[bool, bool, bool]:
+    """
+    (has_committee_membership_access, has_any_committee_membership,
+    has_committee_documents_view_access) لـGET /users/me وauth.login
+    باستعلام واحد بدل 3 استعلامات متتالية (تحسين أداء 2026-10-24، وُسِّع
+    2026-11-01 ليشمل صلاحية الوثائق بنفس الاستعلام بدل استعلام رابع منفصل
+    على هذا المسار شائع الاستدعاء تحديدًا) — نفس شروط
+    user_has_committee_role_view_access وuser_has_any_committee_membership
+    وuser_has_committee_role_documents_view_access أعلاه حرفيًا، كـscalar
+    subqueries داخل SELECT واحد (committee_membership_flag_columns).
+    """
+    row = (await db.execute(select(*committee_membership_flag_columns(user_id)))).one()
     return (row[0] or 0) > 0, (row[1] or 0) > 0, (row[2] or 0) > 0
 
 

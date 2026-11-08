@@ -6,6 +6,16 @@ export async function fetchMe(): Promise<UserDetail> {
   return data
 }
 
+/**
+ * تبديل الدور الحالي للمستخدم نفسه — POST /users/me/active-role (تعدد الأدوار،
+ * migration 0046). الباك-إند يقبل فقط دورًا من أدوار المستخدم المسندة، ويرجّع
+ * بياناته الكاملة بعد التبديل (نفس شكل /users/me) فتتحدّث الصلاحيات مباشرة.
+ */
+export async function switchActiveRole(roleId: string): Promise<UserDetail> {
+  const { data } = await apiClient.post<UserDetail>('/users/me/active-role', { role_id: roleId })
+  return data
+}
+
 export async function fetchUsers(dep_id?: string): Promise<User[]> {
   const { data } = await apiClient.get<User[]>('/users', { params: dep_id ? { dep_id } : undefined })
   return data

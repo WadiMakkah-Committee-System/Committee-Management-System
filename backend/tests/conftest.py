@@ -29,6 +29,7 @@ from app.db.session import AsyncSessionLocal, engine
 from app.main import app
 from app.models.role import Role
 from app.models.user import User
+from app.models.user_role import UserRole
 
 
 @pytest.fixture(autouse=True)
@@ -145,6 +146,10 @@ async def super_admin_user(roles_by_name: dict[str, str]) -> User:
             must_change_password=False,
         )
         db.add(user)
+        await db.flush()
+        # تعدد الأدوار (migration 0046): الدور الحالي لازم يكون من أدوار
+        # المستخدم المسندة (قيد users_active_role_assigned_fkey عند COMMIT).
+        db.add(UserRole(user_id=user.user_id, role_id=user.role_id))
         await db.commit()
         await db.refresh(user)
         return user

@@ -53,6 +53,46 @@ const SYSTEM_ROLE_LABELS: Record<SystemRoleName, string> = {
   executive_office_secretary: 'سكرتير المكتب التنفيذي',
 }
 
+/**
+ * الهدف: كل أدوار المستخدم المسندة (تعدد الأدوار — migration 0046) بشكل آمن.
+ *
+ * المدخلات: user بحقلي role (الحالي) وroles (كل المسندة، قد يغيب أو يكون null
+ * حين لا يحمّله المسار بالباك-إند، أو بجلسة محفوظة قبل الميزة).
+ *
+ * المخرجات: roles لو موجودة، وإلا [role] الحالي فقط (أو [] بلا دور) — بحيث
+ * لا تحتاج أي شاشة تفحص الحالتين بنفسها.
+ */
+export function assignedRoles(user: { role: RoleSummary | null; roles?: RoleSummary[] | null }): RoleSummary[] {
+  if (user.roles && user.roles.length > 0) return user.roles
+  return user.role ? [user.role] : []
+}
+
+/**
+ * الهدف:
+ * أدوار المستخدم *الأخرى* (غير الحالي) اللي تفتح صفحة لا يفتحها دوره الحالي
+ * — لعرض "هذه الصفحة تتبع دور «...» — بدّل إليه" بدل تحويله بصمت (تعدد
+ * الأدوار، migration 0046).
+ *
+ * المدخلات: user (بـroles_permissions من /users/me)، وشرط الصفحة نفسه
+ * المستخدم بـProtectedRoute: anyPermission (يكفي واحد) أو superAdminOnly.
+ *
+ * المخرجات: الأدوار المرشحة بترتيبها — [] لو لا يوجد دور آخر يفتحها.
+ *
+ * ملاحظة أمنية: اقتراح عرض فقط — التبديل نفسه والصلاحيات كلها تُفحص بالباك-إند.
+ */
+export function otherRolesGrantingAccess(
+  user: Pick<UserDetail, 'role' | 'roles' | 'roles_permissions'>,
+  requirement: { anyPermission?: string[]; superAdminOnly?: boolean },
+): RoleSummary[] {
+  const currentId = user.role?.role_id
+  return assignedRoles(user).filter((role) => {
+    if (role.role_id === currentId) return false
+    if (requirement.superAdminOnly) return role.is_super_admin
+    const codes = user.roles_permissions?.[role.role_id] ?? []
+    return !!requirement.anyPermission?.some((code) => codes.includes(code))
+  })
+}
+
 /** التسمية المعروضة لأي دور — نظامي أو مخصَّص — تُستخدم في الجداول والشارات. */
 export function roleLabel(role: Pick<RoleSummary, 'name'> | null): string {
   // مراجعة لاما 2026-08-30: مستخدم بلا دور مُعيَّن (role=null) حالة صالحة الآن.

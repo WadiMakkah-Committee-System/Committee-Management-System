@@ -17,7 +17,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, raiseload
 
+from app.core.request_context import current_actor
 from app.models.audit_log import AuditLog
+
+# قيمة حارسة: "لم يُمرَّر actor_role_id صراحةً" (مختلفة عن None = "بلا صفة").
+_FROM_CONTEXT: Any = object()
 
 
 async def log_action(
@@ -28,19 +32,30 @@ async def log_action(
     target_type: str,
     target_id: uuid.UUID,
     metadata: dict[str, Any] | None = None,
+    actor_role_id: uuid.UUID | None = _FROM_CONTEXT,
 ) -> None:
     """
     تسجيل عملية تدقيق واحدة. لا يُنفَّذ commit هنا عمدًا — يُترك لطبقة
     الخدمة المستدعية لتضمين هذا السجل ضمن نفس المعاملة (transaction) مع
     العملية الأساسية (مثال: إنشاء مستخدم + تسجيل التدقيق يُحفظان معًا أو
     لا يُحفظ أي منهما).
+
+    actor_role_id (تعدد الأدوار — migration 0046): الصفة اللي نُفّذت بها
+    العملية. لو لم تُمرَّر، تُؤخذ من سياق الطلب الحالي (الدور الحالي
+    للمستخدم المصادَق عليه) بشرط أن يكون هو نفسه الفاعل actor_user_id —
+    بدون أي استعلام إضافي. عمليات بلا مستخدم مصادَق (المجدوِل، تسجيل
+    الدخول) تبقى NULL ما لم تُمرَّر صراحةً.
     """
+    if actor_role_id is _FROM_CONTEXT:
+        ctx = current_actor.get()
+        actor_role_id = ctx[1] if ctx is not None and ctx[0] == actor_user_id else None
     entry = AuditLog(
         actor_user_id=actor_user_id,
         action_type=action_type,
         target_type=target_type,
         target_id=target_id,
         metadata_=metadata,
+        actor_role_id=actor_role_id,
     )
     db.add(entry)
 
@@ -81,6 +96,8 @@ async def list_audit_logs(
         # 2026-10-24). JOIN آمن مع LIMIT هنا لأنها علاقة many-to-one.
         base_stmt.options(
             joinedload(AuditLog.actor).raiseload("*", sql_only=True),
+            # الصفة (اسم الدور) بنفس الاستعلام — many-to-one آمن مع LIMIT.
+            joinedload(AuditLog.actor_role).raiseload("*", sql_only=True),
             raiseload("*", sql_only=True),
         )
         .order_by(AuditLog.created_at.desc())

@@ -4,12 +4,12 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Avatar } from '@/components/ui/Avatar'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { RoleBadge, UserStatusBadge } from '@/components/ui/StatusBadge'
+import { UserRolesBadges, UserStatusBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useUserDetail, useSuspendUser, useReactivateUser, useUpdateUser } from '@/hooks/useUsers'
 import { usePermissionsCatalog } from '@/hooks/useRoles'
-import { extractErrorMessage } from '@/lib/utils'
+import { assignedRoles, extractErrorMessage } from '@/lib/utils'
 
 interface MemberDetailModalProps {
   userId: string | null
@@ -105,9 +105,11 @@ export function MemberDetailModal({
                 <Building2 size={15} className="text-text-muted" />
                 <span className="text-text-secondary">{user.department?.name ?? 'بدون إدارة'}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-text-muted">الدور:</span>
-                <RoleBadge role={user.role} />
+              <div className="flex items-start gap-2">
+                <span className="mt-1 shrink-0 text-xs text-text-muted">
+                  {assignedRoles(user).length > 1 ? 'الأدوار:' : 'الدور:'}
+                </span>
+                <UserRolesBadges user={user} />
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-text-muted">الحالة:</span>

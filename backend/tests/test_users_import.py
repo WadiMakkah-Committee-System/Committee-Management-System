@@ -25,6 +25,7 @@ from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.role import Role
 from app.models.user import User
+from app.models.user_role import UserRole
 from app.services import notification_service
 from app.services.user_import_service import (
     MAX_ROWS,
@@ -322,12 +323,14 @@ async def _login_with_role(
     assert role.status_code == 201, role.text
     username = f"importer_{uuid.uuid4().hex[:6]}"
     async with AsyncSessionLocal() as db:
-        db.add(
-            User(
-                first_name="م", middle_name="س", last_name="ت", username=username, email=f"{username}@example.com",
-                password_hash=hash_password("StrongPass1"), role_id=role.json()["role_id"], dep_id=dep_id,
-            )
+        importer = User(
+            first_name="م", middle_name="س", last_name="ت", username=username, email=f"{username}@example.com",
+            password_hash=hash_password("StrongPass1"), role_id=role.json()["role_id"], dep_id=dep_id,
         )
+        db.add(importer)
+        await db.flush()
+        # تعدد الأدوار (migration 0046): الدور الحالي لازم يكون من أدواره المسندة.
+        db.add(UserRole(user_id=importer.user_id, role_id=importer.role_id))
         await db.commit()
     login = await client.post("/api/v1/auth/login", json={"username": username, "password": "StrongPass1"})
     return {"Authorization": f"Bearer {login.json()['access_token']}"}

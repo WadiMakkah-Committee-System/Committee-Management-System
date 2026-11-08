@@ -7,6 +7,7 @@ import { useMutation } from '@tanstack/react-query'
 import * as authApi from '@/api/auth'
 import { Avatar } from '@/components/ui/Avatar'
 import { NotificationBell } from './NotificationBell'
+import { RoleSwitcher } from './RoleSwitcher'
 import { ThemeToggle } from './ThemeToggle'
 import { roleLabel } from '@/lib/utils'
 
@@ -49,6 +50,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       <div className="hidden lg:block" />
 
       <div className="flex items-center gap-2">
+        {/* تعدد الأدوار (migration 0046): يظهر فقط لمن يحمل أكثر من دور */}
+        <RoleSwitcher />
         <NotificationBell />
         <ThemeToggle />
         <div className="relative" ref={menuRef}>

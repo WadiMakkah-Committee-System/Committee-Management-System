@@ -1,5 +1,6 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { notify } from '@/components/ui/Toast'
+import { ACTIVE_ROLE_CHANGED_EVENT, ACTIVE_ROLE_HEADER, isActiveRoleChangedError } from '@/lib/activeRole'
 import { useAuthStore } from '@/store/authStore'
 import type { TokenResponse } from '@/types'
 
@@ -24,9 +25,15 @@ export const apiClient = axios.create({
 })
 
 apiClient.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().accessToken
+  const { accessToken: token, user } = useAuthStore.getState()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  // تعدد الأدوار (migration 0046): الدور الحالي اللي تعرضه هذي النافذة — لو
+  // بدّله المستخدم من تبويب آخر، يرجع الباك-إند 409 بدل تنفيذ الطلب بصفة
+  // غير المعروضة. يُرسَل فقط بعد تحميل بيانات المستخدم (قيمة فارغة = بلا دور).
+  if (token && user) {
+    config.headers[ACTIVE_ROLE_HEADER] = user.role?.role_id ?? ''
   }
   // FormData (رفع ملفات — راجعي uploadMeetingAttachment بـapi/meetings.ts):
   // axios.create({ headers: { 'Content-Type': 'application/json' } }) أعلاه
@@ -61,6 +68,13 @@ apiClient.interceptors.response.use(
       | undefined
 
     const isAuthEndpoint = originalRequest?.url?.includes('/auth/login')
+
+    // تعدد الأدوار: الدور الحالي تغيّر من نافذة أخرى — useActiveRoleSync
+    // (AppShell) يعيد تحميل بيانات المستخدم ويحدّث الصفحة بالدور الصحيح.
+    if (isActiveRoleChangedError(error)) {
+      window.dispatchEvent(new CustomEvent(ACTIVE_ROLE_CHANGED_EVENT))
+      return Promise.reject(error)
+    }
 
     if (error.response?.status !== 401 || !originalRequest || originalRequest._retry || isAuthEndpoint) {
       return Promise.reject(error)

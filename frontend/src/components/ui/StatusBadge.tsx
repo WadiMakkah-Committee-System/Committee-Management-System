@@ -24,7 +24,7 @@ import {
   Minus,
   AlertTriangle,
 } from 'lucide-react'
-import { cn, roleLabel } from '@/lib/utils'
+import { assignedRoles, cn, roleLabel } from '@/lib/utils'
 import type {
   Committee,
   CommitteeRequestStatus,
@@ -107,6 +107,60 @@ export function RoleBadge({ role }: { role: RoleSummary | null }) {
     <Badge tone={tone} icon={icon}>
       {roleLabel(role)}
     </Badge>
+  )
+}
+
+/**
+ * الهدف: عرض أدوار مستخدم في الجداول والتفاصيل — تعدد الأدوار (migration 0046).
+ *
+ * المدخلات:
+ * - user: الدور الحالي (role) وكل الأدوار المسندة (roles، قد تغيب).
+ * - compact: للجداول — الدور الحالي + شارة "+N" (أسماء البقية بتلميح)؛ بدونه
+ *   (صفحات التفاصيل) تُعرض كل الأدوار، والحالي أولًا وموسوم "الحالي".
+ *
+ * مستخدم بدور واحد (أو بلا دور) يظهر بالضبط كما كان قبل الميزة (RoleBadge).
+ */
+export function UserRolesBadges({
+  user,
+  compact = false,
+}: {
+  user: { role: RoleSummary | null; roles?: RoleSummary[] | null }
+  compact?: boolean
+}) {
+  const roles = assignedRoles(user)
+  if (roles.length <= 1) return <RoleBadge role={user.role ?? roles[0] ?? null} />
+
+  const currentId = user.role?.role_id
+  const others = roles.filter((r) => r.role_id !== currentId)
+
+  if (compact) {
+    const othersLabel = others.map((r) => roleLabel(r)).join('، ')
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <RoleBadge role={user.role} />
+        <span
+          title={`أدوار أخرى: ${othersLabel}`}
+          aria-label={`و${others.length} أدوار أخرى: ${othersLabel}`}
+          className="rounded-xs border border-border-default px-1.5 py-1 text-xs font-semibold text-text-secondary"
+        >
+          +{others.length}
+        </span>
+      </span>
+    )
+  }
+
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      {user.role && (
+        <span className="inline-flex items-center gap-1">
+          <RoleBadge role={user.role} />
+          <span className="text-[11px] font-medium text-text-muted">(الحالي)</span>
+        </span>
+      )}
+      {others.map((role) => (
+        <RoleBadge key={role.role_id} role={role} />
+      ))}
+    </span>
   )
 }
 

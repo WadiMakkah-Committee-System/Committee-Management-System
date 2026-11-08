@@ -31,7 +31,7 @@ from app.core.config import settings
 from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
 from app.models.user import User, UserStatus
-from app.schemas.user import UserCreate, UserDetailOut, UserOut, UserUpdate
+from app.schemas.user import ActiveRoleSwitch, UserCreate, UserDetailOut, UserOut, UserUpdate
 from app.schemas.user_import import (
     ImportedDepartmentOut,
     ImportedUserOut,
@@ -95,16 +95,44 @@ async def get_my_profile(
 async def build_my_profile(db: AsyncSession, user: User) -> UserDetailOut:
     """شكل /users/me — مشترك مع رد تسجيل الدخول (auth.login) حتى يبقى
     الاثنان متطابقين دائمًا. user لازم يكون محمَّلًا بشكله الكامل
-    (user_service.get_user / get_user_by_username)."""
+    (user_service.get_user / get_user_by_username).
+
+    تعدد الأدوار (migration 0046): أدوار المستخدم المسندة (roles) مع صلاحيات
+    كل دور (roles_permissions) تُجلب بنفس استعلام أعلام عضوية اللجان — فهذا
+    المسار يبقى استعلامًا واحدًا بعد المصادقة، كما كان قبل الميزة."""
     data = UserOut.model_validate(user).model_dump()
     data["permissions"] = sorted(user.permission_codes)
     data["permission_scopes"] = user.permission_scopes
-    (
-        data["has_committee_membership_access"],
-        data["has_any_committee_membership"],
-        data["has_committee_documents_view_access"],
-    ) = await committee_service.committee_membership_flags(db, user_id=user.user_id)
+    data.update(await user_service.load_profile_extras(db, user_id=user.user_id))
     return UserDetailOut.model_validate(data)
+
+
+@router.post("/me/active-role", response_model=UserDetailOut)
+async def switch_my_active_role(
+    payload: ActiveRoleSwitch, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> UserDetailOut:
+    """
+    POST /users/me/active-role — تبديل الدور الحالي (مبدّل الأدوار بالشريط
+    العلوي؛ تعدد الأدوار — migration 0046).
+
+    - Authentication: أي مستخدم مسجَّل الدخول.
+    - Authorization: على نفسه فقط (المعرّف من التوكن، لا من الطلب)، ولدور من
+      أدواره المسندة فقط — لا يمنح أي دور جديد.
+    - Validation: role_id (UUID).
+    - 200: بيانات المستخدم بعد التبديل (نفس شكل /users/me) — الواجهة تحدّث
+      القائمة الجانبية والصلاحيات منها مباشرة بلا طلب إضافي.
+    - 400: الدور غير مسند لهذا المستخدم.
+
+    معفى من فحص رأس X-Active-Role (core.dependencies) — هو نفسه طريق تغيير
+    الدور الحالي.
+    """
+    try:
+        user = await user_service.set_active_role(db, user_id=current_user.user_id, role_id=payload.role_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="المستخدم غير موجود")
+    return await build_my_profile(db, user)
 
 
 @router.post(
@@ -141,6 +169,7 @@ async def create_user(
             email=payload.email,
             password=payload.password,
             role_id=payload.role_id,
+            role_ids=payload.role_ids,
             dep_id=payload.dep_id,
             job_title_id=payload.job_title_id,
             status=payload.status,
@@ -297,7 +326,8 @@ async def import_users(
 async def get_user(
     user_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> UserDetailOut:
-    user = await user_service.get_user(db, user_id)
+    # مع كل أدواره المسندة (UserOut.roles) — تعدد الأدوار، migration 0046.
+    user = await user_service.get_user_with_roles(db, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="المستخدم غير موجود")
     _check_user_scope_access(current_user, user, "users.view")
@@ -343,6 +373,7 @@ async def update_user(
             last_name=payload.last_name,
             email=payload.email,
             role_id=payload.role_id,
+            role_ids=payload.role_ids,
             dep_id=payload.dep_id,
             job_title_id=payload.job_title_id,
         )

@@ -21,12 +21,13 @@
 import asyncio
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Query, WebSocketException, status
+from fastapi import Depends, HTTPException, Query, Request, WebSocketException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import perf_probe
 from app.core.redis_client import touch_session
+from app.core.request_context import current_actor
 from app.core.security import InvalidTokenError, decode_token
 from app.db.session import AsyncSessionLocal, get_db
 from app.models.user import User, UserStatus
@@ -104,11 +105,74 @@ async def _resolve_user_from_token(token: str, db: AsyncSession) -> User:
     return user
 
 
+#: رأس الطلب اللي ترسل فيه الواجهة معرّف "الدور الحالي" اللي تعرضه حاليًا
+#: (تعدد الأدوار — migration 0046). راجعي _check_active_role_header أدناه.
+ACTIVE_ROLE_HEADER = "X-Active-Role"
+
+#: رمز ثابت بجسم استجابة 409 — تتعرّف عليه الواجهة فتعيد تحميل /users/me.
+ACTIVE_ROLE_CHANGED_CODE = "active_role_changed"
+
+#: مسارات لا يُطبَّق عليها فحص الرأس: هي نفسها طريق الواجهة للتعافي
+#: (جلب الدور الحالي الفعلي، أو تبديله).
+_ACTIVE_ROLE_CHECK_EXEMPT: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("GET", "/api/v1/users/me"),
+        ("POST", "/api/v1/users/me/active-role"),
+    }
+)
+
+
+def _check_active_role_header(request: Request, user: User) -> None:
+    """
+    الهدف:
+    منع تنفيذ طلب بصفة غير اللي تعرضها الواجهة — لو بدّل المستخدم دوره من
+    تبويب، تبويب آخر مفتوح بالدور القديم ما يرسل طلبات بصلاحيات الدور الجديد
+    وهو يعرض واجهة الدور القديم.
+
+    المسؤولية:
+    لو أرسلت الواجهة رأس X-Active-Role وكان مختلفًا عن الدور الحالي الفعلي
+    بقاعدة البيانات (user.role_id) → 409 برمز active_role_changed، فتعيد
+    الواجهة تحميل بيانات المستخدم وتعرض الدور الصحيح.
+
+    ملاحظات:
+    - مقارنة بالذاكرة فقط — user محمَّل أصلًا بنفس استعلام المصادقة، فصفر
+      استعلامات إضافية.
+    - الرأس اختياري: غيابه = لا فحص (عملاء قديمة/أدوات API)، والصلاحيات
+      نفسها تبقى من قاعدة البيانات دائمًا — هذا الرأس لا يمنح أي صلاحية
+      إطلاقًا، فقط يكشف عدم تطابق العرض (لا نثق بأي دور قادم من العميل).
+    - قيمة فارغة = "الواجهة تعرض مستخدمًا بلا دور".
+    """
+    # قالب المسار المطابَق (مثل "/api/v1/users/me") بدل url.path — لا يتأثر
+    # بأي بادئة نشر (root_path) أمام التطبيق.
+    route_path = getattr(request.scope.get("route"), "path", request.url.path)
+    if (request.method, route_path) in _ACTIVE_ROLE_CHECK_EXEMPT:
+        return
+    header = request.headers.get(ACTIVE_ROLE_HEADER)
+    if header is None:
+        return
+    actual = str(user.role_id) if user.role_id is not None else ""
+    if header.strip().lower() != actual:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": ACTIVE_ROLE_CHANGED_CODE,
+                "message": "تغيّر دورك الحالي من نافذة أخرى — حدّث الصفحة للمتابعة بالدور الحالي",
+                "active_role_id": actual or None,
+            },
+        )
+
+
 async def get_current_user(
+    request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    return await _resolve_user_from_token(token, db)
+    user = await _resolve_user_from_token(token, db)
+    _check_active_role_header(request, user)
+    # سياق الطلب: من + بأي صفة — يستهلكه audit_service.log_action لتسجيل
+    # الصفة بسجل التدقيق (راجعي app/core/request_context.py).
+    current_actor.set((user.user_id, user.role_id))
+    return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
