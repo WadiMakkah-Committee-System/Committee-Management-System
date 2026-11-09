@@ -150,6 +150,11 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   const [screenSharerIds, setScreenSharerIds] = useState<Set<string>>(new Set())
 
   const socketRef = useRef<Socket | null>(null)
+  // نسخة state من نفس الاتصال (لوحة المحضر داخل الغرفة — 2026-11-09): تُمرَّر
+  // لـuseMinutesRealtime بدل فتح اتصال ثانٍ، لأن الباك-إند يبث presence.left
+  // عند قطع *أي* اتصال (يظهر المستخدم "غادر" للكل) وpresence.joined عند فتحه.
+  // state وليس ref فقط لأن effects الأبناء تعمل قبل effect هذا الهوك.
+  const [sharedSocket, setSharedSocket] = useState<Socket | null>(null)
   const queryClient = useQueryClient()
 
   const pushActivity = useCallback((text: string) => {
@@ -168,6 +173,7 @@ export function useMeetingRealtime(meetingId: string | undefined) {
 
     const socket = createMeetingSocket(meetingId)
     socketRef.current = socket
+    setSharedSocket(socket)
 
     socket.on('connect', () => setStatus('open'))
 
@@ -351,6 +357,7 @@ export function useMeetingRealtime(meetingId: string | undefined) {
     return () => {
       socket.disconnect()
       socketRef.current = null
+      setSharedSocket(null)
     }
   }, [meetingId, pushActivity, queryClient])
 
@@ -531,6 +538,7 @@ export function useMeetingRealtime(meetingId: string | undefined) {
   const applyRecordingState = useCallback((state: LiveRecordingState) => setRecordingState(state), [])
 
   return {
+    socket: sharedSocket,
     recordingState,
     applyRecordingState,
     remoteCaptions,

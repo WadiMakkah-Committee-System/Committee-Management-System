@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { Captions, CaptionsOff, Circle, Loader2, Settings2, Square, TimerOff } from 'lucide-react'
-import { useAddAgendaItem, useMeetingDetail } from '@/hooks/useMeetings'
+import { Captions, CaptionsOff, Circle, FileText, LayoutPanelLeft, Loader2, Settings2, Square, TimerOff } from 'lucide-react'
+import { useAddAgendaItem, useExtendMeeting, useMeetingDetail } from '@/hooks/useMeetings'
 import { useCommittees } from '@/hooks/useCommittees'
 import { useAuthStore } from '@/store/authStore'
 import { useMeetingRealtime } from '@/hooks/useMeetingRealtime'
@@ -10,6 +10,8 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingRoomAppRail } from './room/MeetingRoomAppRail'
 import { MeetingRoomSidebar, type RoomPanelKey } from './room/MeetingRoomSidebar'
+import { PanelEdgeToggle } from './room/PanelEdgeToggle'
+import { ExtendMeetingModal } from './ExtendMeetingModal'
 import { MeetingRoomHeader } from './room/MeetingRoomHeader'
 import { AgoraMeetingStage } from './room/AgoraMeetingStage'
 import { useAgoraCall } from './room/useAgoraCall'
@@ -25,6 +27,7 @@ import { AttachmentsPanel } from './room/panels/AttachmentsPanel'
 import { ChatPanel } from './room/panels/ChatPanel'
 import { ActivityPanel } from './room/panels/ActivityPanel'
 import { LobbyPanel } from './room/panels/LobbyPanel'
+import { MinutesPanel } from './room/panels/MinutesPanel'
 import { GuestWaitingScreen } from './room/GuestWaitingScreen'
 import { VotingOverlay } from './room/VotingOverlay'
 import { AgendaTimerBanner } from './room/AgendaTimerBanner'
@@ -35,7 +38,7 @@ import { useMeetingAttendance } from './room/useMeetingAttendance'
 import { CaptionsOverlay } from './room/CaptionsOverlay'
 import { CatchUpButton } from './room/CatchUpButton'
 import { saveTranscriptSegments } from '@/api/meetings'
-import { extractErrorMessage } from '@/lib/utils'
+import { cn, extractErrorMessage } from '@/lib/utils'
 import type { CaptionLine, FinalCaption } from './room/useTeamsEmbeddedCall'
 import { scopeFor } from '@/lib/utils'
 import type { MeetingAgendaItem } from '@/types'
@@ -131,6 +134,18 @@ export function MeetingRoom({
   const ownCaptionBufferRef = useRef<(OwnFinalCaption & { agendaItemId: string | null })[]>([])
 
   const [activePanel, setActivePanel] = useState<RoomPanelKey>('participants')
+  // طيّ/فتح اللوحتين الجانبيتين (طلب لاما 2026-11-09 — توفير مساحة للفيديو).
+  // اللوحة المطوية تبقى مركّبة (hidden فقط) حتى لا تضيع حالتها (مسودة رسالة،
+  // تبويب نشط، حفظ محضر معلّق). لوحة المحضر لا تُركَّب إلا عند أول فتح لها
+  // (لا داعي لتحميل المحضر لمن لا يفتحه)، ثم تبقى مركّبة.
+  const [sidePanelOpen, setSidePanelOpen] = useState(true)
+  const [minutesOpen, setMinutesOpen] = useState(false)
+  const [minutesMounted, setMinutesMounted] = useState(false)
+
+  function toggleMinutes() {
+    setMinutesMounted(true)
+    setMinutesOpen((v) => !v)
+  }
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false)
   const [pendingAgendaItemId, setPendingAgendaItemId] = useState<string | null>(null)
 
@@ -144,6 +159,8 @@ export function MeetingRoom({
 
   function handleSelectPanel(key: RoomPanelKey) {
     setActivePanel(key)
+    // اختيار لوحة (من الشريط العام أو زر داخل الفيديو) وهي مطوية ⇒ تنفتح.
+    setSidePanelOpen(true)
     if (key === 'chat') {
       setSeenChatCount(realtime.liveMessages.length)
     }
@@ -429,6 +446,22 @@ export function MeetingRoom({
   // تسجيل كاملة (getUserMedia + MediaRecorder محليًا، لا تحتاج إذن خادم
   // لتبدأ) لتفشل فقط عند الرفع النهائي. نفس نمط canManageAgenda أعلاه
   // بالضبط: رئيس اللجنة، أو صاحب صلاحية meetings.record_audio بنطاق عام.
+  // تمديد الاجتماع من داخل الغرفة (طلب لاما 2026-11-09) — نفس شرط canManage
+  // بصفحة تفاصيل الاجتماع (رئيس اللجنة أو meetings.update عامة)؛ التحقق
+  // الفعلي بالباك-إند (extend_meeting: meetings.update + الحالة upcoming/ongoing).
+  const canExtend = Boolean(
+    currentUser &&
+      meeting?.scheduled_end_at &&
+      (meeting.status === 'upcoming' || meeting.status === 'ongoing') &&
+      (scopeFor(currentUser, 'meetings.update') === 'all' ||
+        committees?.some(
+          (c) => c.committee_id === meeting.committee_id && c.chair_user_id === currentUser.user_id,
+        )),
+  )
+  const extendMeetingMutation = useExtendMeeting()
+  const [extendOpen, setExtendOpen] = useState(false)
+  const [extendError, setExtendError] = useState<string | null>(null)
+
   const canRecord = Boolean(
     currentUser &&
       meeting &&
@@ -483,7 +516,40 @@ export function MeetingRoom({
         <GuestWaitingScreen meeting={meeting} call={embeddedCall} onLeave={() => setConfirmLeaveOpen(true)} />
       ) : (
         <>
-          <MeetingRoomHeader meeting={meeting} onOpenParticipants={() => handleSelectPanel('participants')} />
+          <MeetingRoomHeader
+            meeting={meeting}
+            onOpenParticipants={() => handleSelectPanel('participants')}
+            onExtend={
+              canExtend
+                ? () => {
+                    setExtendError(null)
+                    setExtendOpen(true)
+                  }
+                : undefined
+            }
+          />
+
+          {extendOpen && meeting.scheduled_end_at && (
+            <ExtendMeetingModal
+              open={extendOpen}
+              onClose={() => setExtendOpen(false)}
+              currentEndAt={meeting.scheduled_end_at}
+              loading={extendMeetingMutation.isPending}
+              serverError={extendError}
+              onSubmit={(newEndAt) =>
+                extendMeetingMutation.mutate(
+                  { meetingId: meeting.meeting_id, newEndAt },
+                  {
+                    onSuccess: () => {
+                      setExtendOpen(false)
+                      showToast('تم تمديد الاجتماع وإشعار المشاركين', 'success')
+                    },
+                    onError: (err) => setExtendError(extractErrorMessage(err)),
+                  },
+                )
+              }
+            />
+          )}
 
           <div className="flex min-h-0 flex-1">
             <MeetingRoomAppRail
@@ -493,7 +559,12 @@ export function MeetingRoom({
               hasUnreadChat={hasNewChatMessage}
             />
 
-            <aside className="flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-border-default bg-bg-app">
+            <aside
+              className={cn(
+                'w-[340px] max-w-[32vw] shrink-0 flex-col overflow-hidden border-l border-border-default bg-bg-app',
+                sidePanelOpen ? 'flex' : 'hidden',
+              )}
+            >
               <MeetingRoomSidebar
                 active={activePanel}
                 onSelect={handleSelectPanel}
@@ -556,6 +627,14 @@ export function MeetingRoom({
                 )}
               </div>
             </aside>
+
+            <PanelEdgeToggle
+              open={sidePanelOpen}
+              onToggle={() => setSidePanelOpen((v) => !v)}
+              side="right"
+              label="لوحة الاجتماع"
+              icon={LayoutPanelLeft}
+            />
 
             <div className="relative flex min-h-0 flex-1 flex-col gap-3 p-3">
               {/* تعديل لاما 2026-09-06: "بدأ مناقشة البند ما ظهر إشعار أعلى
@@ -750,6 +829,23 @@ export function MeetingRoom({
                 }
               />
             </div>
+
+            <PanelEdgeToggle open={minutesOpen} onToggle={toggleMinutes} side="left" label="المحضر" icon={FileText} />
+
+            {minutesMounted && (
+              <aside
+                className={cn(
+                  'w-[380px] max-w-[34vw] shrink-0 flex-col overflow-hidden border-r border-border-default bg-bg-app',
+                  minutesOpen ? 'flex' : 'hidden',
+                )}
+              >
+                <div className="flex shrink-0 items-center gap-2 border-b border-border-default bg-bg-surface px-3 py-2.5">
+                  <FileText size={15} className="text-brand-primary" />
+                  <h2 className="text-sm font-semibold text-text-primary">محضر الاجتماع</h2>
+                </div>
+                <MinutesPanel meetingId={meetingId} sharedSocket={realtime.socket} />
+              </aside>
+            )}
           </div>
         </>
       )}
