@@ -41,12 +41,16 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
   const minutes = detail?.minutes
   const templates = detail?.templates ?? []
 
-  const canManage =
-    scopeFor(user, 'minutes.update', 'minutes.templates.select') === 'all' ||
-    (!!committee && committee.chair_user_id === user?.user_id)
+  const isChair = !!committee && committee.chair_user_id === user?.user_id
+  // اختيار القالب: يكفي أن يُرجع الباك-إند قائمة القوالب (فارغة لمن لا يملك
+  // minutes.templates.view). الكتابة: can_edit المحسوبة بالباك-إند (نفس فحص PUT
+  // /minutes/sections) — لا scopeFor محليًا حتى لا تُفتح الكتابة لمن لا يملك
+  // minutes.update فيفشل الحفظ بصمت. رئاسة اللجنة شبكة أمان فقط.
+  const canPickTemplate =
+    isChair || scopeFor(user, 'minutes.templates.select') === 'all'
   const approvableStage =
     minutes?.stage === 'preparing' || minutes?.stage === 'review' || minutes?.stage === 'approval'
-  const editable = (canManage || !!detail?.can_edit) && approvableStage
+  const editable = (isChair || !!detail?.can_edit) && approvableStage
 
   const { collaborators, remoteSections, announceEditing, broadcastUpdate } = useMinutesRealtime(
     meetingId,
@@ -81,6 +85,25 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
     setSections(remoteSections.sections)
   }, [remoteSections, dirty])
 
+  // بث وصل ونحن بلا قالب ⇒ رئيس اللجنة اختار القالب للتو: نعيد جلب المحضر
+  // (stage/template_id) بدل البقاء على شاشة "لم يتم اختيار قالب".
+  const noTemplateNow = !minutes || minutes.stage === 'none' || !minutes.template_id
+  const { refetch: refetchDetail } = detailQuery
+  useEffect(() => {
+    if (remoteSections && noTemplateNow) void refetchDetail()
+  }, [remoteSections, noTemplateNow, refetchDetail])
+
+  // بعد انقطاع اتصال الغرفة ورجوعه قد تكون فاتتنا تحديثات minutes.updated —
+  // نعيد جلب النسخة المحفوظة (تُطبَّق فقط إن لم يكن لدينا تعديل محلي معلّق).
+  useEffect(() => {
+    if (!sharedSocket) return
+    const onReconnect = () => void refetchDetail()
+    sharedSocket.io.on('reconnect', onReconnect)
+    return () => {
+      sharedSocket.io.off('reconnect', onReconnect)
+    }
+  }, [sharedSocket, refetchDetail])
+
   useEffect(() => {
     return () => {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current)
@@ -102,10 +125,14 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
       { meetingId, sections: next },
       {
         onSuccess: () => {
-          if (pendingRef.current === next) pendingRef.current = null
-          setDirty(false)
           setError(null)
           broadcastUpdate(next)
+          // لا نعتبر المسودة محفوظة إن كتب المستخدم شيئًا أحدث أثناء هذا
+          // الطلب — الحفظ التالي (المجدول أصلًا) هو اللي يصفّرها.
+          if (pendingRef.current === next) {
+            pendingRef.current = null
+            setDirty(false)
+          }
         },
         onError: (err) => setError(extractErrorMessage(err)),
       },
@@ -126,7 +153,11 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
     setError(null)
     selectTemplateMutation.mutate(
       { meetingId, templateId },
-      { onError: (err) => setError(extractErrorMessage(err)) },
+      {
+        // إبلاغ بقية الحاضرين فاتحين اللوحة — راجعي effect noTemplateNow أعلاه.
+        onSuccess: (saved) => broadcastUpdate(saved.sections),
+        onError: (err) => setError(extractErrorMessage(err)),
+      },
     )
   }
 
@@ -210,7 +241,7 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {noTemplate ? (
-          canManage && templates.length > 0 ? (
+          canPickTemplate && templates.length > 0 ? (
             <div className="flex flex-col gap-2">
               <p className="text-xs font-semibold text-text-primary">اختر قالب المحضر للبدء</p>
               {templates.map((t) => (

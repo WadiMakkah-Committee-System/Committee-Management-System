@@ -223,11 +223,15 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
     # الصورة الحالية للطابور وبند المناقشة (مع مؤقته) — للقادم الجديد فقط.
     await sio.emit("room.state", await _room_state(str(meeting_id)), to=sid)
 
-    await sio.emit(
-        "presence.joined",
-        {"user_id": str(user.user_id), "full_name": user.full_name},
-        room=room,
-    )
+    # 2026-11-09 (مراجعة PR لوحة المحضر داخل الغرفة): مستخدم عنده اتصال قائم
+    # أصلًا بالغرفة (غرفة الاجتماع + صفحة المحضر بتبويب آخر) لا يُعلَن "انضم"
+    # مرة ثانية — كان يتكرر بسجل النشاط عند الكل.
+    if str(user.user_id) not in existing_user_ids:
+        await sio.emit(
+            "presence.joined",
+            {"user_id": str(user.user_id), "full_name": user.full_name},
+            room=room,
+        )
     return True
 
 
@@ -241,12 +245,16 @@ async def disconnect(sid: str) -> None:
     meeting_id: str | None = session.get("meeting_id")
     if not user or not meeting_id:
         return
-    # خرج فعليًا (ما عنده اتصال ثاني بالغرفة) ⇒ تنزل يده من الطابور.
-    if not await _user_has_other_connection(meeting_id, str(user.user_id), sid):
-        try:
-            await redis_client.hdel(_hands_key(meeting_id), str(user.user_id))
-        except Exception:  # noqa: BLE001
-            logger.warning("disconnect: تعذّر إنزال اليد من Redis", exc_info=True)
+    # خرج فعليًا (ما عنده اتصال ثاني بالغرفة) ⇒ تنزل يده من الطابور ويُعلَن
+    # خروجه. 2026-11-09 (مراجعة PR لوحة المحضر داخل الغرفة): presence.left كان
+    # يُبث حتى لو بقي له اتصال آخر (مثال: أغلق تبويب صفحة المحضر وهو ما زال
+    # بالاجتماع) — فيظهر للكل "غير متصل" وتختفي يده المرفوعة ومشاركة شاشته.
+    if await _user_has_other_connection(meeting_id, str(user.user_id), sid):
+        return
+    try:
+        await redis_client.hdel(_hands_key(meeting_id), str(user.user_id))
+    except Exception:  # noqa: BLE001
+        logger.warning("disconnect: تعذّر إنزال اليد من Redis", exc_info=True)
     await sio.emit(
         "presence.left",
         {"user_id": str(user.user_id), "full_name": user.full_name},

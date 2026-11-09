@@ -561,7 +561,7 @@ export function MeetingRoom({
 
             <aside
               className={cn(
-                'w-[340px] shrink-0 flex-col overflow-hidden border-l border-border-default bg-bg-app',
+                'w-[340px] max-w-[32vw] shrink-0 flex-col overflow-hidden border-l border-border-default bg-bg-app',
                 sidePanelOpen ? 'flex' : 'hidden',
               )}
             >
@@ -835,7 +835,7 @@ export function MeetingRoom({
             {minutesMounted && (
               <aside
                 className={cn(
-                  'w-[380px] shrink-0 flex-col overflow-hidden border-r border-border-default bg-bg-app',
+                  'w-[380px] max-w-[34vw] shrink-0 flex-col overflow-hidden border-r border-border-default bg-bg-app',
                   minutesOpen ? 'flex' : 'hidden',
                 )}
               >
