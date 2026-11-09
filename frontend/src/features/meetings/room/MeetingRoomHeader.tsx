@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, Link2, Share2, Users } from 'lucide-react'
+import { ChevronDown, Clock, Link2, Share2, Users } from 'lucide-react'
 import { Avatar } from '@/components/ui/Avatar'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
@@ -19,9 +19,13 @@ import type { Meeting } from '@/types'
 export function MeetingRoomHeader({
   meeting,
   onOpenParticipants,
+  onExtend,
 }: {
   meeting: Meeting
   onOpenParticipants: () => void
+  /** زر "تمديد" داخل الغرفة (طلب لاما 2026-11-09) — يُمرَّر فقط لمن يملك
+   * التمديد (رئيس اللجنة/meetings.update عامة) وللاجتماع الذي له وقت نهاية. */
+  onExtend?: () => void
 }) {
   const currentUser = useAuthStore((s) => s.user)
   const { showToast } = useToast()
@@ -90,6 +94,17 @@ export function MeetingRoomHeader({
 
       {/* يسار: عنوان الاجتماع وحالته */}
       <div className="flex shrink-0 items-center gap-3">
+        {onExtend && (
+          <button
+            type="button"
+            onClick={onExtend}
+            className="flex items-center gap-1.5 rounded-full border border-border-default bg-bg-elevated px-3 py-1.5 text-[12px] font-semibold text-text-secondary transition-colors hover:border-brand-primary hover:text-brand-primary"
+            title="تمديد وقت الاجتماع"
+          >
+            <Clock size={13} />
+            تمديد
+          </button>
+        )}
         <div className="text-right leading-tight">
           <p className="flex items-center justify-end gap-1.5 text-[13px] font-bold text-text-primary">
             <button
