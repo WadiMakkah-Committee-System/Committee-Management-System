@@ -282,10 +282,24 @@ async def _load_meeting_and_committee(
     return meeting, committee
 
 
+# استثناء مقصود من FR-MIN-001 (قرار لاما 2026-11-09): المواصفة تنص على
+# إتاحة المحضر "بعد انتهاء الاجتماع"، لكن المطلوب الآن إتاحته فور إنشاء
+# الاجتماع (كل الحالات بما فيها upcoming/ongoing). الحالات المسموحة مجمّعة
+# بهذا الثابت الواحد — لإرجاع سلوك المواصفة الأصلي يكفي تقليصه إلى
+# (finished, recorded).
+MINUTES_AVAILABLE_STATUSES: tuple[MeetingStatus, ...] = (
+    MeetingStatus.upcoming,
+    MeetingStatus.ongoing,
+    MeetingStatus.finished,
+    MeetingStatus.recorded,
+)
+
+
 def _require_meeting_finished(meeting: Meeting) -> None:
-    """FR-MIN-001: إعداد المحضر لا يبدأ إلا بعد انتهاء الاجتماع."""
-    if meeting.status not in (MeetingStatus.finished, MeetingStatus.recorded):
-        raise MinutesInvalidStateError("لا يمكن إعداد محضر الاجتماع إلا بعد انتهائه")
+    """بوابة إتاحة المحضر حسب حالة الاجتماع (راجعي MINUTES_AVAILABLE_STATUSES أعلاه
+    — استثناء موثّق من FR-MIN-001)."""
+    if meeting.status not in MINUTES_AVAILABLE_STATUSES:
+        raise MinutesInvalidStateError("لا يمكن إعداد محضر الاجتماع في حالته الحالية")
 
 
 # تحقيق أداء لاما 2026-09-12 — إصلاح N+1 (مؤكَّد بقياس فعلي: 47 استعلام
@@ -603,7 +617,7 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
 
     templates = (
         list_templates()
-        if meeting.status in (MeetingStatus.finished, MeetingStatus.recorded)
+        if meeting.status in MINUTES_AVAILABLE_STATUSES
         and await access.has(committee, "minutes.templates.view")
         else []
     )
@@ -712,7 +726,7 @@ async def list_minutes_summaries(
                 {
                     "meeting_id": m.meeting_id,
                     "forbidden": False,
-                    "not_finished_yet": m.status not in (MeetingStatus.finished, MeetingStatus.recorded),
+                    "not_finished_yet": m.status not in MINUTES_AVAILABLE_STATUSES,
                     "stage": None,
                     "owner_name": None,
                     "reviewers_total": 0,
