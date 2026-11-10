@@ -50,25 +50,49 @@ export function buildMeetingInvite(
   return lines.join('\n')
 }
 
-/** رابط الدعوة الأنسب: رابط الضيوف لو متاح، وإلا رابط صفحة الاجتماع. */
-export async function resolveInviteUrl(
-  meeting: Pick<Meeting, 'meeting_id' | 'mode' | 'status'>,
-): Promise<string> {
-  if (meeting.mode === 'remote' && (meeting.status === 'upcoming' || meeting.status === 'ongoing')) {
-    try {
-      return guestJoinUrl(await fetchGuestLink(meeting.meeting_id))
-    } catch {
-      // بلا صلاحية/غير متاح ⇒ رابط الصفحة.
-    }
-  }
+type InviteMeeting = Pick<
+  Meeting,
+  'meeting_id' | 'title' | 'scheduled_at' | 'scheduled_end_at' | 'mode' | 'location' | 'status' | 'has_teams_meeting'
+>
+
+/** هل يُتوقع لهذا الاجتماع رابط ضيوف (عن بُعد، Agora، لم ينتهِ)؟ */
+export function expectsGuestLink(meeting: Pick<Meeting, 'mode' | 'status' | 'has_teams_meeting'>): boolean {
+  return (
+    meeting.mode === 'remote' &&
+    !meeting.has_teams_meeting &&
+    (meeting.status === 'upcoming' || meeting.status === 'ongoing')
+  )
+}
+
+/**
+ * رابط الدعوة: رابط الضيوف لاجتماع يُتوقع له (يرمي الخطأ لو تعذّر جلبه — لا
+ * نستبدله بصمت برابط لا يفتحه إلا أعضاء المنصة — مراجعة PR #116)، وإلا رابط
+ * صفحة الاجتماع.
+ */
+export async function resolveInviteUrl(meeting: Pick<Meeting, 'meeting_id' | 'mode' | 'status' | 'has_teams_meeting'>): Promise<string> {
+  if (expectsGuestLink(meeting)) return guestJoinUrl(await fetchGuestLink(meeting.meeting_id))
   return meetingPageUrl(meeting.meeting_id)
 }
 
-/** ينسخ نص الدعوة الكامل للحافظة (برابط الضيوف لو متاح). */
-export async function copyMeetingInvite(
-  meeting: Pick<Meeting, 'meeting_id' | 'title' | 'scheduled_at' | 'scheduled_end_at' | 'mode' | 'location' | 'status'>,
-  committeeName?: string | null,
-): Promise<void> {
-  const url = await resolveInviteUrl(meeting)
-  await navigator.clipboard.writeText(buildMeetingInvite(meeting, { committeeName, url }))
+/**
+ * ينسخ نص الدعوة الكامل للحافظة. جلب رابط الضيوف طلب شبكة — وبعض المتصفحات
+ * (Safari) ترفض الكتابة للحافظة لو انتهت "لحظة الضغط" قبلها. الحل: نبدأ
+ * الكتابة فورًا داخل الضغطة بـClipboardItem يحمل Promise للنص، ونرجع لـwriteText
+ * فقط لو المتصفح لا يدعم ذلك (مراجعة PR #116).
+ */
+export async function copyMeetingInvite(meeting: InviteMeeting, committeeName?: string | null): Promise<void> {
+  const textPromise = resolveInviteUrl(meeting).then((url) => buildMeetingInvite(meeting, { committeeName, url }))
+  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'text/plain': textPromise.then((t) => new Blob([t], { type: 'text/plain' })) }),
+      ])
+      return
+    } catch (err) {
+      // فشل جلب الرابط نفسه ⇒ نعيد الخطأ (لا نجرب writeText).
+      await textPromise
+      void err
+    }
+  }
+  await navigator.clipboard.writeText(await textPromise)
 }

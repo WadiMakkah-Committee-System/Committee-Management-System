@@ -5,6 +5,7 @@ import { useToast } from '@/components/ui/Toast'
 import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { useAuthStore } from '@/store/authStore'
 import { copyMeetingInvite } from '@/lib/meetingInvite'
+import { extractErrorMessage } from '@/lib/utils'
 import type { Meeting } from '@/types'
 
 /**
@@ -54,7 +55,7 @@ export function MeetingRoomHeader({
   function copyLink() {
     copyMeetingInvite(meeting)
       .then(() => showToast('تم نسخ دعوة الاجتماع'))
-      .catch(() => showToast('تعذّر نسخ الرابط', 'error'))
+      .catch((err) => showToast(extractErrorMessage(err) || 'تعذّر نسخ الدعوة', 'error'))
   }
 
   const formattedDate = new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', {

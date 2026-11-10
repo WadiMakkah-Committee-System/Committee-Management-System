@@ -6,7 +6,7 @@
 قائمة المستخدمين، حد الطلبات، وانتهاء جلسة الضيف بانتهاء الاجتماع.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.models.committee import Committee
 from app.models.meeting import Meeting
 from app.models.user import User
 from tests.test_meetings import _create_approved_committee, _grant_committee_role_permissions
@@ -24,6 +25,16 @@ def _agora_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "AGORA_APP_ID", "test-app-id")
     monkeypatch.setattr(settings, "AGORA_APP_CERTIFICATE", "0123456789abcdef0123456789abcdef")
     monkeypatch.setattr(settings, "MEETING_PROVIDER", "agora")
+
+
+@pytest.fixture(autouse=True)
+async def _reset_guest_rate_limits():
+    """عدّادات حدود الطلبات بـRedis تبقى بين الاختبارات (نافذة دقيقة) — نصفّرها."""
+    from app.core.redis_client import redis_client
+
+    keys = [k async for k in redis_client.scan_iter("guest_*")]
+    if keys:
+        await redis_client.delete(*keys)
 
 
 def _slot(hours_from_now: float = 1) -> tuple[str, str]:
@@ -51,6 +62,16 @@ async def _create_meeting(client: AsyncClient, ctx: dict, *, mode: str = "remote
 
 async def _setup(client: AsyncClient, auth_headers, roles_by_name) -> dict:
     ctx = await _create_approved_committee(client, auth_headers, roles_by_name)
+    # فترة اللجنة بالـfixture المشترك ثابتة (تنتهي 2026-12-01) — اختبارات الضيوف
+    # تنشئ اجتماعات نسبية لوقت التشغيل، فنمد الفترة حولها حتى لا تفشل لاحقًا.
+    today = datetime.now(UTC).date()
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Committee)
+            .where(Committee.committee_id == ctx["committee_id"])
+            .values(start_date=today - timedelta(days=30), end_date=date(today.year + 2, 1, 1))
+        )
+        await db.commit()
     await _grant_committee_role_permissions(["meetings.join"], slug="chair")
     await _grant_committee_role_permissions(["meetings.join"], slug="member")
     ctx["meeting_id"] = await _create_meeting(client, ctx)
@@ -423,3 +444,32 @@ async def test_guest_vote_counts_in_its_meeting_decisions_only(
         headers=guest["headers"],
     )
     assert denied.status_code == 403, denied.text
+
+
+async def test_teams_meeting_has_no_platform_guest_link(client: AsyncClient, auth_headers, roles_by_name) -> None:
+    ctx = await _setup(client, auth_headers, roles_by_name)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Meeting).where(Meeting.meeting_id == ctx["meeting_id"]).values(teams_meeting_id="teams-test-id", teams_join_url="https://teams.example/j", teams_organizer_id="00000000-0000-0000-0000-000000000001")
+        )
+        await db.commit()
+    response = await client.get(f"/api/v1/meetings/{ctx['meeting_id']}/guest-link", headers=ctx["chair_headers"])
+    assert response.status_code == 409, response.text
+
+
+async def test_meeting_wide_request_cap_ignores_spoofed_ip(
+    client: AsyncClient, auth_headers, roles_by_name, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services import meeting_guest_service
+
+    monkeypatch.setattr(meeting_guest_service, "MEETING_REQUEST_LIMIT", 3)
+    ctx = await _setup(client, auth_headers, roles_by_name)
+    token = await _guest_link(client, ctx)
+    for i in range(3):
+        await _request_join(client, token, name=f"ضيف {i}", ip=f"10.1.1.{i}")
+    blocked = await client.post(
+        f"/api/v1/public/meeting-invites/{token}/requests",
+        json={"display_name": "عنوان مزوّر"},
+        headers={"X-Forwarded-For": "10.1.1.250"},
+    )
+    assert blocked.status_code == 429, blocked.text

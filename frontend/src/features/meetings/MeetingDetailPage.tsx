@@ -172,7 +172,7 @@ export function MeetingDetailPage() {
     if (!meeting) return
     copyMeetingInvite(meeting, committee?.name)
       .then(() => showToast('تم نسخ دعوة الاجتماع', 'success'))
-      .catch(() => showToast('تعذّر نسخ الدعوة', 'error'))
+      .catch((err) => showToast(extractErrorMessage(err) || 'تعذّر نسخ الدعوة', 'error'))
   }
   const { data: attachments, isLoading: attachmentsLoading } = useMeetingAttachments(meetingId)
   // بلاغ لاما 2026-09-13: قرارات أُنشئت من داخل غرفة الاجتماع (DecisionsPanel)

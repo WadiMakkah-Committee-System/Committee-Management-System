@@ -67,6 +67,14 @@ MAX_PENDING_PER_MEETING = 30
 # حد طلبات الدخول لكل (عنوان IP، اجتماع) خلال نافذة زمنية.
 IP_REQUEST_LIMIT = 8
 IP_REQUEST_WINDOW_SECONDS = 600
+# حد إجمالي لطلبات الدخول للاجتماع الواحد بنفس النافذة — لا يعتمد على عنوان
+# IP إطلاقًا (X-Forwarded-For قابل للتزوير)، فيبقى سقفًا ثابتًا حتى لو تلاعب
+# أحد بالعنوان (مراجعة PR #116).
+MEETING_REQUEST_LIMIT = 60
+# حدود عامة لكل عنوان IP على الراوتات العامة قبل أي استعلام بالقاعدة
+# (نافذة دقيقة): صفحة الدعوة، طلب الدخول، متابعة الطلب (استطلاع كل 3 ثوانٍ)، الإلغاء.
+PUBLIC_IP_LIMITS = {"invite": 60, "create": 20, "status": 90, "cancel": 20}
+PUBLIC_IP_WINDOW_SECONDS = 60
 DISPLAY_NAME_MIN = 2
 DISPLAY_NAME_MAX = 60
 
@@ -131,9 +139,18 @@ async def _load_meeting_by_token(db: AsyncSession, token: str) -> Meeting:
     return meeting
 
 
+def _guest_link_supported(meeting: Meeting) -> bool:
+    # اجتماعات Teams (مزوّد احتياطي محفوظ — قرار لاما 2026-11-04) لها قاعة
+    # انتظار Teams الخاصة، وغرفتها بالمنصة تتطلب حساب Microsoft — رابط ضيوف
+    # المنصة لاجتماعات Agora فقط (مراجعة PR #116).
+    return meeting.mode == MeetingMode.remote and not meeting.teams_meeting_id
+
+
 def _require_guest_link_usable(meeting: Meeting) -> None:
     if meeting.mode != MeetingMode.remote:
         raise MeetingInvalidStateError("هذا اجتماع حضوري — لا يمكن الانضمام له عن بُعد")
+    if meeting.teams_meeting_id:
+        raise MeetingInvalidStateError("اجتماعات Teams تستخدم رابط Teams نفسه لدعوة الضيوف")
     if not is_guest_meeting_active(meeting):
         raise MeetingInvalidStateError("انتهى هذا الاجتماع")
 
@@ -200,7 +217,7 @@ async def get_public_invite(db: AsyncSession, *, token: str) -> PublicInvite:
     committee_name = await db.scalar(
         select(Committee.name).where(Committee.committee_id == meeting.committee_id)
     )
-    is_open = meeting.mode == MeetingMode.remote and is_guest_meeting_active(meeting)
+    is_open = _guest_link_supported(meeting) and is_guest_meeting_active(meeting)
     return PublicInvite(
         title=meeting.title,
         committee_name=committee_name,
@@ -211,18 +228,32 @@ async def get_public_invite(db: AsyncSession, *, token: str) -> PublicInvite:
     )
 
 
-async def _check_rate_limit(meeting_id: uuid.UUID, client_ip: str | None) -> None:
-    if not client_ip:
-        return
-    key = f"guest_req_rl:{meeting_id}:{client_ip}"
+async def _hit(key: str, limit: int, window_seconds: int) -> bool:
+    """عدّاد Redis بنافذة ثابتة — True لو تجاوز الحد. تعطّل Redis لا يمنع الضيوف."""
     try:
         count = await redis_client.incr(key)
         if count == 1:
-            await redis_client.expire(key, IP_REQUEST_WINDOW_SECONDS)
-    except Exception:  # noqa: BLE001 — تعطّل Redis لا يمنع الضيوف (يبقى حد الاجتماع)
-        logger.warning("meeting_guest_service: تعذّر فحص حد الطلبات", exc_info=True)
+            await redis_client.expire(key, window_seconds)
+    except Exception:  # noqa: BLE001
+        logger.warning("meeting_guest_service: تعذّر فحص حد الطلبات (%s)", key, exc_info=True)
+        return False
+    return count > limit
+
+
+async def check_public_rate_limit(endpoint: str, client_ip: str | None) -> None:
+    """حد عام لكل IP على الراوتات العامة — يُستدعى قبل أي استعلام بالقاعدة."""
+    if not client_ip:
         return
-    if count > IP_REQUEST_LIMIT:
+    if await _hit(f"guest_pub_rl:{endpoint}:{client_ip}", PUBLIC_IP_LIMITS[endpoint], PUBLIC_IP_WINDOW_SECONDS):
+        raise GuestRateLimitError("طلبات كثيرة من هذا الجهاز — حاول بعد قليل")
+
+
+async def _check_rate_limit(meeting_id: uuid.UUID, client_ip: str | None) -> None:
+    if await _hit(f"guest_req_rl_meeting:{meeting_id}", MEETING_REQUEST_LIMIT, IP_REQUEST_WINDOW_SECONDS):
+        raise GuestRateLimitError("طلبات دخول كثيرة لهذا الاجتماع — حاول بعد دقائق")
+    if client_ip and await _hit(
+        f"guest_req_rl:{meeting_id}:{client_ip}", IP_REQUEST_LIMIT, IP_REQUEST_WINDOW_SECONDS
+    ):
         raise GuestRateLimitError("طلبات كثيرة من هذا الجهاز — حاول بعد دقائق")
 
 
@@ -274,15 +305,16 @@ async def create_guest_request(
 async def _load_request_with_secret(
     db: AsyncSession, request_id: uuid.UUID, secret: str, *, for_update: bool = False
 ) -> MeetingGuestRequest:
+    # التحقق من الرمز السري أولًا بلا قفل — طلب برمز خاطئ لا يقفل الصف أبدًا.
+    secret_hash = await db.scalar(
+        select(MeetingGuestRequest.request_secret_hash).where(MeetingGuestRequest.request_id == request_id)
+    )
+    if secret_hash is None or not hmac.compare_digest(secret_hash, _hash_secret(secret or "")):
+        raise GuestRequestNotFoundError("طلب الدخول غير موجود")
     stmt = select(MeetingGuestRequest).where(MeetingGuestRequest.request_id == request_id)
     if for_update:
         stmt = stmt.with_for_update()
-    request = (await db.execute(stmt)).scalar_one_or_none()
-    if request is None or not hmac.compare_digest(
-        request.request_secret_hash, _hash_secret(secret or "")
-    ):
-        raise GuestRequestNotFoundError("طلب الدخول غير موجود")
-    return request
+    return (await db.execute(stmt)).scalar_one()
 
 
 async def get_guest_request_status(

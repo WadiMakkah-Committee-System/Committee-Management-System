@@ -121,9 +121,11 @@ export function GuestJoinPage() {
           writeStored(token, null)
           setStep(res.status)
         }
-      } catch {
-        // الطلب لم يعد موجودًا (رمز غير صالح) ⇒ يبدأ من جديد.
-        if (!stopped) {
+      } catch (err) {
+        // 404 فقط = الطلب لم يعد موجودًا ⇒ يبدأ من جديد. أي خطأ آخر (شبكة/5xx)
+        // مؤقت ⇒ نكمل الاستطلاع بنفس الطلب حتى لا ينشأ طلب مكرر (مراجعة PR #116).
+        const status = (err as { response?: { status?: number } }).response?.status
+        if (!stopped && status === 404) {
           writeStored(token, null)
           requestRef.current = null
           setStep('name')

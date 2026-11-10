@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
+import { logout as logoutRequest } from '@/api/auth'
 import { useAuthStore } from '@/store/authStore'
 import { MeetingRoom } from '../MeetingRoom'
 import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
@@ -39,7 +40,11 @@ export function GuestMeetingPage() {
       meetingTitle=""
       onClose={() => {
         setLeft(true)
-        logout()
+        // إلغاء الجلسة بالباك-إند أولًا (التوكن المحفوظ لا يعود صالحًا حتى لو
+        // بقي الاجتماع قائمًا)، ثم مسح الحالة المحلية مهما كانت النتيجة.
+        void logoutRequest()
+          .catch(() => undefined)
+          .finally(() => logout())
       }}
     />
   )

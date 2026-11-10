@@ -21,7 +21,7 @@ from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
 from app.core.dependencies import CurrentUser
 from app.core.redis_client import create_session
 from app.core.security import create_access_token, create_refresh_token
-from app.db.session import get_db
+from app.db.session import get_db, writes_on_read
 from app.schemas.meeting import (
     GuestJoinRequestCreatedOut,
     GuestJoinRequestIn,
@@ -50,7 +50,17 @@ _ERRORS = (*_SERVICE_ERRORS, GuestRequestNotFoundError, GuestRateLimitError)
 
 
 def _client_ip(request: Request) -> str | None:
-    # خلف Render/Proxy: أول عنوان بـX-Forwarded-For هو العميل الفعلي.
+    """
+    عنوان العميل لحدود الطلبات. Render يمر عبر Cloudflare الذي يكتب
+    CF-Connecting-IP/True-Client-IP بنفسه (يستبدل أي قيمة يرسلها العميل) —
+    فتُقدَّم على X-Forwarded-For القابل للتزوير. ولأن العنوان قد يبقى قابلًا
+    للتلاعب ببيئات أخرى، الخدمة تفرض أيضًا سقفًا لكل اجتماع لا يعتمد على
+    العنوان إطلاقًا (MEETING_REQUEST_LIMIT) + حد المنتظرين (مراجعة PR #116).
+    """
+    for header in ("cf-connecting-ip", "true-client-ip"):
+        value = request.headers.get(header)
+        if value:
+            return value.strip()
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip() or None
@@ -61,6 +71,7 @@ def _client_ip(request: Request) -> str | None:
 
 
 @router.get("/{meeting_id}/guest-link", response_model=GuestLinkOut)
+@writes_on_read  # يُنشئ الرمز وسجل التدقيق أول مرة — معاملة واحدة كاملة
 async def get_guest_link(
     meeting_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> GuestLinkOut:
@@ -139,8 +150,11 @@ async def reject_guest(
 
 
 @public_router.get("/meeting-invites/{token}", response_model=PublicMeetingInviteOut)
-async def get_public_invite(token: str, db: AsyncSession = Depends(get_db)) -> PublicMeetingInviteOut:
+async def get_public_invite(
+    token: str, request: Request, db: AsyncSession = Depends(get_db)
+) -> PublicMeetingInviteOut:
     try:
+        await meeting_guest_service.check_public_rate_limit("invite", _client_ip(request))
         invite = await meeting_guest_service.get_public_invite(db, token=token)
     except _ERRORS as exc:
         raise _guest_errors(exc) from exc
@@ -156,6 +170,7 @@ async def create_guest_request(
     token: str, payload: GuestJoinRequestIn, request: Request, db: AsyncSession = Depends(get_db)
 ) -> GuestJoinRequestCreatedOut:
     try:
+        await meeting_guest_service.check_public_rate_limit("create", _client_ip(request))
         created, secret = await meeting_guest_service.create_guest_request(
             db, token=token, display_name=payload.display_name, client_ip=_client_ip(request)
         )
@@ -166,13 +181,14 @@ async def create_guest_request(
 
 @public_router.post("/guest-requests/{request_id}/status", response_model=GuestRequestStatusOut)
 async def guest_request_status(
-    request_id: uuid.UUID, payload: GuestRequestSecretIn, db: AsyncSession = Depends(get_db)
+    request_id: uuid.UUID, payload: GuestRequestSecretIn, request: Request, db: AsyncSession = Depends(get_db)
 ) -> GuestRequestStatusOut:
     """
     يُستدعى دوريًا من شاشة انتظار الضيف (POST حتى لا يظهر الرمز السري بالروابط/السجلات).
     عند القبول: جلسة جديدة للضيف (نفس آلية تسجيل الدخول — Redis + JWT) مع ملفه.
     """
     try:
+        await meeting_guest_service.check_public_rate_limit("status", _client_ip(request))
         guest_request, guest = await meeting_guest_service.get_guest_request_status(
             db, request_id=request_id, secret=payload.secret
         )
@@ -197,9 +213,10 @@ async def guest_request_status(
 
 @public_router.post("/guest-requests/{request_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_guest_request(
-    request_id: uuid.UUID, payload: GuestRequestSecretIn, db: AsyncSession = Depends(get_db)
+    request_id: uuid.UUID, payload: GuestRequestSecretIn, request: Request, db: AsyncSession = Depends(get_db)
 ) -> None:
     try:
+        await meeting_guest_service.check_public_rate_limit("cancel", _client_ip(request))
         await meeting_guest_service.cancel_guest_request(db, request_id=request_id, secret=payload.secret)
     except _ERRORS as exc:
         raise _guest_errors(exc) from exc
