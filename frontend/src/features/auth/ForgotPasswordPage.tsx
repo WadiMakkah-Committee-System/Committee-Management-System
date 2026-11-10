@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useMutation } from '@tanstack/react-query'
@@ -12,7 +12,8 @@ import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { extractErrorMessage } from '@/lib/utils'
 import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
-import { NEW_PASSWORD_HINT, newPasswordSchema } from './passwordPolicy'
+import { newPasswordSchema } from './passwordPolicy'
+import { PasswordRulesChecklist } from './PasswordRulesChecklist'
 
 /** نفس مهلة إعادة الإرسال بالباك إند (PASSWORD_RESET_RESEND_SECONDS). */
 const RESEND_SECONDS = 60
@@ -88,6 +89,8 @@ export function ForgotPasswordPage() {
   const emailForm = useForm<z.infer<typeof emailSchema>>({ resolver: zodResolver(emailSchema) })
   const codeForm = useForm<z.infer<typeof codeSchema>>({ resolver: zodResolver(codeSchema) })
   const passwordForm = useForm<z.infer<typeof passwordSchema>>({ resolver: zodResolver(passwordSchema) })
+  // القيمة أثناء الكتابة — لقائمة قواعد كلمة المرور (PasswordRulesChecklist).
+  const newPassword = useWatch({ control: passwordForm.control, name: 'new_password' }) ?? ''
 
   const requestMutation = useMutation({
     mutationFn: (value: string) => authApi.requestPasswordReset(value),
@@ -265,9 +268,14 @@ export function ForgotPasswordPage() {
                 type="password"
                 autoComplete="new-password"
                 autoFocus
-                hint={NEW_PASSWORD_HINT}
+                aria-describedby="reset-password-rules"
                 error={passwordForm.formState.errors.new_password?.message}
                 {...passwordForm.register('new_password')}
+              />
+              <PasswordRulesChecklist
+                id="reset-password-rules"
+                password={newPassword}
+                showUnmet={passwordForm.formState.isSubmitted}
               />
               <Input
                 label="تأكيد كلمة المرور الجديدة"

@@ -1,4 +1,4 @@
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useMutation } from '@tanstack/react-query'
@@ -10,7 +10,8 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { extractErrorMessage } from '@/lib/utils'
-import { NEW_PASSWORD_HINT, newPasswordSchema } from './passwordPolicy'
+import { newPasswordSchema } from './passwordPolicy'
+import { PasswordRulesChecklist } from './PasswordRulesChecklist'
 
 const schema = z
   .object({
@@ -37,10 +38,13 @@ export function ChangePasswordModal() {
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    control,
+    formState: { errors, isSubmitted },
     setError,
     reset,
   } = useForm<FormValues>({ resolver: zodResolver(schema) })
+  // القيمة أثناء الكتابة — لقائمة قواعد كلمة المرور (PasswordRulesChecklist).
+  const newPassword = useWatch({ control, name: 'new_password' }) ?? ''
 
   const mutation = useMutation({
     mutationFn: (values: FormValues) => authApi.changePassword(values),
@@ -87,10 +91,11 @@ export function ChangePasswordModal() {
         <Input
           label="كلمة المرور الجديدة"
           type="password"
-          hint={NEW_PASSWORD_HINT}
+          aria-describedby="change-password-rules"
           error={errors.new_password?.message}
           {...register('new_password')}
         />
+        <PasswordRulesChecklist id="change-password-rules" password={newPassword} showUnmet={isSubmitted} />
         <Input
           label="تأكيد كلمة المرور الجديدة"
           type="password"

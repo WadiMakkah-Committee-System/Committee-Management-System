@@ -475,6 +475,47 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     return result.unique().scalar_one_or_none()
 
 
+async def get_user_by_login_identifier(db: AsyncSession, identifier: str) -> User | None:
+    """
+    الهدف:
+    جلب المستخدم اللي يحاول تسجيل الدخول بكلمة المرور — باسم المستخدم أو
+    بالبريد الإلكتروني (طلب صاحب المشروع 2026-11-10).
+
+    المدخلات: identifier — النص المكتوب بخانة الدخول (اسم مستخدم أو بريد).
+
+    المخرجات: المستخدم بشكله الكامل (نفس get_user_by_username) أو None.
+
+    قواعد العمل:
+    - المقارنة بدون حساسية لحالة الأحرف وبعد حذف المسافات الطرفية، وللحسابات
+      غير المحذوفة فقط.
+    - لو طابق النص اسم مستخدم لحساب وبريد حساب آخر (حالة نادرة: اسم مستخدم
+      فيه @)، الأولوية لاسم المستخدم — نفس سلوك الدخول قبل هذه الميزة، فلا
+      يتغيّر دخول أي حساب قائم.
+
+    الأداء: استعلام واحد (OR) بنفس خيارات التحميل — يرجع صفًا أو صفين على
+    الأكثر، والاختيار بينهما بالذاكرة. عمود البريد عليه فهرس
+    idx_users_email_lower_active (migration 0042).
+    """
+    value = identifier.strip().lower()
+    if not value:
+        return None
+    result = await db.execute(
+        select(User)
+        .options(*_profile_options())
+        .where(
+            or_(func.lower(User.username) == value, func.lower(User.email) == value),
+            User.deleted_at.is_(None),
+        )
+    )
+    candidates = result.unique().scalars().all()
+    by_username = next((u for u in candidates if u.username.lower() == value), None)
+    if by_username is not None:
+        return by_username
+    by_email = [u for u in candidates if u.email.lower() == value]
+    # أكثر من حساب بنفس البريد (لا يُفترض — الإنشاء يمنعه) ⇒ لا نخمّن أيهم.
+    return by_email[0] if len(by_email) == 1 else None
+
+
 async def find_users_for_microsoft_login(db: AsyncSession, email: str, object_id: uuid.UUID) -> list[User]:
     """
     الهدف: المرشحون للدخول بحساب Microsoft (migration 0042) — المستخدمون غير

@@ -12,7 +12,9 @@ from pydantic import field_validator
 
 
 class LoginRequest(BaseModel):
-    username: str
+    # اسم المستخدم أو البريد الإلكتروني (2026-11-10) — اسم الحقل باقٍ username
+    # للتوافق مع الواجهة وأي عميل قائم.
+    username: str = Field(min_length=1, max_length=254)
     password: str
 
 
