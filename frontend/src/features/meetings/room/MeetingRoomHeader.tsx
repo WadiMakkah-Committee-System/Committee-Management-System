@@ -4,6 +4,7 @@ import { Avatar } from '@/components/ui/Avatar'
 import { useToast } from '@/components/ui/Toast'
 import { MeetingStatusBadge } from '@/components/ui/StatusBadge'
 import { useAuthStore } from '@/store/authStore'
+import { copyMeetingInvite } from '@/lib/meetingInvite'
 import type { Meeting } from '@/types'
 
 /**
@@ -49,10 +50,10 @@ export function MeetingRoomHeader({
 
   const meetingUrl = `${window.location.origin}/meetings/${meeting.meeting_id}`
 
+  // ينسخ نص دعوة كامل (العنوان والتاريخ والوقت والرابط) بدل الرابط وحده — طلب لاما 2026-11-10.
   function copyLink() {
-    navigator.clipboard
-      .writeText(meetingUrl)
-      .then(() => showToast('تم نسخ رابط الاجتماع'))
+    copyMeetingInvite(meeting)
+      .then(() => showToast('تم نسخ دعوة الاجتماع'))
       .catch(() => showToast('تعذّر نسخ الرابط', 'error'))
   }
 
@@ -73,7 +74,7 @@ export function MeetingRoomHeader({
             {currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : ''}
           </p>
           <p className="flex items-center gap-1 text-[11px] text-text-muted">
-            {currentUser?.role?.name ?? 'عضو اللجنة'}
+            {currentUser?.is_guest ? 'ضيف' : (currentUser?.role?.name ?? 'عضو اللجنة')}
             <ChevronDown size={12} />
           </p>
         </div>

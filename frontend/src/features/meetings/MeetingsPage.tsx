@@ -290,7 +290,7 @@ export function MeetingsPage() {
       } else {
         showToast('تم إنشاء الاجتماع وإرسال الدعوة للمشاركين', 'success')
       }
-      navigate(`/meetings/${created.meeting_id}`)
+      navigate(`/meetings/${created.meeting_id}`, { state: { justCreated: true } })
     } catch (err) {
       setFormError(extractErrorMessage(err))
     }

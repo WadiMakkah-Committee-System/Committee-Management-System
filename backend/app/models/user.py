@@ -91,6 +91,14 @@ class User(Base):
 
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # حساب ضيف مؤقت من خارج المنصة (migration 0047 — قرار لاما 2026-11-10):
+    # مربوط باجتماع واحد فقط، بلا دور نظامي، ولا يسجل دخول بكلمة مرور.
+    # راجعي services/meeting_guest_service.py.
+    is_guest: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    guest_meeting_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("meetings.meeting_id"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

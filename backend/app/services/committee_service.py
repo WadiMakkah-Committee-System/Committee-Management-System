@@ -1045,7 +1045,14 @@ async def get_committee_role_permission_codes(
         )
     membership = result.unique().scalar_one_or_none()
     if membership is None:
-        return set()
+        # ضيف مقبول باجتماع تابع لهذه اللجنة ⇒ صلاحيات "عضو اللجنة" (قرار لاما
+        # 2026-11-10 — راجعي meeting_guest_service). استعلام إضافي لغير
+        # الأعضاء فقط، والأعضاء الفعليون لا يمرّون هنا إطلاقًا.
+        from app.services import meeting_guest_service
+
+        return await meeting_guest_service.guest_committee_codes(
+            db, user_id=user_id, committee_id=committee_id
+        )
     return membership.committee_role.permission_codes
 
 

@@ -36,6 +36,20 @@ from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 
+async def _meeting_out(db: AsyncSession, meeting) -> MeetingOut:
+    """MeetingOut + الضيوف المقبولون (0047) — استعلام صغير إضافي واحد."""
+    from app.schemas.meeting import MeetingGuestUserOut
+    from app.services import meeting_guest_service
+
+    out = MeetingOut.model_validate(meeting)
+    guests = await meeting_guest_service.list_admitted_guests(db, meeting.meeting_id)
+    out.guests = [
+        MeetingGuestUserOut(user_id=g.user_id, first_name=g.first_name, middle_name="", last_name="")
+        for g in guests
+    ]
+    return out
+
+
 @router.post("", response_model=MeetingOut, status_code=status.HTTP_201_CREATED)
 async def create_meeting(
     payload: MeetingCreate,
@@ -65,7 +79,7 @@ async def create_meeting(
     run_detached(
         notification_service.notify_meeting_created(meeting, actor_user_id=current_user.user_id)
     )
-    return MeetingOut.model_validate(meeting)
+    return await _meeting_out(db, meeting)
 
 
 @router.post(
@@ -203,7 +217,7 @@ async def create_meeting_with_attachments(
     run_detached(
         notification_service.notify_meeting_created(meeting, actor_user_id=actor_id, files=email_files)
     )
-    return MeetingCreateWithAttachmentsOut(meeting=MeetingOut.model_validate(meeting), failed_files=failed)
+    return MeetingCreateWithAttachmentsOut(meeting=await _meeting_out(db, meeting), failed_files=failed)
 
 
 @router.get("", response_model=list[MeetingListItem])
@@ -226,7 +240,7 @@ async def get_meeting(
         meeting = await meeting_service.get_meeting(db, meeting_id, actor=current_user)
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
-    return MeetingOut.model_validate(meeting)
+    return await _meeting_out(db, meeting)
 
 
 @router.patch("/{meeting_id}", response_model=MeetingOut)
@@ -262,7 +276,7 @@ async def update_meeting(
                 meeting, changes, actor_user_id=current_user.user_id
             )
         )
-    return MeetingOut.model_validate(meeting)
+    return await _meeting_out(db, meeting)
 
 
 @router.post("/{meeting_id}/extend", response_model=MeetingOut)
@@ -291,7 +305,7 @@ async def extend_meeting(
     run_detached(
         notification_service.notify_meeting_updated(meeting, changes, actor_user_id=current_user.user_id)
     )
-    return MeetingOut.model_validate(meeting)
+    return await _meeting_out(db, meeting)
 
 
 @router.delete("/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)

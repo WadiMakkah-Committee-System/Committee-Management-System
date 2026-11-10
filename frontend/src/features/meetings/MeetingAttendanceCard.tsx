@@ -58,6 +58,11 @@ export function MeetingAttendanceCard({ meetingId }: { meetingId: string }) {
                       <span className="flex items-center gap-2 font-medium text-text-primary">
                         <Avatar firstName={r.user.first_name} lastName={r.user.last_name} size={22} />
                         {r.user.first_name} {r.user.last_name}
+                        {r.user.is_guest && (
+                          <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-semibold text-warning">
+                            ضيف خارجي
+                          </span>
+                        )}
                       </span>
                     </td>
                     <td className="py-2 text-text-secondary">{timeFormat.format(new Date(r.first_joined_at))}</td>

@@ -51,6 +51,16 @@ _FIXED_VOTE_OPTIONS: tuple[tuple[str, bool], ...] = (("موافق", True), ("غ�
 # ============================== إغلاق التصويت (كسلي) ==============================
 
 
+def _is_meeting_guest_vote(vote, decision: Decision) -> bool:
+    voter = vote.voter  # lazy="selectin" — محمَّل مع الأصوات
+    return (
+        voter is not None
+        and voter.is_guest
+        and decision.meeting_id is not None
+        and voter.guest_meeting_id == decision.meeting_id
+    )
+
+
 def _maybe_close_voting(decision: Decision, committee: Committee) -> bool:
     """
     يُستدعى عند أي تفاعل مع قرار بحالة 'voting' — راجعي docstring الملف
@@ -69,8 +79,15 @@ def _maybe_close_voting(decision: Decision, committee: Committee) -> bool:
         return False
 
     voter_ids = _committee_voter_ids(committee)
-    votes_by_user = {v.user_id: v for v in decision.votes if v.user_id in voter_ids}
-    all_voted = len(votes_by_user) >= len(voter_ids) and len(voter_ids) > 0
+    member_votes = {v.user_id: v for v in decision.votes if v.user_id in voter_ids}
+    all_voted = len(member_votes) >= len(voter_ids) and len(voter_ids) > 0
+    # أصوات ضيوف اجتماع القرار (0047 — قرار لاما 2026-11-10: الضيف يصوّت مثل
+    # العضو) تُحسب بالنتيجة، لكن الإغلاق التلقائي ينتظر أعضاء اللجنة فقط —
+    # ضيف خرج من الاجتماع لا يعلّق التصويت للأبد.
+    votes_by_user = dict(member_votes)
+    for v in decision.votes:
+        if _is_meeting_guest_vote(v, decision):
+            votes_by_user[v.user_id] = v
     deadline_passed = (
         decision.voting_deadline is not None and datetime.now(UTC) >= decision.voting_deadline
     )
@@ -177,7 +194,12 @@ async def cast_vote(
         access, committee, "decisions.vote.cast", "ليست لديك صلاحية التصويت على هذا القرار"
     )
 
-    if actor.user_id not in _committee_voter_ids(committee):
+    is_meeting_guest = (
+        actor.is_guest
+        and decision.meeting_id is not None
+        and actor.guest_meeting_id == decision.meeting_id
+    )
+    if actor.user_id not in _committee_voter_ids(committee) and not is_meeting_guest:
         raise DecisionForbiddenError("التصويت متاح فقط لأعضاء اللجنة المرتبطة بالقرار")
 
     _maybe_close_voting(decision, committee)

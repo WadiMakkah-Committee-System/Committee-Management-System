@@ -22,6 +22,8 @@ from app.api.v1 import (
     users,
 )
 
+from app.api.v1.meetings.guests import public_router as meeting_guests_public_router
+
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
@@ -37,6 +39,8 @@ api_router.include_router(committee_attachments.router)
 api_router.include_router(documents.router)
 api_router.include_router(documents.categories_router)
 api_router.include_router(meetings.router)
+# دخول الضيوف بدون تسجيل دخول (0047) — /api/v1/public/...
+api_router.include_router(meeting_guests_public_router)
 api_router.include_router(decisions.router)
 api_router.include_router(tasks.router)
 api_router.include_router(notifications.router)

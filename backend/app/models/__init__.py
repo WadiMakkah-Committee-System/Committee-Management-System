@@ -18,6 +18,7 @@ from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.meeting import Meeting, MeetingAgendaItem, MeetingMode, MeetingStatus
 from app.models.meeting_attendance import MeetingAttendance
+from app.models.meeting_guest import MeetingGuestRequest, MeetingGuestRequestStatus
 from app.models.meeting_insights import MeetingAgendaSession, MeetingTranscriptSegment
 from app.models.meeting_chat import MeetingChatMessage
 from app.models.document_chat import DocumentChatConversation, DocumentChatMessage

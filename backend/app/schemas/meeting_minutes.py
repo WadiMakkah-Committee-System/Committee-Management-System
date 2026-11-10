@@ -139,6 +139,8 @@ class MinutesDetailMeetingOut(BaseModel):
     scheduled_end_at: datetime | None
     status: MeetingStatus
     participants: list[CommitteeMemberUserOut]
+    #: الضيوف المقبولون (migration 0047) — "ضيف خارجي" بقسم الحضور. يُعبّأ بالراوت.
+    guests: list[CommitteeMemberUserOut] = []
     agenda_items: list[MeetingAgendaItemOut]
     started_at: datetime | None
     ended_at: datetime | None

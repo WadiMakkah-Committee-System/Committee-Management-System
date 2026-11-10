@@ -176,6 +176,17 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
     user = await _resolve_user_from_token(token)
     if user is None:
         return False
+    # حساب ضيف (0047): اجتماعه فقط وما دام قائمًا — نفس قيد enforce_guest_scope لطلبات HTTP.
+    if user.is_guest:
+        if user.guest_meeting_id != meeting_id:
+            return False
+        from app.models.meeting import Meeting
+        from app.services import meeting_guest_service
+
+        async with AsyncSessionLocal() as db:
+            guest_meeting = await db.get(Meeting, meeting_id)
+            if guest_meeting is None or not meeting_guest_service.is_guest_meeting_active(guest_meeting):
+                return False
 
     try:
         async with AsyncSessionLocal() as db:
@@ -229,7 +240,7 @@ async def connect(sid: str, environ: dict, auth: dict | None) -> bool:
     if str(user.user_id) not in existing_user_ids:
         await sio.emit(
             "presence.joined",
-            {"user_id": str(user.user_id), "full_name": user.full_name},
+            {"user_id": str(user.user_id), "full_name": user.full_name, "is_guest": user.is_guest},
             room=room,
         )
     return True

@@ -124,6 +124,14 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -
     user = await user_service.get_user(db, token_payload["sub"])
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="مستخدم غير موجود")
+    if user.is_guest:
+        # جلسة الضيف تنتهي بانتهاء اجتماعه (0047) — لا تجديد بعده.
+        from app.models.meeting import Meeting
+        from app.services import meeting_guest_service
+
+        guest_meeting = await db.get(Meeting, user.guest_meeting_id) if user.guest_meeting_id else None
+        if guest_meeting is None or not meeting_guest_service.is_guest_meeting_active(guest_meeting):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="انتهى الاجتماع")
 
     new_access_token = create_access_token(
         user.user_id, user.role.name if user.role else None, session_id

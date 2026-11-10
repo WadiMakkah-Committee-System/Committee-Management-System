@@ -95,6 +95,11 @@ export function ParticipantsPanel({
                 <p className="truncate text-[13px] font-semibold text-text-primary">
                   {participant.first_name} {participant.last_name}
                   {isMe && <span className="font-normal text-text-muted"> (أنت)</span>}
+                  {participant.is_guest && (
+                    <span className="ms-1.5 rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-semibold text-warning">
+                      ضيف
+                    </span>
+                  )}
                 </p>
                 <p className="text-[11px] text-text-muted">{online ? 'متصل الآن' : 'غير متصل'}</p>
               </div>
