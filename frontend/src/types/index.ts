@@ -139,6 +139,9 @@ export interface User {
   last_login_at: string | null
   created_at: string
   updated_at: string
+  /** حساب ضيف مؤقت من خارج المنصة (migration 0047) — يرى غرفة اجتماعه فقط. */
+  is_guest?: boolean
+  guest_meeting_id?: string | null
 }
 
 export interface UserDetail extends User {
@@ -313,6 +316,8 @@ export interface CommitteeMemberUser {
   middle_name: string
   last_name: string
   email: string
+  /** ضيف من خارج المنصة (Meeting.guests — migration 0047). */
+  is_guest?: boolean
 }
 
 /**
@@ -654,6 +659,8 @@ export interface Meeting {
   agenda_items: MeetingAgendaItem[]
   created_at: string
   updated_at: string
+  /** الضيوف المقبولون من خارج المنصة (migration 0047) — غائب بالردود القديمة. */
+  guests?: CommitteeMemberUser[]
 }
 
 /**
@@ -940,6 +947,8 @@ export interface MinutesDetailMeeting {
   scheduled_end_at: string | null
   status: MeetingStatus
   participants: CommitteeMemberUser[]
+  /** الضيوف المقبولون (migration 0047) — "ضيف خارجي" بقسم الحضور. */
+  guests?: CommitteeMemberUser[]
   agenda_items: MeetingAgendaItem[]
   started_at: string | null
   ended_at: string | null
@@ -1306,4 +1315,37 @@ export interface CommitteeAttachmentsMeetingBundle {
   can_view_minutes: boolean
   minutes_available: boolean
   minutes_stage: MeetingMinutesStage | null
+}
+
+// ============================== ضيوف الاجتماع (migration 0047) ==============================
+
+export interface PublicMeetingInvite {
+  title: string
+  committee_name: string | null
+  scheduled_at: string
+  scheduled_end_at: string | null
+  status: MeetingStatus
+  is_open: boolean
+}
+
+export interface GuestJoinRequestCreated {
+  request_id: string
+  secret: string
+}
+
+export type GuestRequestStatus = 'pending' | 'admitted' | 'rejected' | 'cancelled'
+
+export interface GuestRequestStatusResponse {
+  status: GuestRequestStatus
+  meeting_id: string | null
+  access_token: string | null
+  refresh_token: string | null
+  user: UserDetail | null
+}
+
+export interface MeetingGuestRequest {
+  request_id: string
+  display_name: string
+  status: GuestRequestStatus
+  created_at: string
 }

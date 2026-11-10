@@ -13,6 +13,7 @@ import {
   FileAudio,
   FileText,
   Gavel,
+  Link2,
   ListChecks,
   Mail,
   MapPin,
@@ -29,6 +30,7 @@ import {
   Upload,
   Users as UsersIcon,
   Video,
+  X,
 } from 'lucide-react'
 import {
   useAddAgendaItem,
@@ -78,6 +80,7 @@ import { ExtendMeetingModal } from './ExtendMeetingModal'
 import { AssignExtractedItemModal } from './AssignExtractedItemModal'
 import { MeetingRoom } from './MeetingRoom'
 import { cn, extractErrorMessage, formatDateTime, formatFileSize, scopeFor } from '@/lib/utils'
+import { copyMeetingInvite } from '@/lib/meetingInvite'
 import type { AssignAsDecisionPayload, AssignAsTaskPayload } from '@/api/meetingExtractedItems'
 import type { MeetingAttachment, MeetingAttachmentKind, MeetingExtractedItem } from '@/types'
 
@@ -159,6 +162,18 @@ export function MeetingDetailPage() {
 
   const { data: meeting, isLoading, isError, refetch } = useMeetingDetail(meetingId)
   const { data: committee } = useCommitteeDetail(meeting?.committee_id)
+
+  // نسخ دعوة الاجتماع (طلب لاما 2026-11-10) — راجعي lib/meetingInvite.ts.
+  // بعد الإنشاء مباشرة (MeetingsPage يمرّر state.justCreated) يظهر شريط نجاح فيه الزر.
+  const [showCreatedInvite, setShowCreatedInvite] = useState(
+    () => (location.state as { justCreated?: boolean } | null)?.justCreated === true,
+  )
+  function copyInvite() {
+    if (!meeting) return
+    copyMeetingInvite(meeting, committee?.name)
+      .then(() => showToast('تم نسخ دعوة الاجتماع', 'success'))
+      .catch((err) => showToast(extractErrorMessage(err) || 'تعذّر نسخ الدعوة', 'error'))
+  }
   const { data: attachments, isLoading: attachmentsLoading } = useMeetingAttachments(meetingId)
   // بلاغ لاما 2026-09-13: قرارات أُنشئت من داخل غرفة الاجتماع (DecisionsPanel)
   // كانت لا تظهر أبدًا بصفحة تفاصيل الاجتماع بعد انتهائه — القسم أدناه يعرضها.
@@ -612,6 +627,24 @@ export function MeetingDetailPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {showCreatedInvite && (
+        <Card className="flex flex-col gap-3 border-success-border/30 bg-success-bg px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm font-semibold text-success">تم إنشاء الاجتماع — انسخ الدعوة وأرسلها للمشاركين.</p>
+          <div className="flex items-center gap-2">
+            <Button size="sm" icon={<Link2 size={14} />} onClick={copyInvite}>
+              نسخ الدعوة
+            </Button>
+            <button
+              type="button"
+              onClick={() => setShowCreatedInvite(false)}
+              className="flex h-8 w-8 items-center justify-center rounded-sm text-success transition-colors hover:bg-success/10"
+              aria-label="إغلاق"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </Card>
+      )}
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
           <button
@@ -630,6 +663,9 @@ export function MeetingDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="secondary" icon={<Link2 size={15} />} onClick={copyInvite}>
+            نسخ الدعوة
+          </Button>
           {minutesAvailable && (
             <Button variant="secondary" icon={<FileText size={15} />} onClick={() => navigate(`/minutes/${meetingId}`)}>
               محضر الاجتماع

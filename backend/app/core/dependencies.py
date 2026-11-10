@@ -168,11 +168,37 @@ async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     user = await _resolve_user_from_token(token, db)
-    _check_active_role_header(request, user)
+    if user.is_guest:
+        await _enforce_guest_scope(request, user, db)
+    else:
+        _check_active_role_header(request, user)
     # سياق الطلب: من + بأي صفة — يستهلكه audit_service.log_action لتسجيل
     # الصفة بسجل التدقيق (راجعي app/core/request_context.py).
     current_actor.set((user.user_id, user.role_id))
     return user
+
+
+async def _enforce_guest_scope(request: Request, user: User, db: AsyncSession) -> None:
+    """
+    حساب ضيف (migration 0047 — قرار لاما 2026-11-10): يُسمح له فقط بمسارات
+    اجتماعه (وقرارات هذا الاجتماع وبياناته الشخصية) وما دام الاجتماع قائمًا.
+    نقطة واحدة لكل طلبات HTTP المحمية — راجعي meeting_guest_service.enforce_guest_scope.
+    """
+    from app.services import meeting_guest_service
+    from app.services.meeting_service.errors import MeetingForbiddenError
+
+    try:
+        await meeting_guest_service.enforce_guest_scope(
+            db,
+            user=user,
+            method=request.method,
+            path=request.url.path,
+            query_params=dict(request.query_params),
+        )
+    except meeting_guest_service.GuestSessionEndedError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    except MeetingForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
@@ -205,7 +231,11 @@ async def get_current_user_ws(
     الاعتماد على Depends(get_db) المحقونة."""
     try:
         async with AsyncSessionLocal() as db:
-            return await _resolve_user_from_token(token, db)
+            user = await _resolve_user_from_token(token, db)
+        if user.is_guest:
+            # راوتات WebSocket الخام قديمة (استُبدلت بـSocket.IO) — لا داعي لها للضيف.
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="غير متاح للضيوف")
+        return user
     except HTTPException as exc:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc.detail)) from exc
 

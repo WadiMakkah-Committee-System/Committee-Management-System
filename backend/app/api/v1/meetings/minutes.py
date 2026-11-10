@@ -83,6 +83,21 @@ def _minutes_out(minutes) -> MeetingMinutesOut:
     )
 
 
+async def _minutes_detail_meeting_out_with_guests(db: AsyncSession, meeting) -> MinutesDetailMeetingOut:
+    """+ الضيوف المقبولون (migration 0047) — "ضيف خارجي" بقسم الحضور بالمحضر."""
+    from app.schemas.committee import CommitteeMemberUserOut
+    from app.services import meeting_guest_service
+
+    out = _minutes_detail_meeting_out(meeting)
+    out.guests = [
+        CommitteeMemberUserOut(
+            user_id=g.user_id, first_name=g.first_name, middle_name="", last_name="", email="", is_guest=True
+        )
+        for g in await meeting_guest_service.list_admitted_guests(db, meeting.meeting_id)
+    ]
+    return out
+
+
 def _minutes_detail_meeting_out(meeting) -> MinutesDetailMeetingOut:
     # from_attributes=True (راجعي MinutesDetailMeetingOut) — نفس نمط
     # MeetingOut.model_validate(meeting) المستخدَم ببقية راوتات هذا الملف،
@@ -113,7 +128,7 @@ async def get_meeting_minutes_detail(
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
     return MeetingMinutesDetailOut(
-        meeting=_minutes_detail_meeting_out(detail["meeting"]),
+        meeting=await _minutes_detail_meeting_out_with_guests(db, detail["meeting"]),
         committee=_minutes_detail_committee_out(detail["committee"]),
         minutes=_minutes_out(detail["minutes"]),
         templates=[MinutesTemplateOut(**t) for t in detail["templates"]],

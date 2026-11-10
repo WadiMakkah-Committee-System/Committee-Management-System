@@ -216,9 +216,12 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
             </span>
           )}
         </div>
-        <Button size="sm" variant="ghost" icon={<ExternalLink size={13} />} onClick={openFullMinutes}>
-          المحضر كاملًا
-        </Button>
+        {/* الضيف (migration 0047) لا يملك صفحات المنصة — المحضر له من هذه اللوحة فقط. */}
+        {!user?.is_guest && (
+          <Button size="sm" variant="ghost" icon={<ExternalLink size={13} />} onClick={openFullMinutes}>
+            المحضر كاملًا
+          </Button>
+        )}
       </div>
 
       {collaborators.filter((c) => c.userId !== user?.user_id).length > 0 && (

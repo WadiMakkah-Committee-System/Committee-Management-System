@@ -105,6 +105,9 @@ class UserOut(BaseModel):
     last_login_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # حساب ضيف مؤقت (migration 0047) — الواجهة تعرض له غرفة اجتماعه فقط.
+    is_guest: bool = False
+    guest_meeting_id: uuid.UUID | None = None
 
 
 class UserDetailOut(UserOut):

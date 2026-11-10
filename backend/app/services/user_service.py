@@ -381,7 +381,8 @@ async def list_users(
             selectinload(User.assigned_roles).raiseload("*", sql_only=True),
             raiseload("*", sql_only=True),
         )
-        .where(User.deleted_at.is_(None))
+        # حسابات الضيوف المؤقتة (0047) لا تظهر بقائمة المستخدمين ولا بمنتقيات الأعضاء.
+        .where(User.deleted_at.is_(None), User.is_guest.is_(False))
     )
     if dep_id is not None:
         stmt = stmt.where(User.dep_id == dep_id)

@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/Toast'
 import { MeetingRoomAppRail } from './room/MeetingRoomAppRail'
 import { MeetingRoomSidebar, type RoomPanelKey } from './room/MeetingRoomSidebar'
 import { PanelEdgeToggle } from './room/PanelEdgeToggle'
+import { GuestRequestsBanner } from './room/GuestRequestsBanner'
 import { ExtendMeetingModal } from './ExtendMeetingModal'
 import { MeetingRoomHeader } from './room/MeetingRoomHeader'
 import { AgoraMeetingStage } from './room/AgoraMeetingStage'
@@ -113,8 +114,10 @@ export function MeetingRoom({
   const namesById = useMemo(() => {
     const map = new Map<string, string>()
     for (const p of meetingForNames?.participants ?? []) map.set(p.user_id, `${p.first_name} ${p.last_name}`)
+    // الضيوف المقبولون (migration 0047) — "ضيف" بجانب الاسم بالفيديو.
+    for (const g of meetingForNames?.guests ?? []) map.set(g.user_id, `${g.first_name} (ضيف)`)
     return map
-  }, [meetingForNames?.participants])
+  }, [meetingForNames?.participants, meetingForNames?.guests])
   const namesRef = useRef(namesById)
   namesRef.current = namesById
   const agoraCall = useAgoraCall(meetingId, { nameOf: (id) => namesRef.current.get(id) ?? 'مشارك' })
@@ -576,7 +579,7 @@ export function MeetingRoom({
               <div className="min-h-0 flex-1 overflow-hidden">
                 {activePanel === 'participants' && (
                   <ParticipantsPanel
-                    participants={meeting.participants}
+                    participants={[...meeting.participants, ...(meeting.guests ?? [])]}
                     onlineUserIds={realtime.onlineUserIds}
                     raisedHandUserIds={raisedHandUserIds}
                     currentUserId={currentUser?.user_id ?? ''}
@@ -637,6 +640,8 @@ export function MeetingRoom({
             />
 
             <div className="relative flex min-h-0 flex-1 flex-col gap-3 p-3">
+              {/* قاعة انتظار الضيوف (migration 0047): قبول/رفض لأي شخص داخل الاجتماع. */}
+              {isAgoraMeeting && <GuestRequestsBanner meetingId={meetingId} socket={realtime.socket} />}
               {/* تعديل لاما 2026-09-06: "بدأ مناقشة البند ما ظهر إشعار أعلى
                   الصفحة" — بث agenda.discussing كان يُسجَّل بسجل النشاط فقط
                   بلا أي عنصر ظاهر بمنطقة الفيديو الرئيسية نفسها. */}

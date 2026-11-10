@@ -53,6 +53,20 @@ async def committee_role_codes_by_committee(
     codes: dict[uuid.UUID, set[str]] = {}
     for committee_id, code in result.all():
         codes.setdefault(committee_id, set()).add(code)
+    if actor.is_guest and actor.guest_meeting_id is not None:
+        # ضيف مقبول ⇒ صلاحيات "عضو اللجنة" للجنة اجتماعه فقط (قرار لاما
+        # 2026-11-10 — راجعي meeting_guest_service). حصره بالاجتماع نفسه
+        # يتم في enforce_guest_scope قبل الوصول لأي خدمة.
+        from app.models.meeting import Meeting
+        from app.services import meeting_guest_service
+
+        committee_id = await db.scalar(
+            select(Meeting.committee_id).where(Meeting.meeting_id == actor.guest_meeting_id)
+        )
+        if committee_id is not None:
+            codes[committee_id] = await meeting_guest_service.guest_committee_codes(
+                db, user_id=actor.user_id, committee_id=committee_id
+            )
     return codes
 
 

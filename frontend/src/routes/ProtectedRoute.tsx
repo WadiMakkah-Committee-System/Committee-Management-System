@@ -24,6 +24,11 @@ export function ProtectedRoute({ anyPermission, superAdminOnly }: ProtectedRoute
     return <Navigate to="/login" replace />
   }
 
+  // حساب الضيف (migration 0047) لا يملك أي صفحة بالمنصة غير غرفة اجتماعه.
+  if (user?.is_guest) {
+    return <Navigate to="/guest-meeting" replace />
+  }
+
   if (user) {
     const isSuperAdmin = !!user.role?.is_super_admin
     if (superAdminOnly && !isSuperAdmin) {

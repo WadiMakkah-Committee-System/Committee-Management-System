@@ -29,6 +29,8 @@ class CommitteeMemberUserOut(BaseModel):
     middle_name: str
     last_name: str
     email: str
+    # ضيف من خارج المنصة (migration 0047) — يظهر "ضيف خارجي" بالحضور والمحضر.
+    is_guest: bool = False
 
 
 class CommitteeRoleSummaryOut(BaseModel):

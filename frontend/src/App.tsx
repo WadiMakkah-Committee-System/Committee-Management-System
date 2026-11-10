@@ -39,6 +39,13 @@ import * as usersApi from '@/api/users'
  * تغيير.
  */
 const LoginPage = lazy(() => import('@/features/auth/LoginPage').then((m) => ({ default: m.LoginPage })))
+// دخول الضيوف برابط عام (migration 0047) — خارج ProtectedRoute/AppShell.
+const GuestJoinPage = lazy(() =>
+  import('@/features/meetings/guest/GuestJoinPage').then((m) => ({ default: m.GuestJoinPage })),
+)
+const GuestMeetingPage = lazy(() =>
+  import('@/features/meetings/guest/GuestMeetingPage').then((m) => ({ default: m.GuestMeetingPage })),
+)
 const ForgotPasswordPage = lazy(() =>
   import('@/features/auth/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })),
 )
@@ -179,6 +186,8 @@ function App() {
         <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/join/:token" element={<GuestJoinPage />} />
+        <Route path="/guest-meeting" element={<GuestMeetingPage />} />
 
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>

@@ -883,7 +883,10 @@ export function MeetingMinutesPage() {
                         بيانات الاجتماع
                       </p>
                       <p className="text-text-muted">اللجنة: {committee?.name ?? '—'}</p>
-                      <p className="text-text-muted">الحضور: {meeting.participants.length} مشارك</p>
+                      <p className="text-text-muted">
+                        الحضور: {meeting.participants.length} مشارك
+                        {(meeting.guests?.length ?? 0) > 0 && ` + ${meeting.guests?.length} ضيف خارجي`}
+                      </p>
                       <p className="text-text-muted">بنود جدول الأعمال: {meeting.agenda_items.length}</p>
                     </Card>
                   </div>
@@ -930,7 +933,7 @@ export function MeetingMinutesPage() {
                   <section className="mb-6">
                     <h3 className="mb-2 text-sm font-bold text-text-primary">الحضور</h3>
                     <div className="grid gap-2 sm:grid-cols-2">
-                      {meeting.participants.map((p) => (
+                      {[...meeting.participants, ...(meeting.guests ?? [])].map((p) => (
                         <div
                           key={p.user_id}
                           className="flex items-center justify-between rounded-sm bg-bg-elevated px-3 py-1.5 text-xs"
@@ -938,6 +941,8 @@ export function MeetingMinutesPage() {
                           <span>
                             {p.first_name} {p.last_name}
                           </span>
+                          {/* الضيوف (migration 0047 — قرار لاما 2026-11-10): "ضيف خارجي". */}
+                          {p.is_guest && <span className="font-semibold text-warning">ضيف خارجي</span>}
                         </div>
                       ))}
                     </div>

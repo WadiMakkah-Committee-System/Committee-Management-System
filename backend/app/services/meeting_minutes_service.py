@@ -956,6 +956,7 @@ async def get_minutes_pdf(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
     + أكواد دور اللجنة عند الحاجة فقط (0-1).
     """
     # استيراد كسول: reportlab يُحمَّل فقط عند أول طلب PDF، لا مع تشغيل التطبيق.
+    from app.services import meeting_guest_service
     from app.services.meeting_service.attendance import summarize_attendance
     from app.services.minutes_pdf_service import (
         MinutesPdfData,
@@ -976,9 +977,14 @@ async def get_minutes_pdf(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
         mode=meeting.mode.value,
         location=meeting.location,
         stage=minutes.stage.value,
-        participants=[p.full_name for p in meeting.participants],
+        participants=[p.full_name for p in meeting.participants]
+        # الضيوف المقبولون (migration 0047 — قرار لاما 2026-11-10): "ضيف خارجي".
+        + [
+            f"{g.full_name} (ضيف خارجي)"
+            for g in await meeting_guest_service.list_admitted_guests(db, meeting.meeting_id)
+        ],
         attended=[
-            f"{row.user.full_name} — {_format_duration(row.total_seconds)}"
+            f"{row.user.full_name}{' (ضيف خارجي)' if row.user.is_guest else ''} — {_format_duration(row.total_seconds)}"
             for row in await summarize_attendance(db, meeting_id=meeting.meeting_id)
         ],
         sections=list(minutes.sections or []),

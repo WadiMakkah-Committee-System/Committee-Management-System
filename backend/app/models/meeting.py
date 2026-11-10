@@ -126,6 +126,10 @@ class Meeting(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # رمز رابط دخول الضيوف (migration 0047) — NULL = غير مفعّل. لا يُعرض إلا
+    # لمن داخل الاجتماع (راجعي meeting_guest_service).
+    guest_link_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

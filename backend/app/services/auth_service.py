@@ -79,7 +79,8 @@ async def authenticate(
 
     generic_error = AuthError("اسم المستخدم أو البريد الإلكتروني أو كلمة المرور غير صحيحة")
 
-    if user is None:
+    # حساب الضيف (0047) لا يسجل دخول بكلمة مرور أبدًا — يدخل فقط عبر قبوله بالاجتماع.
+    if user is None or user.is_guest:
         raise generic_error
 
     if user.is_locked:

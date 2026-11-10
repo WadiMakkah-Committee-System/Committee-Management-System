@@ -118,7 +118,9 @@ apiClient.interceptors.response.use(
       // يصير صامتًا بدون أي رسالة، فيبدو للمستخدمة إن الزر ببساطة "ما
       // يستجيب" رغم إن التحويل لصفحة الدخول صار فعليًا. هذا التنبيه يوضّح
       // السبب الحقيقي قبل التحويل.
-      notify('انتهت الجلسة — يُرجى تسجيل الدخول مرة أخرى', 'error')
+      // الضيف (migration 0047): جلسته تنتهي بانتهاء الاجتماع — لا "سجّل دخولك".
+      if (useAuthStore.getState().user?.is_guest) notify('انتهى الاجتماع — شكرًا لحضورك', 'info')
+      else notify('انتهت الجلسة — يُرجى تسجيل الدخول مرة أخرى', 'error')
       logout()
       return Promise.reject(refreshError)
     } finally {

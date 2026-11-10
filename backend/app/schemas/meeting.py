@@ -28,7 +28,7 @@ meeting_service._maybe_transition_status.
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -186,6 +186,8 @@ class MeetingOut(BaseModel):
     has_teams_meeting: bool
     created_at: datetime
     updated_at: datetime
+    #: الضيوف المقبولون (0047 — حسابات ضيف مؤقتة). تُعبّأ بالراوت (ليست علاقة ORM).
+    guests: list["MeetingGuestUserOut"] = []
 
 
 class MeetingListItem(BaseModel):
@@ -430,3 +432,66 @@ class RecordingSessionStopOut(BaseModel):
     status: str
     recording_id: uuid.UUID | None
     error_message: str | None
+
+
+# ============================== ضيوف الاجتماع (migration 0047) ==============================
+
+
+class MeetingGuestUserOut(BaseModel):
+    """ضيف مقبول — نفس شكل CommitteeMemberUserOut للواجهة، والبريد فارغ عمدًا
+    (بريد حساب الضيف داخلي لا معنى له)."""
+
+    user_id: uuid.UUID
+    first_name: str
+    middle_name: str = ""
+    last_name: str = ""
+    email: str = ""
+    is_guest: bool = True
+
+
+class GuestLinkOut(BaseModel):
+    token: str
+
+
+class PublicMeetingInviteOut(BaseModel):
+    title: str
+    committee_name: str | None
+    scheduled_at: datetime
+    scheduled_end_at: datetime | None
+    status: MeetingStatus
+    #: هل يمكن طلب الدخول الآن (اجتماع عن بُعد لم ينتهِ بعد).
+    is_open: bool
+
+
+class GuestJoinRequestIn(BaseModel):
+    display_name: str = Field(min_length=1, max_length=200)
+
+
+class GuestJoinRequestCreatedOut(BaseModel):
+    request_id: uuid.UUID
+    #: رمز متابعة الطلب — يُعطى مرة واحدة فقط ولا يمكن استرجاعه.
+    secret: str
+
+
+class GuestRequestSecretIn(BaseModel):
+    secret: str = Field(min_length=1, max_length=200)
+
+
+class GuestRequestStatusOut(BaseModel):
+    status: str
+    meeting_id: uuid.UUID | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
+    user: Any = None
+
+
+class MeetingGuestRequestOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    request_id: uuid.UUID
+    display_name: str
+    status: str
+    created_at: datetime
+
+
+MeetingOut.model_rebuild()
