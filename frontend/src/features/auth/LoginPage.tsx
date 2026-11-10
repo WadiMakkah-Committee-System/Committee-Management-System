@@ -33,7 +33,7 @@ import { EASE_OUT_EXPO, SplitWords } from '@/components/motion/primitives'
 // كلمة المرور اختيارية بالمخطط لأن موظف الشركة (بريد من نطاقها) يكمل من نافذة
 // Microsoft بدونها — وتُفرض يدويًا بمسار كلمة المرور (handleLogin أدناه).
 const schema = z.object({
-  username: z.string().trim().min(1, 'اسم المستخدم أو الإيميل مطلوب'),
+  username: z.string().trim().min(1, 'اسم المستخدم أو البريد الإلكتروني مطلوب'),
   password: z.string().optional(),
 })
 
@@ -241,8 +241,10 @@ export function LoginPage() {
             </div>
 
             <Input
-              label={microsoftEnabled ? 'اسم المستخدم أو إيميل الشركة' : 'اسم المستخدم'}
-              placeholder={microsoftEnabled ? 'name@wadimakkah.sa أو اسم المستخدم' : 'أدخل اسم المستخدم'}
+              // الدخول باسم المستخدم أو البريد الإلكتروني (2026-11-10). لو الدخول
+              // بـMicrosoft مفعّل، بريد الشركة يتحوّل لـMicrosoft (isCompanyEmail).
+              label="اسم المستخدم أو البريد الإلكتروني"
+              placeholder={microsoftEnabled ? 'name@wadimakkah.sa أو اسم المستخدم' : 'اسم المستخدم أو name@example.com'}
               autoComplete="username"
               error={errors.username?.message}
               {...register('username')}

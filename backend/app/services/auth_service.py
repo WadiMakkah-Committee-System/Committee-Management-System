@@ -64,17 +64,20 @@ async def authenticate(
     before_commit: Callable[[User], Awaitable[T]] | None = None,
 ) -> tuple[User, str, str, T | None]:
     """
-    محاولة تسجيل دخول. عند النجاح تُرجع (المستخدم، access_token،
+    محاولة تسجيل دخول باسم المستخدم أو البريد الإلكتروني (username = النص
+    المكتوب بخانة الدخول). عند النجاح تُرجع (المستخدم، access_token،
     refresh_token، ناتج before_commit). عند الفشل تُرجع AuthError برسالة
-    عامة موحّدة.
+    عامة موحّدة (لا تكشف هل الحساب موجود).
 
     before_commit (اختياري): دالة قراءة تُنفَّذ داخل معاملة الدخول نفسها
     قبل commit (مثل بناء الملف الشخصي لرد الدخول) — لا يجوز أن تعدّل أي
     بيانات، فهي للقراءة فقط.
     """
-    user = await user_service.get_user_by_username(db, username)
+    # الدخول باسم المستخدم أو البريد الإلكتروني (طلب صاحب المشروع 2026-11-10)
+    # — المعامل اسمه username للتوافق مع جسم الطلب القائم (LoginRequest).
+    user = await user_service.get_user_by_login_identifier(db, username)
 
-    generic_error = AuthError("اسم المستخدم أو كلمة المرور غير صحيحة")
+    generic_error = AuthError("اسم المستخدم أو البريد الإلكتروني أو كلمة المرور غير صحيحة")
 
     if user is None:
         raise generic_error
