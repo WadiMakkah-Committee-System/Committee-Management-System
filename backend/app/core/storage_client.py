@@ -18,7 +18,23 @@ Dependency جديدة، لأن كل ما نحتاجه هو ثلاث عمليات
   mime_type بجدول documents وقت الرفع ونرجعه كما هو.
 - StorageError تُستخدم كـ Exception عام تلتقطه طبقة API وتحوّله لاستجابة
   HTTP مناسبة (502 عادة — خطأ بخدمة خارجية) بدل تسريب تفاصيل httpx.
+
+تحديث 2026-11-11 (نشر النظام على خادم بارع كلاود — طلب الإدارة: كل مكونات
+النظام على خادم واحد):
+- أُضيف خيار تخزين محلي على قرص الخادم، يُختار عبر STORAGE_BACKEND:
+  "supabase" (الافتراضي، بلا أي تغيير على السلوك السابق) أو "local".
+- الدوال العامة upload_object / download_object / delete_object بقيت
+  بالأسماء والتوقيعات نفسها، فلا يتأثر أي ملف يستدعيها ولا الاختبارات
+  (tests/conftest.py يستبدلها بنسخ وهمية بالأسماء نفسها).
+- التخزين المحلي يرفض أي مسار يخرج عن STORAGE_LOCAL_PATH (حماية من
+  Path Traversal)، لأن بعض المسارات تتضمن اسم ملف أرسله المستخدم
+  (مثل تسجيلات الاجتماعات).
 """
+
+import asyncio
+import os
+import uuid
+from pathlib import Path
 
 import httpx
 
@@ -51,7 +67,7 @@ def _headers(service_key: str, *, content_type: str | None = None) -> dict[str, 
     return headers
 
 
-async def upload_object(storage_path: str, content: bytes, *, content_type: str) -> None:
+async def _supabase_upload_object(storage_path: str, content: bytes, *, content_type: str) -> None:
     """رفع ملف جديد. upsert=false عمدًا — storage_path يحمل document_id فريدًا أصلًا،
     فأي تعارض يعني خطأ منطقي يجب أن يظهر بدل الكتابة فوق ملف موجود بصمت."""
     base_url, service_key, bucket = _require_config()
@@ -67,7 +83,7 @@ async def upload_object(storage_path: str, content: bytes, *, content_type: str)
         raise StorageError(f"فشل رفع الملف ({response.status_code}): {response.text}")
 
 
-async def download_object(storage_path: str) -> bytes:
+async def _supabase_download_object(storage_path: str) -> bytes:
     base_url, service_key, bucket = _require_config()
     url = f"{base_url}/storage/v1/object/{bucket}/{storage_path}"
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -80,7 +96,7 @@ async def download_object(storage_path: str) -> bytes:
     return response.content
 
 
-async def delete_object(storage_path: str) -> None:
+async def _supabase_delete_object(storage_path: str) -> None:
     base_url, service_key, bucket = _require_config()
     url = f"{base_url}/storage/v1/object/{bucket}/{storage_path}"
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -90,3 +106,174 @@ async def delete_object(storage_path: str) -> None:
             raise StorageError(f"تعذّر الاتصال بخدمة تخزين الملفات: {exc}") from exc
     if response.status_code >= 400 and response.status_code != 404:
         raise StorageError(f"فشل حذف الملف ({response.status_code}): {response.text}")
+
+
+# =====================================================================
+# التخزين المحلي على قرص الخادم (STORAGE_BACKEND=local)
+# =====================================================================
+
+_BACKEND_SUPABASE = "supabase"
+_BACKEND_LOCAL = "local"
+
+
+def _backend() -> str:
+    """
+    الهدف: تحديد مكان تخزين الملفات الحالي.
+
+    المخرجات: "supabase" أو "local" حسب STORAGE_BACKEND (الافتراضي "supabase").
+
+    الأخطاء المحتملة:
+    - StorageNotConfiguredError: قيمة غير مدعومة في STORAGE_BACKEND.
+    """
+    value = (settings.STORAGE_BACKEND or _BACKEND_SUPABASE).strip().lower()
+    if value not in (_BACKEND_SUPABASE, _BACKEND_LOCAL):
+        raise StorageNotConfiguredError(f"قيمة STORAGE_BACKEND غير مدعومة: {value}")
+    return value
+
+
+def _safe_local_path(storage_path: str) -> Path:
+    """
+    الهدف: تحويل storage_path إلى مسار فعلي آمن داخل مجلد التخزين المحلي.
+
+    المدخلات:
+    - storage_path: المسار المنطقي للملف كما يُحفظ في قاعدة البيانات
+      (مثل "<document_id>" أو "meeting-recordings/<meeting_id>/<file>").
+
+    المخرجات: Path مطلق داخل STORAGE_LOCAL_PATH.
+
+    قواعد الأمان:
+    - يرفض أي مسار يخرج عن STORAGE_LOCAL_PATH بعد حلّه (مثل "../")، لأن
+      بعض المسارات تتضمن اسم ملف أرسله المستخدم.
+    - يرفض المسار الفارغ أو المحتوي على محرف NUL.
+
+    الأخطاء المحتملة:
+    - StorageNotConfiguredError: STORAGE_LOCAL_PATH غير مُعبّأ.
+    - StorageError: المسار غير صالح أو يقع خارج مجلد التخزين.
+    """
+    if not settings.STORAGE_LOCAL_PATH:
+        raise StorageNotConfiguredError("إعداد STORAGE_LOCAL_PATH غير مُعبّأ")
+    if not storage_path or "\x00" in storage_path:
+        raise StorageError("مسار الملف غير صالح")
+    root = Path(settings.STORAGE_LOCAL_PATH).resolve()
+    candidate = (root / storage_path.lstrip("/")).resolve()
+    if candidate == root or not candidate.is_relative_to(root):
+        raise StorageError("مسار الملف يقع خارج مجلد التخزين المخصص")
+    return candidate
+
+
+def _local_write_new(path: Path, content: bytes) -> None:
+    """
+    الهدف: كتابة ملف جديد على القرص دون الكتابة فوق ملف موجود.
+
+    المسؤولية: نفس سلوك Supabase (upsert=false) — وجود ملف بالمسار نفسه
+    يعني خطأ منطقياً يجب أن يظهر. الكتابة تتم أولاً في ملف مؤقت ثم يُربط
+    بالاسم النهائي، فلا يظهر ملف ناقص إذا انقطعت الكتابة.
+
+    المدخلات:
+    - path: المسار الآمن الناتج من _safe_local_path.
+    - content: محتوى الملف.
+
+    التأثيرات الجانبية: ينشئ المجلدات اللازمة ويكتب الملف على القرص.
+
+    الأخطاء المحتملة:
+    - StorageError: الملف موجود مسبقاً، أو تعذّرت الكتابة على القرص.
+    """
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "xb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError as exc:
+            raise StorageError("يوجد ملف محفوظ مسبقاً بالمسار نفسه") from exc
+    except OSError as exc:
+        raise StorageError(f"تعذّر حفظ الملف على الخادم: {exc}") from exc
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _local_read(path: Path) -> bytes:
+    """
+    الهدف: قراءة ملف من القرص.
+
+    المخرجات: محتوى الملف.
+
+    الأخطاء المحتملة:
+    - StorageError: الملف غير موجود أو تعذّرت قراءته.
+    """
+    try:
+        return path.read_bytes()
+    except FileNotFoundError as exc:
+        raise StorageError("الملف غير موجود في التخزين") from exc
+    except OSError as exc:
+        raise StorageError(f"تعذّر قراءة الملف من الخادم: {exc}") from exc
+
+
+def _local_delete(path: Path) -> None:
+    """
+    الهدف: حذف ملف من القرص.
+
+    المسؤولية: تجاهل الملف غير الموجود، بنفس سلوك Supabase مع خطأ 404.
+
+    الأخطاء المحتملة:
+    - StorageError: تعذّر الحذف لسبب غير عدم الوجود.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise StorageError(f"تعذّر حذف الملف من الخادم: {exc}") from exc
+
+
+# =====================================================================
+# الدوال العامة (يستدعيها باقي النظام — الأسماء والتوقيعات دون تغيير)
+# =====================================================================
+
+
+async def upload_object(storage_path: str, content: bytes, *, content_type: str) -> None:
+    """
+    الهدف: حفظ ملف جديد في مكان التخزين المحدد بـ STORAGE_BACKEND.
+
+    المدخلات:
+    - storage_path: المسار المنطقي للملف.
+    - content: محتوى الملف.
+    - content_type: نوع الملف (يُستخدم مع Supabase فقط؛ النوع محفوظ أصلاً
+      في قاعدة البيانات).
+
+    التأثيرات الجانبية: يكتب الملف في Supabase Storage أو على قرص الخادم.
+
+    الأخطاء المحتملة: StorageError / StorageNotConfiguredError.
+    """
+    if _backend() == _BACKEND_LOCAL:
+        await asyncio.to_thread(_local_write_new, _safe_local_path(storage_path), content)
+        return
+    await _supabase_upload_object(storage_path, content, content_type=content_type)
+
+
+async def download_object(storage_path: str) -> bytes:
+    """
+    الهدف: قراءة ملف من مكان التخزين المحدد بـ STORAGE_BACKEND.
+
+    المخرجات: محتوى الملف.
+
+    الأخطاء المحتملة: StorageError / StorageNotConfiguredError.
+    """
+    if _backend() == _BACKEND_LOCAL:
+        return await asyncio.to_thread(_local_read, _safe_local_path(storage_path))
+    return await _supabase_download_object(storage_path)
+
+
+async def delete_object(storage_path: str) -> None:
+    """
+    الهدف: حذف ملف من مكان التخزين المحدد بـ STORAGE_BACKEND.
+
+    المسؤولية: الملف غير الموجود لا يُعد خطأ.
+
+    الأخطاء المحتملة: StorageError / StorageNotConfiguredError.
+    """
+    if _backend() == _BACKEND_LOCAL:
+        await asyncio.to_thread(_local_delete, _safe_local_path(storage_path))
+        return
+    await _supabase_delete_object(storage_path)

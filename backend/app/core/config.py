@@ -85,6 +85,12 @@ class Settings(BaseSettings):
       SUPABASE_URL: str = ""
       SUPABASE_SERVICE_ROLE_KEY: str = ""
       SUPABASE_STORAGE_BUCKET: str = "documents"
+    # --- مكان تخزين الملفات (الوثائق والمرفقات وتسجيلات الاجتماعات) ---
+    # STORAGE_BACKEND: "supabase" (الافتراضي) أو "local". "local" ⇒ تُحفظ الملفات
+    # على قرص الخادم داخل STORAGE_LOCAL_PATH (خادم بارع كلاود عبر Docker Volume).
+    # الافتراضي يبقى supabase حتى لا تتأثر بيئة Render ولا التجربة المحلية للفريق.
+      STORAGE_BACKEND: str = "supabase"
+      STORAGE_LOCAL_PATH: str = "/app/storage"
       MAX_DOCUMENT_UPLOAD_MB: int = 25
 
     # --- مزوّد الاجتماعات عن بعد (قرار لاما 2026-11-04 — الرجوع لـAgora مع حفظ Teams) ---
