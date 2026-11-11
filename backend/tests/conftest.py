@@ -30,6 +30,25 @@ from app.main import app
 from app.models.role import Role
 from app.models.user import User
 from app.models.user_role import UserRole
+from app.core.config import settings
+from sqlalchemy.engine import make_url
+
+
+# ---------------------------------------------------------------------
+# حماية قاعدة البيانات (أُضيفت 2026-11-11 بعد تشغيل الاختبارات بالخطأ على
+# قاعدة Supabase ومسح بياناتها):
+# الاختبارات تفرّغ الجداول (TRUNCATE) قبل كل اختبار، فيجب ألا تعمل إلا على
+# قاعدة بيانات محلية. إذا كان DATABASE_URL يشير لأي خادم آخر (مثل Supabase
+# أو خادم الإنتاج) يتوقف التشغيل فوراً قبل تنفيذ أي اختبار.
+# ---------------------------------------------------------------------
+_ALLOWED_TEST_DB_HOSTS = {"localhost", "127.0.0.1", "::1", "db", "postgres"}
+_test_db_host = (make_url(settings.DATABASE_URL).host or "").lower()
+if _test_db_host not in _ALLOWED_TEST_DB_HOSTS:
+    pytest.exit(
+        f"تم إيقاف الاختبارات: DATABASE_URL يشير إلى خادم غير محلي ({_test_db_host}). "
+        "الاختبارات تمسح الجداول، فشغّليها على قاعدة بيانات محلية فقط.",
+        returncode=2,
+    )
 
 
 @pytest.fixture(autouse=True)

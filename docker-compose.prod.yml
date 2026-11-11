@@ -1,0 +1,86 @@
+# =====================================================================
+# docker-compose.prod.yml
+# الهدف: تشغيل النظام كاملاً على خادم الإنتاج (بارع كلاود) داخل Docker.
+#
+# المسؤولية: يجمع أربع حاويات في شبكة داخلية واحدة:
+#   - db:       قاعدة بيانات PostgreSQL مع إضافة pgvector (البحث الذكي).
+#   - redis:    إدارة الجلسات وإبطال التوكن عند تسجيل الخروج.
+#   - backend:  الخادم الخلفي (FastAPI + Socket.IO) من backend/Dockerfile.
+#   - frontend: الواجهة الأمامية (React) عبر Nginx، وهي البوابة الوحيدة
+#               المفتوحة للإنترنت (المنفذ 80)، وتوجّه /api و/socket.io
+#               إلى الخادم الخلفي داخلياً.
+#
+# ملاحظات مهمة:
+# - هذا الملف مختلف عن docker-compose.yml (المخصص للتجربة المحلية فقط).
+# - القيم السرية تُقرأ من ملف .env على الخادم فقط، ولا يُرفع على GitHub.
+# - قاعدة البيانات وRedis غير مكشوفتين للإنترنت (لا يوجد ports لهما).
+# - الخادم الخلفي يعمل بعملية واحدة فقط: المهام المجدولة وغرف Socket.IO
+#   محفوظة في ذاكرة العملية، وتعدد العمليات يكررها ويكسرها.
+#
+# التشغيل:  docker compose -f docker-compose.prod.yml up -d --build
+# الحالة:   docker compose -f docker-compose.prod.yml ps
+# السجلات:  docker compose -f docker-compose.prod.yml logs -f backend
+# =====================================================================
+
+name: committee
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # ملفات الـ migrations للقراءة فقط، لتطبيقها على القاعدة عند التجهيز.
+      - ./db/migrations:/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    # appendonly: حفظ بيانات الجلسات على القرص حتى لا تضيع عند إعادة التشغيل.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # تُبنى هنا داخلياً حتى تشير لحاويتي db وredis، وتتقدم على أي قيمة في .env.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      # مجلد الملفات المرفوعة (الوثائق والتسجيلات) بعد الانتقال من Supabase Storage.
+      - uploads:/app/storage
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # رابط نسبي: الواجهة والخادم الخلفي على النطاق نفسه عبر Nginx.
+        VITE_API_BASE_URL: /api/v1
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
+  redis_data:
+  uploads:
