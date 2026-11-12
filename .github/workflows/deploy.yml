@@ -1,0 +1,45 @@
+# =====================================================================
+# النشر التلقائي على سيرفر بارع (طلب لاما 2026-11-12).
+# بعد كل دمج في main يتصل بالسيرفر عبر SSH ويشغّل deploy/deploy.sh.
+#
+# الأسرار المطلوبة (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST         عنوان السيرفر
+#   DEPLOY_USER         مستخدم السيرفر
+#   DEPLOY_SSH_KEY      المفتاح الخاص لمفتاح النشر (بدون passphrase)
+#   DEPLOY_KNOWN_HOSTS  بصمة السيرفر (ناتج ssh-keyscan) — يمنع انتحال السيرفر
+#
+# مفتاح النشر مقيّد على السيرفر (authorized_keys بـ command=) بحيث لا يقدر
+# يسوي شي إلا تشغيل deploy.sh — حتى لو تسرّب ما يعطي دخول للسيرفر.
+# التشغيل اليدوي: Actions → Deploy → Run workflow.
+# =====================================================================
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# نشر واحد في نفس الوقت؛ دمج جديد ينتظر اللي قبله ما يلغيه.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Deploy over SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST"
