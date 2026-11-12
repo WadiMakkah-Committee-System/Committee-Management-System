@@ -1,5 +1,5 @@
 import { apiClient } from '@/lib/apiClient'
-import type { User, UserCreatePayload, UserDetail, UserUpdatePayload } from '@/types'
+import type { InitialPasswordPolicy, User, UserCreatePayload, UserDetail, UserUpdatePayload } from '@/types'
 
 export async function fetchMe(): Promise<UserDetail> {
   const { data } = await apiClient.get<UserDetail>('/users/me')
@@ -23,6 +23,19 @@ export async function fetchUsers(dep_id?: string): Promise<User[]> {
 
 export async function fetchUser(userId: string): Promise<UserDetail> {
   const { data } = await apiClient.get<UserDetail>(`/users/${userId}`)
+  return data
+}
+
+/**
+ * حالة كلمة المرور الأولية بنموذج "إضافة مستخدم" — GET /users/initial-password-policy
+ * (مرحلة ما قبل التدشين، طلب الإدارة 2026-11-12). يتطلب users.create.
+ *
+ * rules_enforced=true: الوضع الطبيعي (كلمة قوية مقترحة + سياسة كاملة).
+ * rules_enforced=false: الخانة فارغة يكتبها المسؤول بنفسه، والتحقق النهائي
+ * على الباك-إند. الرد لا يحتوي قيمة كلمة المرور أبدًا.
+ */
+export async function fetchInitialPasswordPolicy(): Promise<InitialPasswordPolicy> {
+  const { data } = await apiClient.get<InitialPasswordPolicy>('/users/initial-password-policy')
   return data
 }
 

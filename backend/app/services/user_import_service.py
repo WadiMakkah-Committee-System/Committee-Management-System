@@ -50,7 +50,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password
+from app.core.security import hash_password, prelaunch_initial_password
 from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.role import Role
@@ -255,6 +255,21 @@ def generate_temporary_password() -> str:
         j = secrets.randbelow(i + 1)
         chars[i], chars[j] = chars[j], chars[i]
     return "".join(chars)
+
+
+def initial_password_for_imported_user() -> str:
+    """
+    الهدف: كلمة المرور الأولية لمستخدم مستورد من ملف Excel.
+
+    - مرحلة ما قبل التدشين (PRELAUNCH_INITIAL_PASSWORD مضبوط — طلب الإدارة
+      2026-11-12): نفس الكلمة الموحّدة للجميع (مثل 123456).
+    - الوضع الطبيعي (المتغير فارغ): كلمة عشوائية قوية لكل مستخدم كما كان
+      (generate_temporary_password).
+
+    بالحالتين المستخدم يُنشأ بـmust_change_password=True، فيُجبَر عند أول دخول
+    على كلمة جديدة تطابق سياسة FR-UM-015 كاملة.
+    """
+    return prelaunch_initial_password() or generate_temporary_password()
 
 
 # --------------------------------------------------------------------------
@@ -542,7 +557,7 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
     if new_departments:
         await db.flush()
 
-    passwords = [generate_temporary_password() for _ in resolved]
+    passwords = [initial_password_for_imported_user() for _ in resolved]
     # bcrypt بطيء عمدًا — التجزئة بالتوازي على خيوط منفصلة بدل التسلسل.
     hashes = await asyncio.gather(*(asyncio.to_thread(hash_password, p) for p in passwords))
 

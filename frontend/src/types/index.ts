@@ -210,6 +210,14 @@ export interface UserCreatePayload {
   status: UserStatus
 }
 
+/**
+ * رد GET /users/initial-password-policy (مرحلة ما قبل التدشين). false = خانة
+ * كلمة المرور بنموذج الإضافة فارغة بلا قواعد بالواجهة؛ الباك-إند يتحقق.
+ */
+export interface InitialPasswordPolicy {
+  rules_enforced: boolean
+}
+
 export interface UserUpdatePayload {
   first_name?: string
   middle_name?: string
