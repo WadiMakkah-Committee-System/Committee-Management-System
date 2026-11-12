@@ -172,7 +172,10 @@ async def notify_password_reset_code(
         f"<p>الرمز صالح لمدة {expires_minutes} دقيقة ولاستخدام واحد فقط.</p>"
         "<p>إذا لم تطلب استعادة كلمة المرور، تجاهل هذه الرسالة — كلمة مرورك الحالية لن تتغير.</p>"
     )
-    await send_email(to=[email], subject="رمز استعادة كلمة المرور — نظام إدارة اللجان", html_body=body)
+    # essential: يُرسَل حتى مع إيقاف بريد الإشعارات (EMAIL_NOTIFICATIONS_ENABLED=false).
+    await send_email(
+        to=[email], subject="رمز استعادة كلمة المرور — نظام إدارة اللجان", html_body=body, essential=True
+    )
 
 
 async def notify_imported_users_credentials(

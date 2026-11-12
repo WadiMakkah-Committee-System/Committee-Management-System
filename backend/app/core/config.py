@@ -77,6 +77,11 @@ class Settings(BaseSettings):
       # فقط (غير مستخدم مع smtp)، والمُرسِل من SMTP_FROM_EMAIL/SMTP_FROM_NAME.
       EMAIL_PROVIDER: str = "smtp"
       EMAIL_API_KEY: str = ""
+      # مفتاح إيقاف مؤقت (طلب لاما 2026-11-12): false = لا يُرسَل أي بريد
+      # إشعارات (اجتماعات/مهام/لجان/قرارات/بيانات دخول المستخدمين المستوردين)،
+      # ويبقى فقط بريد رمز "نسيت كلمة المرور" (essential). إشعارات الجرس داخل
+      # النظام لا تتأثر. الافتراضي true = السلوك المعتاد.
+      EMAIL_NOTIFICATIONS_ENABLED: bool = True
 
     # --- الذكاء الاصطناعي (مراحل لاحقة) ---
       CLAUDE_API_KEY: str = ""

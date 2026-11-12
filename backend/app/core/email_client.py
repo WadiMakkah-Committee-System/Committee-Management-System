@@ -76,7 +76,12 @@ class EmailAttachment:
 
 
 async def send_email(
-    *, to: list[str], subject: str, html_body: str, attachments: list[EmailAttachment] | None = None
+    *,
+    to: list[str],
+    subject: str,
+    html_body: str,
+    attachments: list[EmailAttachment] | None = None,
+    essential: bool = False,
 ) -> None:
     """
     الهدف:
@@ -92,6 +97,8 @@ async def send_email(
     - subject: str — عنوان الرسالة.
     - html_body: str — محتوى الرسالة بصيغة HTML.
     - attachments: ملفات مرفقة اختيارية (نفس الملفات لكل مستلم).
+    - essential: True لبريد لا يتوقف أبدًا حتى مع EMAIL_NOTIFICATIONS_ENABLED=false
+      (حاليًا رمز "نسيت كلمة المرور" فقط — بدونه لا يستطيع المستخدم الدخول).
 
     المخرجات: None.
 
@@ -104,6 +111,10 @@ async def send_email(
     """
     recipients = [addr for addr in to if addr]
     if not recipients:
+        return
+    if not essential and not settings.EMAIL_NOTIFICATIONS_ENABLED:
+        # إيقاف مؤقت مقصود (طلب لاما 2026-11-12) — info لا error.
+        logger.info("بريد الإشعارات موقوف (EMAIL_NOTIFICATIONS_ENABLED=false) — لم يُرسَل: %s", subject)
         return
 
     provider = (settings.EMAIL_PROVIDER or "smtp").strip().lower()
