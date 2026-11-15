@@ -13,7 +13,11 @@ import { useToast } from '@/components/ui/Toast'
 import { useRoleOptions } from '@/hooks/useRoles'
 import { useUserDetail } from '@/hooks/useUsers'
 import { useCreateJobTitle, useJobTitles } from '@/hooks/useJobTitles'
-import { generateTemporaryPassword, suggestUsernameFromEmail } from '@/lib/credentialSuggestions'
+import {
+  generateTemporaryPassword,
+  PRELAUNCH_INITIAL_PASSWORD,
+  suggestUsernameFromEmail,
+} from '@/lib/credentialSuggestions'
 import { assignedRoles, roleLabel } from '@/lib/utils'
 import type { Department, RoleOption, User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
@@ -147,8 +151,10 @@ export function UserFormModal({
         role_ids: user ? orderedRoleIds(user) : [],
         dep_id: user?.dep_id ?? defaultDepId ?? '',
         job_title_id: user?.job_title_id ?? '',
-        // كلمة المرور المؤقتة تُقترح تلقائيًا عند فتح نموذج الإضافة (قابلة للتعديل)
-        ...(isEdit ? {} : { username: '', password: generateTemporaryPassword(), status: 'active' }),
+        // كلمة المرور المؤقتة تُملأ تلقائيًا عند فتح نموذج الإضافة (قابلة للتعديل).
+        // مؤقت قبل التدشين: الكلمة الموحّدة PRELAUNCH_INITIAL_PASSWORD بدل
+        // generateTemporaryPassword() — يوم التدشين أرجعها كما كانت.
+        ...(isEdit ? {} : { username: '', password: PRELAUNCH_INITIAL_PASSWORD, status: 'active' }),
       } as CreateFormValues)
     }
   }, [open, user, isEdit, defaultDepId, reset])

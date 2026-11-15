@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ToastProvider } from '@/components/ui/Toast'
+import { PRELAUNCH_INITIAL_PASSWORD } from '@/lib/credentialSuggestions'
 import { UserFormModal } from './UserFormModal'
 import type { User } from '@/types'
 
@@ -71,13 +72,17 @@ const emailInput = () => screen.getByLabelText(/البريد الإلكترون�
 const passwordInput = () => screen.getByLabelText(/كلمة المرور المؤقتة/) as HTMLInputElement
 
 describe('UserFormModal — اقتراح بيانات الدخول', () => {
-  it('يملأ كلمة مرور مؤقتة مطابقة للسياسة عند فتح نموذج الإضافة', () => {
+  it('يملأ كلمة المرور الموحّدة قبل التدشين (Wa123456) عند فتح نموذج الإضافة', () => {
     renderModal()
-    const password = passwordInput().value
-    expect(password).toHaveLength(12)
-    expect(password).toMatch(/[A-Z]/)
-    expect(password).toMatch(/[a-z]/)
-    expect(password).toMatch(/[0-9]/)
+    expect(passwordInput().value).toBe('Wa123456')
+  })
+
+  it('كلمة ما قبل التدشين تطابق سياسة كلمة المرور', () => {
+    expect(PRELAUNCH_INITIAL_PASSWORD).toBe('Wa123456')
+    expect(PRELAUNCH_INITIAL_PASSWORD.length).toBeGreaterThanOrEqual(8)
+    expect(PRELAUNCH_INITIAL_PASSWORD).toMatch(/[A-Z]/)
+    expect(PRELAUNCH_INITIAL_PASSWORD).toMatch(/[a-z]/)
+    expect(PRELAUNCH_INITIAL_PASSWORD).toMatch(/[0-9]/)
   })
 
   it('يقترح اسم المستخدم من البريد أثناء الكتابة', async () => {

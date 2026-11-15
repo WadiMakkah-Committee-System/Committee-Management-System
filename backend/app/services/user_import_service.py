@@ -257,6 +257,15 @@ def generate_temporary_password() -> str:
     return "".join(chars)
 
 
+# كلمة المرور الأولية الموحّدة لكل المستوردين من Excel — مؤقت لمرحلة ما قبل
+# التدشين فقط (طلب الإدارة 2026-11-15). تطابق سياسة FR-UM-015 (8 أحرف + حرف
+# كبير + حرف صغير + رقم)، والحساب يُنشأ بـmust_change_password=True فيُجبَر
+# صاحبه على تغييرها عند أول دخول. نفس القيمة PRELAUNCH_INITIAL_PASSWORD
+# بالواجهة (frontend/src/lib/credentialSuggestions.ts).
+# يوم التدشين: احذف هذا الثابت وأرجع import_users لـ generate_temporary_password().
+PRELAUNCH_INITIAL_PASSWORD = "Wa123456"
+
+
 # --------------------------------------------------------------------------
 # مطابقة الأدوار
 # --------------------------------------------------------------------------
@@ -542,7 +551,9 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
     if new_departments:
         await db.flush()
 
-    passwords = [generate_temporary_password() for _ in resolved]
+    # مؤقت قبل التدشين: كلمة موحّدة للجميع بدل generate_temporary_password()
+    # — راجعي PRELAUNCH_INITIAL_PASSWORD أعلاه.
+    passwords = [PRELAUNCH_INITIAL_PASSWORD for _ in resolved]
     # bcrypt بطيء عمدًا — التجزئة بالتوازي على خيوط منفصلة بدل التسلسل.
     hashes = await asyncio.gather(*(asyncio.to_thread(hash_password, p) for p in passwords))
 

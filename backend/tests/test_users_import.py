@@ -29,6 +29,7 @@ from app.models.user_role import UserRole
 from app.services import notification_service
 from app.services.user_import_service import (
     MAX_ROWS,
+    PRELAUNCH_INITIAL_PASSWORD,
     TEMPLATE_HEADERS,
     generate_temporary_password,
     unique_username,
@@ -124,6 +125,12 @@ def test_temporary_password_meets_policy() -> None:
         assert len(password) == 12 and validate_password_policy(password)
 
 
+def test_prelaunch_initial_password_meets_policy() -> None:
+    # مؤقت قبل التدشين (2026-11-15): الكلمة الموحّدة لازم تطابق القواعد العادية
+    assert PRELAUNCH_INITIAL_PASSWORD == "Wa123456"
+    assert validate_password_policy(PRELAUNCH_INITIAL_PASSWORD)
+
+
 # ---------------------------------------------------------------- النموذج
 
 
@@ -179,11 +186,31 @@ async def test_import_creates_users_departments_and_sends_credentials(
     assert users["noura@example.com"].dep_id is None
     assert all(users[e].must_change_password for e in credentials)
 
+    # مؤقت قبل التدشين (2026-11-15): كل المستوردين ياخذون نفس الكلمة Wa123456
+    assert {password for _, password in credentials.values()} == {"Wa123456"}
+
     # كلمة المرور المؤقتة المرسلة تعمل فعليًا، والحساب يطلب تغييرها
     username, password = credentials["khalid@example.com"]
     login = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
     assert login.status_code == 200
     assert login.json()["must_change_password"] is True
+
+    # ولما يغيّرها: لازم كلمة تطابق القواعد، وبعدها Wa123456 ما تشتغل له
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    weak = await client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "Wa123456", "new_password": "abcdefgh"},
+        headers=headers,
+    )
+    assert weak.status_code == 422
+    changed = await client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "Wa123456", "new_password": "NewStrong1"},
+        headers=headers,
+    )
+    assert changed.status_code == 204, changed.text
+    old = await client.post("/api/v1/auth/login", json={"username": username, "password": "Wa123456"})
+    assert old.status_code == 401
 
 
 async def test_username_collision_gets_suffix(client: AsyncClient, auth_headers, super_admin_user, sent) -> None:
