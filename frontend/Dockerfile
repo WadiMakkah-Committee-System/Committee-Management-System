@@ -31,4 +31,7 @@ RUN npx vite build
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 80 443
+# إعادة تحميل Nginx كل 12 ساعة حتى يلتقط شهادة SSL الجديدة بعد ما يجددها
+# certbot على السيرفر (كل ~60 يوم) — بدونها يظل يعرض القديمة لين تنتهي.
+CMD ["/bin/sh", "-c", "while :; do sleep 43200; nginx -s reload; done & exec nginx -g 'daemon off;'"]

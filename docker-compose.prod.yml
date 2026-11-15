@@ -7,7 +7,7 @@
 #   - redis:    إدارة الجلسات وإبطال التوكن عند تسجيل الخروج.
 #   - backend:  الخادم الخلفي (FastAPI + Socket.IO) من backend/Dockerfile.
 #   - frontend: الواجهة الأمامية (React) عبر Nginx، وهي البوابة الوحيدة
-#               المفتوحة للإنترنت (المنفذ 80)، وتوجّه /api و/socket.io
+#               المفتوحة للإنترنت (المنفذان 80 و443)، وتوجّه /api و/socket.io
 #               إلى الخادم الخلفي داخلياً.
 #
 # ملاحظات مهمة:
@@ -77,6 +77,12 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      # شهادة SSL اللي أصدرها بارع على السيرفر (certbot) — للقراءة فقط.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # مجلد تحقق Let's Encrypt عند تجديد الشهادة (certbot --webroot).
+      - /var/www/certbot:/var/www/certbot:ro
     depends_on:
       - backend
 
