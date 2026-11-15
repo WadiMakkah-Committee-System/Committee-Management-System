@@ -6,6 +6,7 @@ import { UserStatusBadge, RoleBadge } from '@/components/ui/StatusBadge'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { assignedRoles, roleLabel, formatDateTime } from '@/lib/utils'
+import { MySignatureCard } from './MySignatureCard'
 
 function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
   return (
@@ -81,6 +82,9 @@ export function ProfilePage() {
           <InfoRow icon={<User size={16} />} label="معرّف المستخدم" value={<span className="font-mono text-xs">{me.user_id}</span>} />
         </div>
       </Card>
+
+      {/* توقيعي المحفوظ (migration 0049) — الضيوف ما لهم توقيع محفوظ. */}
+      {!me.is_guest && <MySignatureCard />}
     </div>
   )
 }

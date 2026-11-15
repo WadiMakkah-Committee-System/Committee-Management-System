@@ -109,9 +109,49 @@ export async function sendMinutesForSignature(meetingId: string): Promise<Meetin
   return data
 }
 
-export async function signMinutes(meetingId: string, signatureImage: string): Promise<MeetingMinutes> {
-  const { data } = await apiClient.post<MeetingMinutes>(`/meetings/${meetingId}/minutes/sign`, {
-    signature_image: signatureImage,
-  })
+/**
+ * الهدف: حفظ قسم واحد من محضر "القالب العام" (PATCH) — الحفظ الأساسي أثناء
+ * التحرير الجماعي، فتعديلان متزامنان على قسمين مختلفين لا يمسح أحدهما الآخر.
+ *
+ * المدخلات: meetingId، والقسم المعدّل كاملًا (لازم يحمل rev الحالي).
+ * المخرجات: المحضر كاملًا بعد الحفظ.
+ * الأخطاء: 409 لو rev قديم — detail.current_section فيه نسخة القسم الحالية
+ * (راجعي sectionConflictOf أدناه)، 400 لبيانات غير صالحة، 403 بلا صلاحية.
+ */
+export async function updateMinutesSection(meetingId: string, section: MinutesSection): Promise<MeetingMinutes> {
+  const { data } = await apiClient.patch<MeetingMinutes>(
+    `/meetings/${meetingId}/minutes/sections/${encodeURIComponent(section.id)}`,
+    { section },
+  )
+  return data
+}
+
+/**
+ * الهدف: استخراج نسخة القسم الحالية من خطأ 409 (تعديل بنسخة قديمة).
+ * المخرجات: القسم الحالي من الخادم، أو null لو الخطأ مو تعارض نسخ.
+ */
+export function sectionConflictOf(error: unknown): MinutesSection | null {
+  const response = (error as { response?: { status?: number; data?: { detail?: unknown } } })?.response
+  if (response?.status !== 409) return null
+  const detail = response.data?.detail as { current_section?: MinutesSection } | undefined
+  return detail && typeof detail === 'object' && detail.current_section ? detail.current_section : null
+}
+
+/** مصدر التوقيع: رسم الآن (مع خيار حفظه للمرات الجاية) أو التوقيع المحفوظ. */
+export type SignMinutesInput =
+  | { signatureImage: string; saveForLater?: boolean; useSaved?: false }
+  | { useSaved: true; signatureImage?: undefined; saveForLater?: false }
+
+/**
+ * الهدف: توقيع المحضر إلكترونيًا.
+ * المدخلات: signatureImage (PNG data URL) مع saveForLater، أو useSaved فقط —
+ * الخادم يقرأ التوقيع المحفوظ بنفسه (لا تُرسل صورته من هنا).
+ * الأخطاء: 400 لو ما فيه توقيع محفوظ، 403 لو مو من الموقّعين.
+ */
+export async function signMinutes(meetingId: string, input: SignMinutesInput): Promise<MeetingMinutes> {
+  const body = input.useSaved
+    ? { use_saved: true }
+    : { signature_image: input.signatureImage, save_for_later: !!input.saveForLater }
+  const { data } = await apiClient.post<MeetingMinutes>(`/meetings/${meetingId}/minutes/sign`, body)
   return data
 }

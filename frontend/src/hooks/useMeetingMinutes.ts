@@ -1,6 +1,7 @@
+import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as minutesApi from '@/api/meetingMinutes'
-import type { MinutesSection, MinutesTemplateId } from '@/types'
+import type { MeetingMinutes, MeetingMinutesDetail, MinutesSection, MinutesTemplateId } from '@/types'
 
 /** راجعي رأس api/meetingMinutes.ts — نفس نمط مفاتيح الاستعلام المستخدَم
  * لبقية موارد الاجتماع الفرعية (draft/recording) بـuseMeetings.ts. */
@@ -122,8 +123,54 @@ export function useSendMinutesForSignature() {
   )
 }
 
+/** توقيع المحضر (رسم مع خيار الحفظ، أو المحفوظ) — يحدّث "توقيعي" لو انحفظ الرسم. */
 export function useSignMinutes() {
-  return useMinutesMutation((args: { meetingId: string; signatureImage: string }) =>
-    minutesApi.signMinutes(args.meetingId, args.signatureImage),
+  const queryClient = useQueryClient()
+  const mutation = useMinutesMutation((args: { meetingId: string } & minutesApi.SignMinutesInput) =>
+    minutesApi.signMinutes(args.meetingId, args),
+  )
+  return {
+    ...mutation,
+    mutate: (
+      args: { meetingId: string } & minutesApi.SignMinutesInput,
+      options?: Parameters<typeof mutation.mutate>[1],
+    ) =>
+      mutation.mutate(args, {
+        ...options,
+        onSuccess: (...rest) => {
+          if (!args.useSaved && args.saveForLater) {
+            queryClient.invalidateQueries({ queryKey: ['users', 'me', 'signature'] })
+          }
+          options?.onSuccess?.(...rest)
+        },
+      }),
+  }
+}
+
+/**
+ * الهدف: حفظ قسم واحد من محضر القالب العام (بدون إبطال الـcache — المحرر يحدّث
+ * حالته من الاستجابة مباشرة، وإبطال التفاصيل مع كل حرف يسبب إعادة جلب متكررة).
+ */
+export function useUpdateMinutesSection() {
+  return useMutation({
+    mutationFn: (args: { meetingId: string; section: MinutesSection }) =>
+      minutesApi.updateMinutesSection(args.meetingId, args.section),
+  })
+}
+
+/**
+ * الهدف: تحديث المحضر داخل cache صفحة المحضر مباشرة من استجابة الحفظ (القالب
+ * العام) — بدل إبطال الاستعلام وإعادة جلبه مع كل حفظ قسم. يُبقي تبويبي "عرض
+ * المحضر" و"المراجعة" محدّثين بلا طلب إضافي.
+ */
+export function useSetMinutesInCache() {
+  const queryClient = useQueryClient()
+  return useCallback(
+    (meetingId: string, minutes: MeetingMinutes) => {
+      queryClient.setQueryData<MeetingMinutesDetail>(minutesDetailKey(meetingId), (old) =>
+        old ? { ...old, minutes } : old,
+      )
+    },
+    [queryClient],
   )
 }

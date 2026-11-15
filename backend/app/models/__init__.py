@@ -38,6 +38,7 @@ from app.models.role import Permission, Role
 from app.models.task import Task, TaskAssignmentHistory, TaskStatus
 from app.models.user import User, UserStatus
 from app.models.user_role import UserRole
+from app.models.user_saved_signature import UserSavedSignature
 
 __all__ = [
     "AuditAction",
@@ -83,4 +84,5 @@ __all__ = [
     "User",
     "UserStatus",
     "UserRole",
+    "UserSavedSignature",
 ]

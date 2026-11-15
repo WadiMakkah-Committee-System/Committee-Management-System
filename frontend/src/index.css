@@ -425,3 +425,270 @@ h1 {
     animation: none !important;
   }
 }
+
+/* ==========================================================================
+   محضر "القالب العام" — ورقة بشكل محضر وادي مكة الأصلي (2026-11-15)
+   الورقة بيضاء بخط نسخ في الوضعين (مثل معاينة مستند)، وألوانها عبر tokens
+   خاصة بها هنا. الخط: Noto Naskh Arabic (OFL — public/fonts) بدل خطوط
+   Microsoft الأصلية غير القابلة للتضمين، وهو نفس خط ملف الـPDF.
+   ========================================================================== */
+
+@font-face {
+  font-family: "WM Naskh";
+  src: url("/fonts/NotoNaskhArabic-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "WM Naskh";
+  src: url("/fonts/NotoNaskhArabic-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+.minutes-paper {
+  --paper-bg: #ffffff;
+  --paper-text: #111111;
+  --paper-muted: #6b7280;
+  --paper-grid: #000000;
+  --paper-header-bg: #d9d9d9;
+  --paper-cell-bg: #f2f2f2;
+  --paper-edit-border: #c7d3e6;
+  --paper-edit-focus: #105ea7;
+  --paper-edit-bg: #f5f9ff;
+  --paper-auto: #24bae9;
+
+  background: var(--paper-bg);
+  color: var(--paper-text);
+  font-family: "WM Naskh", "Times New Roman", serif;
+  font-size: 1.02rem;
+  line-height: 1.95;
+  padding: 2.5rem 3rem 1.5rem;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--shadow-md);
+  color-scheme: light;
+}
+
+.minutes-paper-compact {
+  font-size: 0.92rem;
+  padding: 1rem 1rem 0.75rem;
+}
+
+.minutes-paper select,
+.minutes-paper input,
+.minutes-paper textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* خانات التعديل في المكان: بلا إطار حتى المرور/التركيز. معرّفة هنا (لا بأصناف
+   Tailwind) لأن قاعدة "* { border-color }" أعلاه خارج طبقات Tailwind فتغلبها. */
+.minutes-paper .minutes-inline,
+.minutes-paper .minutes-cell-select {
+  border: 1px solid transparent;
+}
+
+.minutes-paper .minutes-inline:hover,
+.minutes-paper .minutes-cell-select:hover {
+  border-color: var(--paper-edit-border);
+}
+
+.minutes-paper .minutes-inline:focus,
+.minutes-paper .minutes-cell-select:focus {
+  border-color: var(--paper-edit-focus);
+  background: var(--paper-edit-bg);
+}
+
+.minutes-paper .minutes-edit-control {
+  border: 1px solid var(--paper-edit-border);
+}
+
+.minutes-paper .minutes-edit-box {
+  border: 1px dashed var(--paper-edit-border);
+}
+
+.minutes-paper .minutes-sign-label {
+  border-bottom: 1px solid var(--paper-grid);
+}
+
+/* خانة تلقائية لم تُعدَّل بعد: خط منقّط خفيف بلون الهوية. */
+.minutes-paper .minutes-inline-auto {
+  text-decoration: underline dotted var(--paper-auto);
+  text-underline-offset: 6px;
+}
+
+.minutes-paper .minutes-double-rule {
+  border-top: 3px solid var(--paper-grid);
+  border-bottom: 1px solid var(--paper-grid);
+  height: 4px;
+  margin-inline: -1.5rem;
+}
+
+.minutes-paper .minutes-grey-box {
+  background: var(--paper-header-bg);
+  border: 1.5px solid var(--paper-grid);
+}
+
+.minutes-paper .minutes-table {
+  border-collapse: collapse;
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+
+.minutes-paper .minutes-table th,
+.minutes-paper .minutes-table td {
+  border: 1px solid var(--paper-grid);
+  padding: 0.2rem 0.45rem;
+  vertical-align: middle;
+}
+
+.minutes-paper .minutes-table th {
+  background: var(--paper-header-bg);
+  font-weight: 400;
+  text-align: center;
+}
+
+.minutes-paper .minutes-table .minutes-cell-shaded {
+  background: var(--paper-cell-bg);
+}
+
+.minutes-paper .minutes-table .minutes-table-tools {
+  border: none;
+  background: transparent;
+}
+
+.minutes-paper .minutes-sign-grid {
+  border: 2px solid var(--paper-grid);
+}
+
+.minutes-paper .minutes-sign-cell {
+  border: 1px solid var(--paper-grid);
+}
+
+.minutes-paper .minutes-block-locked {
+  opacity: 0.75;
+}
+
+/* --- المحرر الغني داخل الورقة --- */
+.minutes-paper .minutes-rich-content {
+  outline: none;
+  min-height: 1.9em;
+}
+
+.minutes-paper .minutes-rich-editable .minutes-rich-content {
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  padding: 0.1rem 0.35rem;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.minutes-paper .minutes-rich-editable .minutes-rich-content:hover {
+  border-color: var(--paper-edit-border);
+}
+
+.minutes-paper .minutes-rich-editable.is-focused .minutes-rich-content {
+  border-color: var(--paper-edit-focus);
+  background: var(--paper-edit-bg);
+}
+
+.minutes-paper .minutes-rich-content p {
+  margin: 0;
+}
+
+/* اتجاه كل فقرة من أول حرف قوي: "-2,796,978.43" و"-37%" تظهر بإشارتها يسارًا
+   (مثل الأصل وملف PDF) والعربي يبقى من اليمين — والمحاذاة يمين ما لم تُحدَّد. */
+.minutes-paper .minutes-rich-content :is(p, h1, h2, h3) {
+  unicode-bidi: plaintext;
+  text-align: right;
+}
+
+.minutes-paper .minutes-rich-content ul,
+.minutes-paper .minutes-rich-content ol {
+  margin: 0.2rem 0;
+  padding-inline-start: 1.6rem;
+}
+
+.minutes-paper .minutes-rich-content ul {
+  list-style: disc;
+}
+
+.minutes-paper .minutes-rich-content ol {
+  list-style: decimal;
+}
+
+.minutes-paper .minutes-rich-content h1 {
+  font-size: 1.3em;
+  font-weight: 700;
+}
+
+.minutes-paper .minutes-rich-content h2 {
+  font-size: 1.15em;
+  font-weight: 700;
+}
+
+.minutes-paper .minutes-rich-content h3 {
+  font-size: 1.05em;
+  font-weight: 700;
+}
+
+.minutes-paper .minutes-rich-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.4rem 0;
+  table-layout: fixed;
+  font-size: 0.92em;
+  line-height: 1.6;
+}
+
+.minutes-paper .minutes-rich-content th,
+.minutes-paper .minutes-rich-content td {
+  border: 1px solid var(--paper-grid);
+  padding: 0.2rem 0.4rem;
+  vertical-align: top;
+  position: relative;
+}
+
+.minutes-paper .minutes-rich-content th {
+  background: var(--paper-header-bg);
+  font-weight: 700;
+}
+
+.minutes-paper .minutes-rich-content .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--paper-edit-focus) 14%, transparent);
+  pointer-events: none;
+}
+
+/* النص الإرشادي الرمادي (يختفي عند الكتابة). */
+.minutes-paper .minutes-rich-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--paper-muted);
+  float: right;
+  height: 0;
+  pointer-events: none;
+}
+
+.minutes-paper .minutes-rich-toolbar {
+  font-family: var(--font-sans);
+  color-scheme: inherit;
+}
+
+/* --- الطباعة: الورقة وحدها، والتوقيعات بصفحة مستقلة مثل الأصل --- */
+@media print {
+  .minutes-paper {
+    box-shadow: none;
+    padding: 0;
+    max-width: none;
+  }
+
+  .minutes-paper .minutes-signatures-page {
+    break-before: page;
+  }
+
+  .minutes-paper .minutes-inline-auto {
+    text-decoration: none;
+  }
+}

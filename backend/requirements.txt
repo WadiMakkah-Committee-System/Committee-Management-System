@@ -32,6 +32,9 @@ defusedxml==0.7.1
 reportlab==4.2.5
 arabic-reshaper==3.0.0
 python-bidi==0.6.6
+# القالب العام للمحاضر (2026-11-15، بموافقة صاحب المشروع): تحويل التاريخ
+# للهجري بتقويم أم القرى في ترويسة المحضر. مكتبة صغيرة بلا اعتماديات (MIT).
+hijridate==2.6.0
 
 # Dev / testing (تُشغّل مقابل PostgreSQL محلي حقيقي - الـ schema يعتمد على
 # ميزات خاصة بـ Postgres: UUID, ENUM, JSONB, Partial Unique Index)

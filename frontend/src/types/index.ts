@@ -891,13 +891,34 @@ export interface MeetingExtractedItem {
  */
 export type MeetingMinutesStage = 'none' | 'preparing' | 'review' | 'approval' | 'signature' | 'completed'
 export type MeetingMinutesReviewStatus = 'pending' | 'approved' | 'returned'
-export type MinutesTemplateId = 'executive' | 'formal' | 'detailed'
+export type MinutesTemplateId = 'executive' | 'formal' | 'detailed' | 'general'
+
+/** نوع القسم: "text" للقوالب القديمة (title/body فقط)، والباقي أقسام "القالب
+ * العام" المُهيكلة — محتواها في data (راجعي features/meetings/minutes-general/types.ts
+ * وbackend/app/services/minutes_general/sections.py). */
+export type MinutesSectionKind =
+  | 'text'
+  | 'header'
+  | 'title'
+  | 'rich'
+  | 'members_table'
+  | 'guests_table'
+  | 'agenda_table'
+  | 'topic'
+  | 'closing'
+  | 'signatures'
+  | 'meta'
 
 export interface MinutesSection {
   id: string
   title: string
   body: string
   order: number
+  /** غير موجود بالمحاضر القديمة ⇒ "text". */
+  kind?: MinutesSectionKind
+  data?: Record<string, unknown> | null
+  /** رقم مراجعة القسم (القالب العام) — يُرسل مع التعديل، والقديم يُرفض بـ409. */
+  rev?: number
 }
 
 export interface MinutesTemplate {

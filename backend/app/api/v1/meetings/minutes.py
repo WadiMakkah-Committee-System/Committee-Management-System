@@ -1,5 +1,6 @@
 """محاضر الاجتماعات (Minutes)."""
 
+import logging
 import uuid
 
 from fastapi import (
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import perf_probe
 from app.core.background import run_detached
 from app.core.dependencies import CurrentUser
+from app.core.socketio_server import sio
 from app.db.session import get_db, writes_on_read
 from app.schemas.committee import CommitteeMemberUserOut
 from app.schemas.meeting_minutes import (
@@ -28,6 +30,7 @@ from app.schemas.meeting_minutes import (
     ReviewDecisionIn,
     SelectTemplateIn,
     SignMinutesIn,
+    UpdateSectionIn,
     UpdateSectionsIn,
 )
 from app.services import meeting_minutes_service, notification_service
@@ -37,6 +40,31 @@ from app.api.v1.meetings._errors import _SERVICE_ERRORS, _handle_errors
 from app.api.v1.meetings.ai import _extracted_item_out
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
+logger = logging.getLogger(__name__)
+
+
+async def _broadcast_minutes(meeting_id: uuid.UUID, event: str, payload: dict) -> None:
+    """
+    الهدف: بثّ تحديث محضر "القالب العام" من الخادم لغرفة الاجتماع (Socket.IO)
+    — النسخة المحفوظة فعليًا، لا ما يرسله العميل.
+    المدخلات: الاجتماع، اسم الحدث (minutes.updated / minutes.section_updated)، البيانات.
+    التأثيرات الجانبية: بثّ فقط. فشل البث لا يُفشل الطلب (الحفظ تم) — يُسجَّل تحذير.
+    """
+    try:
+        await sio.emit(event, payload, room=f"meeting:{meeting_id}")
+    except Exception:  # noqa: BLE001 — البث تحسين لحظي، الحفظ هو الأساس
+        logger.warning("minutes broadcast failed (%s) for meeting %s", event, meeting_id, exc_info=True)
+
+
+def _conflict_response(exc: meeting_minutes_service.MinutesSectionConflictError) -> HTTPException:
+    """409 مع نسخة القسم الحالية حتى تعرضها الواجهة وتعيد تطبيق التعديل."""
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": str(exc),
+            "current_section": MinutesSection.model_validate(exc.current_section).model_dump(),
+        },
+    )
 
 
 # ============================== المحاضر (Minutes) ==============================
@@ -127,10 +155,18 @@ async def get_meeting_minutes_detail(
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    minutes_out = _minutes_out(detail["minutes"])
+    if detail.get("synced"):
+        # القالب العام: بيانات الاجتماع غيّرت أجزاء تلقائية — نبثّها للحاضرين.
+        await _broadcast_minutes(
+            meeting_id,
+            "minutes.updated",
+            {"user_id": None, "full_name": None, "sections": [s.model_dump() for s in minutes_out.sections]},
+        )
     return MeetingMinutesDetailOut(
         meeting=await _minutes_detail_meeting_out_with_guests(db, detail["meeting"]),
         committee=_minutes_detail_committee_out(detail["committee"]),
-        minutes=_minutes_out(detail["minutes"]),
+        minutes=minutes_out,
         templates=[MinutesTemplateOut(**t) for t in detail["templates"]],
         extracted_items=[_extracted_item_out(item) for item in detail["extracted_items"]],
         can_edit=detail["can_edit"],
@@ -269,8 +305,65 @@ async def update_minutes_sections(
             actor=current_user,
             sections=[s.model_dump() for s in payload.sections],
         )
+    except meeting_minutes_service.MinutesSectionConflictError as exc:
+        raise _conflict_response(exc) from exc
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc
+    out = _minutes_out(minutes)
+    if meeting_minutes_service.is_general(minutes):
+        # القالب العام: البث من الخادم بالنسخة المدموجة (الأقفال/المحذوف محسوبة).
+        await _broadcast_minutes(
+            meeting_id,
+            "minutes.updated",
+            {
+                "user_id": str(current_user.user_id),
+                "full_name": current_user.full_name,
+                "sections": [s.model_dump() for s in out.sections],
+            },
+        )
+    return out
+
+
+@router.patch("/{meeting_id}/minutes/sections/{section_id}", response_model=MeetingMinutesOut)
+async def update_minutes_section(
+    meeting_id: uuid.UUID,
+    section_id: str,
+    payload: UpdateSectionIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> MeetingMinutesOut:
+    """
+    PATCH /meetings/{meeting_id}/minutes/sections/{section_id} — حفظ قسم واحد
+    من محضر "القالب العام" (الحفظ الأساسي أثناء التحرير الجماعي).
+
+    - Authentication: مستخدم مسجّل.
+    - Authorization: minutes.update على لجنة الاجتماع (بالخادم).
+    - Validation: section.id يطابق المسار؛ البيانات حسب نوع القسم؛ rev الحالي.
+    - 200: المحضر كامل بعد الحفظ، ويُبثّ القسم المحفوظ لغرفة الاجتماع
+      (minutes.section_updated).
+    - 400: بيانات غير صالحة / قسم غير موجود / محضر ليس من القالب العام.
+    - 403: بلا صلاحية. 404: لا يوجد محضر.
+    - 409: المحضر ليس بمرحلة التحضير، أو rev قديم (مع current_section).
+    """
+    if payload.section.id != section_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="معرّف القسم لا يطابق المسار")
+    try:
+        minutes, saved = await meeting_minutes_service.update_section(
+            db, meeting_id=meeting_id, actor=current_user, section=payload.section.model_dump()
+        )
+    except meeting_minutes_service.MinutesSectionConflictError as exc:
+        raise _conflict_response(exc) from exc
+    except _SERVICE_ERRORS as exc:
+        raise _handle_errors(exc) from exc
+    await _broadcast_minutes(
+        meeting_id,
+        "minutes.section_updated",
+        {
+            "user_id": str(current_user.user_id),
+            "full_name": current_user.full_name,
+            "section": MinutesSection.model_validate(saved).model_dump(),
+        },
+    )
     return _minutes_out(minutes)
 
 
@@ -363,7 +456,12 @@ async def sign_meeting_minutes(
 ) -> MeetingMinutesOut:
     try:
         minutes = await meeting_minutes_service.sign_minutes(
-            db, meeting_id=meeting_id, actor=current_user, signature_image=payload.signature_image
+            db,
+            meeting_id=meeting_id,
+            actor=current_user,
+            signature_image=payload.signature_image,
+            use_saved=payload.use_saved,
+            save_for_later=payload.save_for_later,
         )
     except _SERVICE_ERRORS as exc:
         raise _handle_errors(exc) from exc

@@ -19,6 +19,7 @@ from app.api.v1 import (
     notifications,
     roles,
     tasks,
+    user_signature,
     users,
 )
 
@@ -26,6 +27,8 @@ from app.api.v1.meetings.guests import public_router as meeting_guests_public_ro
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
+# قبل users.router: مسار ثابت /users/me/signature (لا يتعارض مع /users/{user_id}، للوضوح فقط).
+api_router.include_router(user_signature.router)
 api_router.include_router(users.router)
 api_router.include_router(departments.router)
 api_router.include_router(job_titles.router)

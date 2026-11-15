@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import SignatureCanvas from 'react-signature-canvas'
 import {
   CalendarDays,
   CheckCircle2,
   Check,
   Clock,
+  Download,
   Eye,
   FileText,
   ListChecks,
@@ -13,6 +13,7 @@ import {
   Plus,
   Printer,
   RotateCcw,
+  ScrollText,
   Send,
   Sparkles,
   Stamp,
@@ -29,9 +30,9 @@ import {
   useReturnMinutesReview,
   useSelectMinutesTemplate,
   useSendMinutesForSignature,
-  useSignMinutes,
   useUpdateMinutesSections,
 } from '@/hooks/useMeetingMinutes'
+import { fetchMinutesPdfBlob } from '@/api/committeeAttachments'
 import { useMinutesRealtime } from '@/hooks/useMinutesRealtime'
 import { useAuthStore } from '@/store/authStore'
 import { scopeFor, cn, cardToneClass, iconToneClass, extractErrorMessage, formatDate, formatDateTime, formatRelativeTime } from '@/lib/utils'
@@ -46,6 +47,10 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import type { MinutesSection, MinutesTemplateId } from '@/types'
 import { errorStatusOf, MinutesStageBadge, StageTimeline } from './minutesShared'
+import { SignMinutesModal } from './SignMinutesModal'
+import { GeneralMinutesDocument } from './minutes-general/GeneralMinutesDocument'
+import { GeneralMinutesEditor } from './minutes-general/GeneralMinutesEditor'
+import { isGeneralTemplate } from './minutes-general/types'
 
 /**
  * الهدف:
@@ -78,6 +83,7 @@ const TEMPLATE_ICONS: Record<string, LucideIcon> = {
   executive: Sparkles,
   formal: FileText,
   detailed: ListChecks,
+  general: ScrollText,
 }
 
 // إصلاح 2026-09-15 (بلاغ لجين — التحرير الجماعي: يفترض إن كتابة عضوة
@@ -133,7 +139,8 @@ export function MeetingMinutesPage() {
   const canApprove =
     scopeFor(user, 'minutes.approve') === 'all' || (!!committee && committee.chair_user_id === user?.user_id)
 
-  const { collaborators, remoteSections, announceEditing, broadcastUpdate } = useMinutesRealtime(meetingId)
+  const { collaborators, remoteSections, remoteSection, announceEditing, broadcastUpdate } =
+    useMinutesRealtime(meetingId)
   const { showToast } = useToast()
 
   // نبضة كل ثانية فقط أثناء وجود متعاونين فعليًا — تجبر إعادة رسم القفل
@@ -163,8 +170,8 @@ export function MeetingMinutesPage() {
   const [returnDialogOpen, setReturnDialogOpen] = useState<'review' | 'approval' | null>(null)
   const [signatureOpen, setSignatureOpen] = useState(false)
   const [mutationError, setMutationError] = useState<string | null>(null)
+  const [pdfLoading, setPdfLoading] = useState(false)
 
-  const sigPadRef = useRef<SignatureCanvas>(null)
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -226,7 +233,6 @@ export function MeetingMinutesPage() {
   const approveMutation = useApproveMinutes()
   const returnForEditMutation = useReturnMinutesForEdit()
   const sendForSignatureMutation = useSendMinutesForSignature()
-  const signMutation = useSignMinutes()
 
   const myReviewer = minutes?.reviewers.find((r) => r.user.user_id === user?.user_id) ?? null
   // تحديث 2026-09-10: محاضر قديمة تكوّنت قبل هذا التحديث ممكن تكون
@@ -411,35 +417,23 @@ export function MeetingMinutesPage() {
     sendForSignatureMutation.mutate({ meetingId }, { onError: (err) => setMutationError(extractErrorMessage(err)) })
   }
 
-  function handleSaveSignature() {
-    if (!meetingId || !sigPadRef.current || sigPadRef.current.isEmpty()) return
-    // تحديث 2026-09-10 (بلاغ لاما — "زر الحفظ ما يشتغل"): السبب الفعلي
-    // (تأكّدنا منه من Console المتصفح): getTrimmedCanvas() بمكتبة
-    // react-signature-canvas@1.1.0-alpha.2 يستخدم داخليًا حزمة trim-canvas
-    // (تصدير CommonJS)، وVite يفشل بتحويلها الصحيح ضمن dependency
-    // pre-bundling فيرمي فورًا "TypeError: (0 , import_build.default) is
-    // not a function" — قبل حتى ما نوصل لـsignMutation.mutate. يعني ما
-    // فيه طلب شبكة أصلًا ولا خطأ يبان — الزر "يتجمد" فعليًا. الحل: نتجاوز
-    // getTrimmedCanvas() كليًا ونستخدم toDataURL() مباشرة (تفويض مباشر
-    // لمكتبة signature_pad الأساسية، بدون المرور بـtrim-canvas المعطوبة) —
-    // الفرق الوحيد إن الصورة ما تُقصّ تلقائيًا للهامش الشفاف حول التوقيع،
-    // وهذا شكلي بحت ومالوش أي أثر على صحة التوقيع نفسه.
-    const dataUrl = sigPadRef.current.toDataURL('image/png')
-    setMutationError(null)
-    signMutation.mutate(
-      { meetingId, signatureImage: dataUrl },
-      {
-        onSuccess: () => setSignatureOpen(false),
-        // إبقاء الـToast (بالإضافة لـmutationError) — الـModal (z-50) يغطي
-        // شريط mutationError اللي يترسم بجسم الصفحة الأساسي، فأي فشل فعلي
-        // لاحق (401/403/422 من الباك-إند) يبقى خفي بدون هذا التنبيه.
-        onError: (err) => {
-          const msg = extractErrorMessage(err)
-          setMutationError(msg)
-          showToast(msg, 'error')
-        },
-      },
-    )
+  /** تحميل المحضر PDF (القالب العام: بشكل محضر وادي مكة — يولّده الخادم لحظيًا). */
+  async function handleDownloadPdf() {
+    if (!meetingId) return
+    setPdfLoading(true)
+    try {
+      const { blob, fileName } = await fetchMinutesPdfBlob(meetingId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (err) {
+      showToast(extractErrorMessage(err), 'error')
+    } finally {
+      setPdfLoading(false)
+    }
   }
 
   if (!meetingId) return null
@@ -683,6 +677,15 @@ export function MeetingMinutesPage() {
                     </>
                   )}
                 </Card>
+              ) : isGeneralTemplate(minutes.template_id) ? (
+                // القالب العام: المستند نفسه يُعدَّل في مكانه ويُحفظ قسم قسم.
+                <GeneralMinutesEditor
+                  meetingId={meetingId}
+                  minutes={minutes}
+                  editable={editable}
+                  realtime={{ collaborators, remoteSections, remoteSection, announceEditing }}
+                  currentUserId={user?.user_id}
+                />
               ) : (
                 <div className="grid gap-4 xl:grid-cols-[220px_1fr_300px]">
                   <Card className="h-fit p-3">
@@ -904,10 +907,28 @@ export function MeetingMinutesPage() {
                     {minutes.signatures.filter((s) => s.signed).length}/{minutes.signatures.length} توقيع
                   </span>
                 </div>
-                <Button size="sm" variant="secondary" icon={<Printer size={14} />} onClick={() => window.print()}>
-                  طباعة
-                </Button>
+                <div className="flex items-center gap-2">
+                  {isGeneralTemplate(minutes.template_id) && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<Download size={14} />}
+                      loading={pdfLoading}
+                      onClick={() => void handleDownloadPdf()}
+                    >
+                      تحميل PDF
+                    </Button>
+                  )}
+                  <Button size="sm" variant="secondary" icon={<Printer size={14} />} onClick={() => window.print()}>
+                    طباعة
+                  </Button>
+                </div>
               </div>
+              {isGeneralTemplate(minutes.template_id) ? (
+                <div className="bg-bg-elevated p-4 md:p-8">
+                  <GeneralMinutesDocument sections={minutes.sections} mode="view" signatures={minutes.signatures} />
+                </div>
+              ) : (
               <div className="bg-bg-elevated p-4 md:p-8">
                 <article className="mx-auto max-w-3xl rounded-md border border-border-default bg-bg-surface p-8 md:p-12">
                   {/* شعار شركة وادي مكة للتقنية — أعلى المحضر، أقصى اليسار دائمًا
@@ -1023,6 +1044,7 @@ export function MeetingMinutesPage() {
                   </div>
                 </article>
               </div>
+              )}
             </Card>
           )}
 
@@ -1039,6 +1061,16 @@ export function MeetingMinutesPage() {
                   <p className="mt-4 text-xs text-text-muted">لم يتم اختيار قالب بعد — لا يوجد محتوى للمراجعة.</p>
                 ) : (
                   <>
+                    {isGeneralTemplate(minutes.template_id) ? (
+                      <div className="mt-4 max-h-[32rem] overflow-y-auto rounded-md border border-border-default bg-bg-elevated p-3">
+                        <GeneralMinutesDocument
+                          sections={minutes.sections}
+                          mode="view"
+                          signatures={minutes.signatures}
+                          compact
+                        />
+                      </div>
+                    ) : (
                     <div className="mt-4 max-h-96 space-y-4 overflow-y-auto rounded-md border border-border-default bg-bg-elevated p-4">
                       {minutes.sections.map((s) => (
                         <div key={s.id}>
@@ -1049,6 +1081,7 @@ export function MeetingMinutesPage() {
                         </div>
                       ))}
                     </div>
+                    )}
                     {myReviewer && myReviewer.status === 'pending' && approvableStage && (
                       <>
                         <Textarea
@@ -1260,30 +1293,7 @@ export function MeetingMinutesPage() {
             ))}
       </>
 
-      <Modal
-        open={signatureOpen}
-        onClose={() => setSignatureOpen(false)}
-        title="التوقيع الإلكتروني"
-        description="ارسم توقيعك داخل الإطار أدناه، ثم اضغط حفظ التوقيع."
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => sigPadRef.current?.clear()}>
-              مسح
-            </Button>
-            <Button loading={signMutation.isPending} onClick={handleSaveSignature}>
-              حفظ التوقيع
-            </Button>
-          </>
-        }
-      >
-        <div className="rounded-md border border-dashed border-border-default bg-bg-app">
-          <SignatureCanvas
-            ref={sigPadRef}
-            penColor="#0f172a"
-            canvasProps={{ className: 'h-48 w-full touch-none' }}
-          />
-        </div>
-      </Modal>
+      <SignMinutesModal open={signatureOpen} onClose={() => setSignatureOpen(false)} meetingId={meetingId} />
 
       <Modal
         open={returnDialogOpen !== null}
