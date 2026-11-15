@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ToastProvider } from '@/components/ui/Toast'
+import { PRELAUNCH_INITIAL_PASSWORD } from '@/lib/credentialSuggestions'
 import { UserFormModal } from './UserFormModal'
 import type { User } from '@/types'
 
@@ -10,11 +11,6 @@ import type { User } from '@/types'
 const mocks = vi.hoisted(() => ({
   roleOptions: [] as unknown[],
   userDetail: undefined as unknown,
-  // رد GET /users/initial-password-policy — الافتراضي: الوضع الطبيعي.
-  passwordPolicy: { data: { rules_enforced: true }, status: 'success' } as {
-    data: { rules_enforced: boolean } | undefined
-    status: 'pending' | 'error' | 'success'
-  },
 }))
 vi.mock('@/hooks/useRoles', () => ({
   useRoles: () => ({ data: [] }),
@@ -22,7 +18,6 @@ vi.mock('@/hooks/useRoles', () => ({
 }))
 vi.mock('@/hooks/useUsers', () => ({
   useUserDetail: (userId: string | undefined) => ({ data: userId ? mocks.userDetail : undefined }),
-  useInitialPasswordPolicy: () => mocks.passwordPolicy,
 }))
 vi.mock('@/hooks/useJobTitles', () => ({
   useJobTitles: () => ({ data: [] }),
@@ -70,7 +65,6 @@ function renderModal(props: Partial<Parameters<typeof UserFormModal>[0]> = {}) {
 beforeEach(() => {
   mocks.roleOptions = []
   mocks.userDetail = undefined
-  mocks.passwordPolicy = { data: { rules_enforced: true }, status: 'success' }
 })
 
 const usernameInput = () => screen.getByLabelText(/اسم المستخدم/) as HTMLInputElement
@@ -78,13 +72,17 @@ const emailInput = () => screen.getByLabelText(/البريد الإلكترون�
 const passwordInput = () => screen.getByLabelText(/كلمة المرور المؤقتة/) as HTMLInputElement
 
 describe('UserFormModal — اقتراح بيانات الدخول', () => {
-  it('يملأ كلمة مرور مؤقتة مطابقة للسياسة عند فتح نموذج الإضافة', () => {
+  it('يملأ كلمة المرور الموحّدة قبل التدشين (Wa123456) عند فتح نموذج الإضافة', () => {
     renderModal()
-    const password = passwordInput().value
-    expect(password).toHaveLength(12)
-    expect(password).toMatch(/[A-Z]/)
-    expect(password).toMatch(/[a-z]/)
-    expect(password).toMatch(/[0-9]/)
+    expect(passwordInput().value).toBe('Wa123456')
+  })
+
+  it('كلمة ما قبل التدشين تطابق سياسة كلمة المرور', () => {
+    expect(PRELAUNCH_INITIAL_PASSWORD).toBe('Wa123456')
+    expect(PRELAUNCH_INITIAL_PASSWORD.length).toBeGreaterThanOrEqual(8)
+    expect(PRELAUNCH_INITIAL_PASSWORD).toMatch(/[A-Z]/)
+    expect(PRELAUNCH_INITIAL_PASSWORD).toMatch(/[a-z]/)
+    expect(PRELAUNCH_INITIAL_PASSWORD).toMatch(/[0-9]/)
   })
 
   it('يقترح اسم المستخدم من البريد أثناء الكتابة', async () => {
@@ -144,74 +142,6 @@ describe('UserFormModal — اقتراح بيانات الدخول', () => {
     expect(screen.queryByLabelText(/اسم المستخدم/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'توليد كلمة مرور جديدة' })).not.toBeInTheDocument()
     expect(emailInput().value).toBe('sara@example.com')
-  })
-})
-
-// ============================ كلمة المرور الأولية قبل التدشين (2026-11-12) ============================
-
-/** يعبّئ الحقول الإلزامية الأخرى لنموذج الإضافة. */
-async function fillRequiredFields(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText(/الاسم الأول/), 'أحمد')
-  await user.type(screen.getByLabelText(/الاسم الأوسط/), 'محمد')
-  await user.type(screen.getByLabelText(/اسم العائلة/), 'علي')
-  await user.type(emailInput(), 'ahmed.ali@wadimakkah.sa')
-}
-
-describe('UserFormModal — كلمة المرور الأولية قبل التدشين', () => {
-  beforeEach(() => {
-    mocks.passwordPolicy = { data: { rules_enforced: false }, status: 'success' }
-  })
-
-  it('الخانة فارغة بلا كلمة مقترحة وبلا أزرار توليد/نسخ وبلا أي ملاحظة', () => {
-    renderModal()
-    expect(passwordInput().value).toBe('')
-    expect(screen.queryByRole('button', { name: 'توليد كلمة مرور جديدة' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'نسخ' })).not.toBeInTheDocument()
-    expect(screen.queryByText(/مولّدة تلقائيًا/)).not.toBeInTheDocument()
-    expect(document.body.textContent).not.toContain('123456')
-  })
-
-  it('يقبل 123456 كما كتبها المسؤول ويرسلها للخادم', async () => {
-    const user = userEvent.setup()
-    const { onSubmitCreate } = renderModal()
-    await fillRequiredFields(user)
-    await user.type(passwordInput(), '123456')
-    await user.click(screen.getByRole('button', { name: 'إضافة المستخدم' }))
-    expect(onSubmitCreate).toHaveBeenCalledWith(expect.objectContaining({ username: 'ahmed.ali', password: '123456' }))
-  })
-
-  it('يرفض الحفظ لو الخانة فارغة', async () => {
-    const user = userEvent.setup()
-    const { onSubmitCreate } = renderModal()
-    await fillRequiredFields(user)
-    await user.click(screen.getByRole('button', { name: 'إضافة المستخدم' }))
-    expect(await screen.findByText('كلمة المرور مطلوبة')).toBeInTheDocument()
-    expect(onSubmitCreate).not.toHaveBeenCalled()
-  })
-
-  it('الوضع الطبيعي يرفض 123456 بقواعد كلمة المرور كالسابق', async () => {
-    mocks.passwordPolicy = { data: { rules_enforced: true }, status: 'success' }
-    const user = userEvent.setup()
-    const { onSubmitCreate } = renderModal()
-    await fillRequiredFields(user)
-    await user.clear(passwordInput())
-    await user.type(passwordInput(), '123456')
-    await user.click(screen.getByRole('button', { name: 'إضافة المستخدم' }))
-    expect(await screen.findByText('يجب أن تحتوي على 8 أحرف على الأقل')).toBeInTheDocument()
-    expect(onSubmitCreate).not.toHaveBeenCalled()
-  })
-
-  it('لو تعذّر جلب الحالة (خطأ/403) يبقى السلوك الطبيعي: كلمة قوية مقترحة', () => {
-    mocks.passwordPolicy = { data: undefined, status: 'error' }
-    renderModal()
-    expect(passwordInput().value).toHaveLength(12)
-    expect(screen.getByRole('button', { name: 'توليد كلمة مرور جديدة' })).toBeInTheDocument()
-  })
-
-  it('أثناء التحميل لا تُقترح كلمة بعد', () => {
-    mocks.passwordPolicy = { data: undefined, status: 'pending' }
-    renderModal()
-    expect(passwordInput().value).toBe('')
   })
 })
 

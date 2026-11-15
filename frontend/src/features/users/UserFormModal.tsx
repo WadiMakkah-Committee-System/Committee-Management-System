@@ -11,9 +11,13 @@ import { CreatableSelect } from '@/components/ui/CreatableSelect'
 import { MultiCheckPicker } from '@/components/ui/MultiCheckPicker'
 import { useToast } from '@/components/ui/Toast'
 import { useRoleOptions } from '@/hooks/useRoles'
-import { useInitialPasswordPolicy, useUserDetail } from '@/hooks/useUsers'
+import { useUserDetail } from '@/hooks/useUsers'
 import { useCreateJobTitle, useJobTitles } from '@/hooks/useJobTitles'
-import { generateTemporaryPassword, suggestUsernameFromEmail } from '@/lib/credentialSuggestions'
+import {
+  generateTemporaryPassword,
+  PRELAUNCH_INITIAL_PASSWORD,
+  suggestUsernameFromEmail,
+} from '@/lib/credentialSuggestions'
 import { assignedRoles, roleLabel } from '@/lib/utils'
 import type { Department, RoleOption, User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
@@ -30,34 +34,20 @@ const baseFields = {
   job_title_id: z.string(),
 }
 
-const createFields = {
+const createSchema = z.object({
   ...baseFields,
   username: z
     .string()
     .min(3, 'اسم المستخدم 3 أحرف على الأقل')
     .max(50)
     .regex(/^[a-zA-Z0-9_.]+$/, 'أحرف إنجليزية وأرقام و . _ فقط'),
-  status: z.enum(['active', 'suspended']),
-}
-
-const createSchema = z.object({
-  ...createFields,
   password: z
     .string()
     .min(8, 'يجب أن تحتوي على 8 أحرف على الأقل')
     .regex(/[A-Z]/, 'يجب أن تحتوي على حرف كبير')
     .regex(/[a-z]/, 'يجب أن تحتوي على حرف صغير')
     .regex(/[0-9]/, 'يجب أن تحتوي على رقم'),
-})
-
-/**
- * نموذج الإضافة بمرحلة ما قبل التدشين (طلب الإدارة 2026-11-12 — الخادم يرجّع
- * rules_enforced=false): كلمة المرور مطلوبة فقط بلا قواعد بالواجهة؛ الباك-إند
- * (UserCreate) هو اللي يقرر، ويقبل كلمة ما قبل التدشين أو أي كلمة قوية.
- */
-const prelaunchCreateSchema = z.object({
-  ...createFields,
-  password: z.string().min(1, 'كلمة المرور مطلوبة').max(128),
+  status: z.enum(['active', 'suspended']),
 })
 
 const editSchema = z.object(baseFields)
@@ -133,17 +123,6 @@ export function UserFormModal({
 
   const { showToast } = useToast()
 
-  // مرحلة ما قبل التدشين (طلب الإدارة 2026-11-12): الخادم يخبرنا هل سياسة
-  // كلمة المرور مفروضة على كلمة المرور الأولية. الوضع الخاص فقط لما يقول
-  // صراحةً rules_enforced=false — أي حالة أخرى (تحميل، خطأ، 403) = السلوك
-  // الطبيعي الآمن. بالوضع الخاص: الخانة فارغة يكتبها المسؤول بنفسه، بلا
-  // كلمة مقترحة، بلا أزرار توليد/نسخ، وبلا أي ملاحظة.
-  const { data: passwordPolicy, status: passwordPolicyStatus } = useInitialPasswordPolicy({
-    enabled: open && !isEdit,
-  })
-  const prelaunchPassword = passwordPolicy?.rules_enforced === false
-  const suggestPassword = passwordPolicyStatus !== 'pending' && !prelaunchPassword
-
   const {
     register,
     handleSubmit,
@@ -154,7 +133,7 @@ export function UserFormModal({
     getFieldState,
     formState: { errors, isSubmitted, dirtyFields },
   } = useForm<CreateFormValues | EditFormValues>({
-    resolver: zodResolver(isEdit ? editSchema : prelaunchPassword ? prelaunchCreateSchema : createSchema),
+    resolver: zodResolver(isEdit ? editSchema : createSchema),
   })
 
   // هل عدّل السوبر ادمن اسم المستخدم يدويًا؟ طالما لا، يتبع الحقل
@@ -172,20 +151,13 @@ export function UserFormModal({
         role_ids: user ? orderedRoleIds(user) : [],
         dep_id: user?.dep_id ?? defaultDepId ?? '',
         job_title_id: user?.job_title_id ?? '',
-        // كلمة المرور تبدأ فارغة — الاقتراح التلقائي بالتأثير التالي (الوضع الطبيعي فقط)
-        ...(isEdit ? {} : { username: '', password: '', status: 'active' }),
+        // كلمة المرور المؤقتة تُملأ تلقائيًا عند فتح نموذج الإضافة (قابلة للتعديل).
+        // مؤقت قبل التدشين: الكلمة الموحّدة PRELAUNCH_INITIAL_PASSWORD بدل
+        // generateTemporaryPassword() — يوم التدشين أرجعها كما كانت.
+        ...(isEdit ? {} : { username: '', password: PRELAUNCH_INITIAL_PASSWORD, status: 'active' }),
       } as CreateFormValues)
     }
   }, [open, user, isEdit, defaultDepId, reset])
-
-  // الوضع الطبيعي: كلمة مرور مؤقتة قوية تُقترح تلقائيًا عند فتح نموذج الإضافة
-  // (قابلة للتعديل) بعد وصول رد الخادم. مرحلة ما قبل التدشين: تبقى فارغة.
-  // لا نكتب أبدًا فوق كلمة بدأ المسؤول كتابتها.
-  useEffect(() => {
-    if (!open || isEdit || !suggestPassword) return
-    if ((getValues() as CreateFormValues).password) return
-    setValue('password' as 'first_name', generateTemporaryPassword(), { shouldDirty: false })
-  }, [open, isEdit, suggestPassword, getValues, setValue])
 
   // وصلت أدوار المستخدم الكاملة (حين لم تكن مع بيانات الشاشة): نحدّث حقل
   // الأدوار وحده — بدون مسح أي تعديل بدأه المسؤول بالحقول الأخرى، وبدون
@@ -317,24 +289,18 @@ export function UserFormModal({
               required
               // new-password يمنع المتصفح من تعبئة كلمة مرور الادمن المحفوظة هنا
               autoComplete="new-password"
-              hint={
-                prelaunchPassword
-                  ? undefined
-                  : 'مولّدة تلقائيًا — انسخها وسلّمها للموظف، وسيُطلب منه تغييرها عند أول تسجيل دخول'
-              }
+              hint="مولّدة تلقائيًا — انسخها وسلّمها للموظف، وسيُطلب منه تغييرها عند أول تسجيل دخول"
               error={createErrors.password?.message}
               {...register('password' as 'first_name')}
             />
-            {!prelaunchPassword && (
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={regeneratePassword}>
-                  توليد كلمة مرور جديدة
-                </Button>
-                <Button type="button" variant="ghost" size="sm" icon={<Copy size={14} />} onClick={copyPassword}>
-                  نسخ
-                </Button>
-              </div>
-            )}
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={regeneratePassword}>
+                توليد كلمة مرور جديدة
+              </Button>
+              <Button type="button" variant="ghost" size="sm" icon={<Copy size={14} />} onClick={copyPassword}>
+                نسخ
+              </Button>
+            </div>
           </div>
         )}
 
