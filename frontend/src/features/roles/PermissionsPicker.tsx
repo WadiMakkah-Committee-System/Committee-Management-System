@@ -25,10 +25,11 @@ const SCOPE_GROUPS: ScopeGroup[] = [
   {
     key: 'committees_view',
     codes: ['committees.view'],
-    options: ['own', 'department', 'all'],
+    options: ['own', 'department', 'department_tree', 'all'],
     labels: {
       own: 'اللجان التي أنا عضو فيها فقط',
       department: 'لجان إدارتي فقط',
+      department_tree: 'لجان إدارتي والإدارات التابعة لها',
       all: 'كل لجان النظام',
     },
   },
@@ -41,10 +42,11 @@ const SCOPE_GROUPS: ScopeGroup[] = [
   {
     key: 'users_view',
     codes: ['users.view'],
-    options: ['own', 'department', 'all'],
+    options: ['own', 'department', 'department_tree', 'all'],
     labels: {
       own: 'بياناتي الشخصية فقط',
       department: 'موظفو إدارتي فقط',
+      department_tree: 'موظفو إدارتي والإدارات التابعة لها',
       all: 'كل المستخدمين',
     },
   },
@@ -56,9 +58,10 @@ const SCOPE_GROUPS: ScopeGroup[] = [
     // (كان يُثبَّت 'all' دائمًا لأي صلاحية غير مذكورة بـSCOPE_GROUPS).
     key: 'tasks_view',
     codes: ['tasks.view', 'tasks.view_details'],
-    options: ['department', 'all'],
+    options: ['department', 'department_tree', 'all'],
     labels: {
       department: 'مهام لجان إدارتي فقط',
+      department_tree: 'مهام لجان إدارتي والإدارات التابعة لها',
       all: 'مهام كل لجان النظام',
     },
   },

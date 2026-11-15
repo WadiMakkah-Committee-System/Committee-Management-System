@@ -185,7 +185,10 @@ export function CommitteeRequestDetailPage() {
   // طلبه هو — يعني "يرجع الطلب لنفسه"، وهذا ما رفضته لاما صراحة.
   const requestUpdateScope = scopeFor(user, 'committees.request.update')
   const hasOfficeReviewScope =
-    isSuperAdmin || requestUpdateScope === 'department' || requestUpdateScope === 'all'
+    isSuperAdmin ||
+    requestUpdateScope === 'department' ||
+    requestUpdateScope === 'department_tree' ||
+    requestUpdateScope === 'all'
   const canEditAsOffice = isPendingOfficeStage && hasOfficeReviewScope
   const canEdit = canEditAsOwner || canEditAsOffice
   const canSubmit = canEditAsOwner

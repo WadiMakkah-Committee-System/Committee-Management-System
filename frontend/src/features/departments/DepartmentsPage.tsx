@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Building2, FileText, Pencil, Plus, Trash2, UserRound } from 'lucide-react'
+import { Building2, GitBranch, Network, Pencil, Plus, Trash2, UserRound } from 'lucide-react'
 import {
   useCreateDepartment,
   useDeleteDepartment,
@@ -19,7 +19,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { StatCard } from '@/components/ui/StatCard'
 import { useToast } from '@/components/ui/Toast'
 import { DepartmentFormModal, type DepartmentFormSubmitValues } from './DepartmentFormModal'
-import { cardToneClass, cn, extractErrorMessage, formatDate } from '@/lib/utils'
+import { cardToneClass, cn, extractErrorMessage, formatChildDepartmentsCount, formatDate } from '@/lib/utils'
 import type { Department } from '@/types'
 
 export function DepartmentsPage() {
@@ -37,14 +37,32 @@ export function DepartmentsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Department | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  /**
+   * هيكل المستويين (migration 0048): الصفحة تعرض الإدارات الرئيسية فقط، والتابعة
+   * تظهر داخل صفحة إدارتها الأم. عند البحث تظهر كل الإدارات المطابقة (رئيسية
+   * أو تابعة) مع اسم الإدارة الأم للتابعة.
+   */
+  const { topLevel, childCount, nameById } = useMemo(() => {
+    const all = departments ?? []
+    const counts = new Map<string, number>()
+    for (const d of all) {
+      if (d.parent_dep_id) counts.set(d.parent_dep_id, (counts.get(d.parent_dep_id) ?? 0) + 1)
+    }
+    return {
+      topLevel: all.filter((d) => !d.parent_dep_id),
+      childCount: counts,
+      nameById: new Map(all.map((d) => [d.dep_id, d.name])),
+    }
+  }, [departments])
+
   const filtered = useMemo(() => {
     if (!departments) return []
     const q = search.trim().toLowerCase()
-    if (!q) return departments
+    if (!q) return topLevel
     return departments.filter(
       (d) => d.name.toLowerCase().includes(q) || d.description?.toLowerCase().includes(q),
     )
-  }, [departments, search])
+  }, [departments, topLevel, search])
 
   function openCreateForm() {
     setEditingDept(null)
@@ -110,11 +128,12 @@ export function DepartmentsPage() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="إجمالي الإدارات" value={departments?.length ?? 0} icon={<Building2 size={20} />} tone="purple" />
+        <StatCard label="الإدارات الرئيسية" value={topLevel.length} icon={<Network size={20} />} tone="teal" />
         <StatCard
-          label="إدارات بوصف مكتمل"
-          value={departments?.filter((d) => !!d.description).length ?? 0}
-          icon={<FileText size={20} />}
-          tone="teal"
+          label="الإدارات التابعة"
+          value={(departments?.length ?? 0) - topLevel.length}
+          icon={<GitBranch size={20} />}
+          tone="orange"
         />
       </div>
 
@@ -187,10 +206,21 @@ export function DepartmentsPage() {
                       </span>
                     )}
                   </div>
+                  {dept.parent_dep_id && (
+                    <p className="mt-1 text-xs text-text-secondary">
+                      تابعة لـ {nameById.get(dept.parent_dep_id) ?? '—'}
+                    </p>
+                  )}
                   <p className="mt-1 line-clamp-2 text-sm text-text-muted">
                     {dept.description || 'لا يوجد وصف'}
                   </p>
                 </div>
+                {!dept.parent_dep_id && (childCount.get(dept.dep_id) ?? 0) > 0 && (
+                  <p className="flex items-center gap-1.5 text-xs text-text-secondary">
+                    <GitBranch size={12} />
+                    {formatChildDepartmentsCount(childCount.get(dept.dep_id) ?? 0)}
+                  </p>
+                )}
                 {dept.manager && (
                   <p className="flex items-center gap-1.5 text-xs text-text-secondary">
                     <UserRound size={12} />
@@ -211,6 +241,8 @@ export function DepartmentsPage() {
         onSubmit={handleSubmit}
         loading={createMutation.isPending || updateMutation.isPending}
         serverError={formError}
+        parentOptions={topLevel}
+        hasChildren={!!editingDept && (childCount.get(editingDept.dep_id) ?? 0) > 0}
       />
 
       <ConfirmDialog

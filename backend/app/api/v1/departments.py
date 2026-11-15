@@ -21,6 +21,8 @@ from app.schemas.department import (
     DepartmentDetailOut,
     DepartmentManagerOut,
     DepartmentOut,
+    DepartmentRefOut,
+    DepartmentSummaryOut,
     DepartmentUpdate,
 )
 from app.schemas.user import UserOut
@@ -57,6 +59,7 @@ async def create_department(
             description=payload.description,
             manager_user_id=payload.manager_user_id,
             member_user_ids=payload.member_user_ids,
+            parent_dep_id=payload.parent_dep_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -93,10 +96,19 @@ async def get_department(dep_id: uuid.UUID, db: AsyncSession = Depends(get_db)) 
         code=department.code,
         description=department.description,
         manager=DepartmentManagerOut.model_validate(department.manager) if department.manager else None,
+        parent_dep_id=department.parent_dep_id,
         created_at=department.created_at,
         updated_at=department.updated_at,
         member_count=detail["member_count"],
         members=[UserOut.model_validate(u) for u in detail["members"]],
+        parent=DepartmentRefOut.model_validate(detail["parent"]) if detail["parent"] else None,
+        children=[
+            DepartmentSummaryOut(
+                **DepartmentOut.model_validate(child["department"]).model_dump(),
+                member_count=child["member_count"],
+            )
+            for child in detail["children"]
+        ],
     )
 
 
@@ -120,6 +132,13 @@ async def update_department(
             code=payload.code,
             description=payload.description,
             manager_user_id=payload.manager_user_id,
+            # migration 0048: الحقل يُمرَّر فقط لو أُرسل فعلًا بالطلب (null صريح
+            # = فكّ من الإدارة الأم)؛ غيابه = بلا تغيير.
+            parent_dep_id=(
+                payload.parent_dep_id
+                if "parent_dep_id" in payload.model_fields_set
+                else department_service.UNSET
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -136,8 +155,12 @@ async def update_department(
 async def delete_department(
     dep_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
 ) -> None:
-    department = await department_service.soft_delete_department(
-        db, actor_user_id=current_user.user_id, dep_id=dep_id
-    )
+    try:
+        department = await department_service.soft_delete_department(
+            db, actor_user_id=current_user.user_id, dep_id=dep_id
+        )
+    except ValueError as exc:
+        # migration 0048: إدارة تحتها إدارات تابعة — تعارض مع حالة البيانات الحالية.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if department is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="الإدارة غير موجودة")

@@ -349,9 +349,16 @@ async def create_user(
 
 
 async def list_users(
-    db: AsyncSession, *, dep_id: uuid.UUID | None = None
+    db: AsyncSession,
+    *,
+    dep_id: uuid.UUID | None = None,
+    dep_ids: set[uuid.UUID] | None = None,
 ) -> list[User]:
-    """عرض المستخدمين النشطين (غير المحذوفين)، مع تصفية اختيارية حسب الإدارة."""
+    """
+    عرض المستخدمين النشطين (غير المحذوفين)، مع تصفية اختيارية حسب الإدارة:
+    dep_id لإدارة واحدة، أو dep_ids لعدة إدارات (نطاق department_tree —
+    إدارة أم وإداراتها التابعة، migration 0048). لو أُرسل الاثنان يُطبَّقان معًا.
+    """
     # نفس تحسين get_user أعلاه، لكن بحذر إضافي هنا: department/manager
     # علاقة واحد-لواحد فتجميعها بـjoinedload آمن دائمًا (رحلة شبكة واحدة
     # بدل اثنتين). أما role_permission_links/permission فعلاقة واحد-لعدة
@@ -386,6 +393,8 @@ async def list_users(
     )
     if dep_id is not None:
         stmt = stmt.where(User.dep_id == dep_id)
+    if dep_ids is not None:
+        stmt = stmt.where(User.dep_id.in_(dep_ids))
     result = await db.execute(stmt.order_by(User.created_at.desc()))
     return list(result.unique().scalars().all())
 
@@ -395,6 +404,9 @@ def _profile_options() -> tuple:
     فقط) + دوره بكل صلاحياته + مسماه — كلها JOIN باستعلام واحد."""
     manager = joinedload(User.department).joinedload(Department.manager)
     return (
+        # إدارات تابعة لإدارة المستخدم (نطاق department_tree — migration
+        # 0048): subquery داخل نفس الاستعلام، بلا رحلة إضافية.
+        joinedload(User.department).undefer(Department.child_dep_ids),
         manager.noload(User.role),
         manager.noload(User.job_title),
         joinedload(User.role).joinedload(Role.role_permission_links).joinedload(

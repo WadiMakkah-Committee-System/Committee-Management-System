@@ -4,7 +4,7 @@ import type { ApiErrorShape, PermissionScope, RoleSummary, SystemRoleName, UserD
  * ترتيب اتساع نطاقات الوصول من الأوسع للأضيق — يطابق تمامًا
  * _SCOPE_BREADTH_ORDER في backend/app/models/role.py.
  */
-const SCOPE_BREADTH_ORDER: readonly PermissionScope[] = ['all', 'department', 'own']
+const SCOPE_BREADTH_ORDER: readonly PermissionScope[] = ['all', 'department_tree', 'department', 'own']
 
 /**
  * أوسع نطاق يملكه المستخدم بين عدّة أكواد صلاحية بديلة — يطابق تمامًا
@@ -316,4 +316,15 @@ export function fileNameFromDisposition(disposition: string, fallback: string): 
   }
   const plain = /filename="?([^";]+)"?/i.exec(disposition)
   return plain?.[1] ?? fallback
+}
+
+/**
+ * عدد الإدارات التابعة بصيغة عربية سليمة (مفرد/مثنى/جمع) — بطاقات الإدارات
+ * الرئيسية وصفحة تفاصيلها (هيكل المستويين، migration 0048).
+ */
+export function formatChildDepartmentsCount(count: number): string {
+  if (count === 1) return 'إدارة تابعة واحدة'
+  if (count === 2) return 'إدارتان تابعتان'
+  if (count >= 3 && count <= 10) return `${count} إدارات تابعة`
+  return `${count} إدارة تابعة`
 }

@@ -12,7 +12,7 @@ from app.models.committee_request import CommitteeFormationRequest
 from app.models.department import Department
 from app.models.document import Document
 from app.models.user import User
-from app.services.document_service.loading import committees_query, departments_query, load_department
+from app.services.document_service.loading import committees_query, departments_query
 
 
 async def _user_committee_ids(db: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
@@ -99,9 +99,10 @@ async def can_view_document(
     if document.visible_departments:
         if current_user.is_super_admin:
             return True
-        if current_user.dep_id is not None and any(
-            d.dep_id == current_user.dep_id for d in document.visible_departments
-        ):
+        # هيكل الإدارات (migration 0048 — قرار لاما 2026-11-15): وثيقة مشاركة
+        # مع إدارة تصل لإدارتها الأم ولإداراتها التابعة أيضًا، بالاتجاهين.
+        related = current_user.related_department_ids()
+        if related and any(d.dep_id in related for d in document.visible_departments):
             return True
     if document.visible_committees:
         visible_committee_ids = {c.committee_id for c in document.visible_committees}
@@ -141,6 +142,8 @@ async def get_publish_targets(
     committee_service) هو ما يحدد الاتساع:
     - 'all' (أو super_admin): كل الإدارات وكل اللجان (غير المحذوفة).
     - 'department': إدارته فقط (إن وُجدت) + اللجان اللي هو عضو فيها.
+    - 'department_tree' (migration 0048): إدارته وكل إداراتها التابعة + اللجان
+      اللي هو عضو فيها.
     - 'own' أو بلا نطاق مسجَّل إطلاقًا: بلا إدارات (لا يقدر يشارك إدارة
       كاملة بوثيقة)، فقط اللجان اللي هو عضو فيها.
     """
@@ -156,10 +159,14 @@ async def get_publish_targets(
         return list(department_result.scalars().all()), list(committee_result.scalars().all())
 
     departments: list[Department] = []
-    if scope == "department" and current_user.dep_id is not None:
-        department = await load_department(db, current_user.dep_id)
-        if department is not None and not department.is_deleted:
-            departments = [department]
+    scope_dep_ids = current_user.department_ids_for_scope(scope)
+    if scope_dep_ids:
+        department_result = await db.execute(
+            departments_query()
+            .where(Department.dep_id.in_(scope_dep_ids), Department.deleted_at.is_(None))
+            .order_by(Department.name)
+        )
+        departments = list(department_result.scalars().all())
 
     committee_ids = await _user_committee_ids(db, current_user.user_id)
     committees: list[Committee] = []

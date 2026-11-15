@@ -40,15 +40,18 @@ async def list_categories(db: AsyncSession, *, current_user: User) -> list[Docum
     """
     التصنيفات العامة + تصنيفات إدارة المستخدم فقط (نفس منطق رؤية الوثائق) —
     ما عدا super_admin اللي يشوف كل التصنيفات (لإدارتها من شاشة واحدة).
+    هيكل الإدارات (migration 0048): "إدارة المستخدم" تشمل إدارتها الأم
+    وإداراتها التابعة — نفس قاعدة رؤية الوثائق (User.related_department_ids).
     """
     stmt = select(DocumentCategory).options(*only_columns()).where(DocumentCategory.deleted_at.is_(None))
     if not current_user.is_super_admin:
-        if current_user.dep_id is not None:
+        related = current_user.related_department_ids()
+        if related:
             stmt = stmt.where(
                 (DocumentCategory.scope == "global")
                 | (
                     (DocumentCategory.scope == "department")
-                    & (DocumentCategory.department_id == current_user.dep_id)
+                    & (DocumentCategory.department_id.in_(related))
                 )
             )
         else:

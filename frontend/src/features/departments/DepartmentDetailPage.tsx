@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowRight, Building2, FileText, Mail, Plus, UserRound, Users as UsersIcon } from 'lucide-react'
-import { useDepartmentDetail } from '@/hooks/useDepartments'
+import { ArrowRight, Building2, FileText, GitBranch, Mail, Plus, UserRound, Users as UsersIcon } from 'lucide-react'
+import { useCreateDepartment, useDepartmentDetail } from '@/hooks/useDepartments'
 import { useUpdateUser, useUsers } from '@/hooks/useUsers'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -16,7 +16,8 @@ import { useToast } from '@/components/ui/Toast'
 import { UserFormModal } from '@/features/users/UserFormModal'
 import { MemberDetailModal } from '@/features/users/MemberDetailModal'
 import { AssignExistingUserModal } from './AssignExistingUserModal'
-import { extractErrorMessage, formatDate } from '@/lib/utils'
+import { DepartmentFormModal, type DepartmentFormSubmitValues } from './DepartmentFormModal'
+import { cardToneClass, cn, extractErrorMessage, formatChildDepartmentsCount, formatDate } from '@/lib/utils'
 import type { User, UserUpdatePayload } from '@/types'
 
 /**
@@ -28,6 +29,11 @@ import type { User, UserUpdatePayload } from '@/types'
  * تسجيل مستخدم جديد دائمًا، حتى لو المطلوب فعليًا نقل مستخدم موجود من
  * إدارة أخرى أو بدون إدارة. UserFormModal ما زال مستخدَمًا هنا لكن فقط
  * لتعديل بيانات عضو موجود أصلاً بالإدارة (من MemberDetailModal.onEdit).
+ *
+ * هيكل المستويين (migration 0048 — قرار لاما 2026-11-15): الإدارة الرئيسية
+ * تعرض إداراتها التابعة وزر "إضافة إدارة" (تُنشأ تابعة لها مباشرة) بجانب
+ * "إضافة عضو". الإدارة التابعة تعرض إدارتها الأم ويرجع زر العودة إليها،
+ * ولا يُضاف تحتها إدارات (الهيكل مستويان فقط).
  */
 export function DepartmentDetailPage() {
   const { depId } = useParams<{ depId: string }>()
@@ -50,6 +56,26 @@ export function DepartmentDetailPage() {
    * جزئي نقدر نضبطه تلقائيًا على من فشل فقط (راجعي handleAssignExisting
    * وملاحظة مراجعة CodeRabbit على PR #55). */
   const [assignSelectedIds, setAssignSelectedIds] = useState<string[]>([])
+  const createDepartmentMutation = useCreateDepartment()
+  const [childFormOpen, setChildFormOpen] = useState(false)
+  const [childFormError, setChildFormError] = useState<string | null>(null)
+
+  function openChildForm() {
+    setChildFormError(null)
+    setChildFormOpen(true)
+  }
+
+  /** إنشاء إدارة تابعة لهذه الإدارة الرئيسية — parent_dep_id محدد مسبقًا بالنموذج. */
+  function handleCreateChild(values: DepartmentFormSubmitValues) {
+    setChildFormError(null)
+    createDepartmentMutation.mutate(values, {
+      onSuccess: () => {
+        setChildFormOpen(false)
+        showToast('تمت إضافة الإدارة التابعة بنجاح', 'success')
+      },
+      onError: (err) => setChildFormError(extractErrorMessage(err)),
+    })
+  }
 
   function openAssignModal() {
     setAssignError(null)
@@ -141,14 +167,17 @@ export function DepartmentDetailPage() {
     return <ErrorState onRetry={() => refetch()} />
   }
 
+  const isParentLevel = !detail.parent_dep_id
+  const children = detail.children ?? []
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
           <button
-            onClick={() => navigate('/departments')}
+            onClick={() => navigate(detail.parent ? `/departments/${detail.parent.dep_id}` : '/departments')}
             className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-bg-elevated hover:text-text-primary"
-            aria-label="العودة إلى الإدارات"
+            aria-label={detail.parent ? `العودة إلى ${detail.parent.name}` : 'العودة إلى الإدارات'}
           >
             <ArrowRight size={18} />
           </button>
@@ -161,12 +190,27 @@ export function DepartmentDetailPage() {
                 </span>
               )}
             </div>
+            {detail.parent && (
+              <button
+                onClick={() => navigate(`/departments/${detail.parent!.dep_id}`)}
+                className="mt-1 text-xs font-medium text-brand-primary hover:underline"
+              >
+                تابعة لـ {detail.parent.name}
+              </button>
+            )}
             <p className="mt-1 text-sm text-text-muted">{detail.description || 'لا يوجد وصف'}</p>
           </div>
         </div>
-        <Button icon={<Plus size={16} />} onClick={openAssignModal}>
-          إضافة مستخدم
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {isParentLevel && (
+            <Button variant="secondary" icon={<GitBranch size={16} />} onClick={openChildForm}>
+              إضافة إدارة
+            </Button>
+          )}
+          <Button icon={<Plus size={16} />} onClick={openAssignModal}>
+            إضافة عضو
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -177,13 +221,83 @@ export function DepartmentDetailPage() {
           icon={<UserRound size={20} />}
           tone="orange"
         />
-        <StatCard
-          label="أُنشئت في"
-          value={formatDate(detail.created_at)}
-          icon={<Building2 size={20} />}
-          tone="purple"
-        />
+        {isParentLevel ? (
+          <StatCard
+            label="الإدارات التابعة"
+            value={children.length}
+            icon={<GitBranch size={20} />}
+            tone="purple"
+          />
+        ) : (
+          <StatCard
+            label="أُنشئت في"
+            value={formatDate(detail.created_at)}
+            icon={<Building2 size={20} />}
+            tone="purple"
+          />
+        )}
       </div>
+
+      {isParentLevel && (
+        <Card className="p-0">
+          <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+              <GitBranch size={15} />
+              الإدارات التابعة
+            </h2>
+            {children.length > 0 && (
+              <span className="text-xs text-text-muted">{formatChildDepartmentsCount(children.length)}</span>
+            )}
+          </div>
+          {children.length === 0 ? (
+            <div className="p-2">
+              <EmptyState
+                icon={<GitBranch size={26} />}
+                title="لا توجد إدارات تابعة بعد"
+                description="أضف الإدارات التي تتبع هذه الإدارة الرئيسية"
+                action={
+                  <Button size="sm" variant="secondary" icon={<Plus size={14} />} onClick={openChildForm}>
+                    إضافة إدارة
+                  </Button>
+                }
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+              {children.map((child, i) => (
+                <Card
+                  key={child.dep_id}
+                  onClick={() => navigate(`/departments/${child.dep_id}`)}
+                  className={cn(
+                    'flex cursor-pointer flex-col gap-2 transition-shadow hover:shadow-md',
+                    cardToneClass(i),
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <Building2 size={16} className="shrink-0 text-brand-primary" />
+                    <h3 className="text-sm font-semibold text-text-primary">{child.name}</h3>
+                    {child.code && (
+                      <span className="rounded-xs bg-bg-elevated px-1.5 py-0.5 text-[10px] font-semibold text-text-muted">
+                        {child.code}
+                      </span>
+                    )}
+                  </div>
+                  {child.manager && (
+                    <p className="flex items-center gap-1.5 text-xs text-text-secondary">
+                      <UserRound size={12} />
+                      {child.manager.first_name} {child.manager.last_name}
+                    </p>
+                  )}
+                  <p className="flex items-center gap-1.5 text-xs text-text-muted">
+                    <UsersIcon size={12} />
+                    الأعضاء: {child.member_count}
+                  </p>
+                </Card>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card className="p-0">
         <div className="flex items-center justify-between border-b border-border-default px-4 py-3">
@@ -201,7 +315,7 @@ export function DepartmentDetailPage() {
               description="ابدأ بإضافة أول عضو لهذه الإدارة"
               action={
                 <Button size="sm" icon={<Plus size={14} />} onClick={openAssignModal}>
-                  إضافة مستخدم
+                  إضافة عضو
                 </Button>
               }
             />
@@ -279,6 +393,15 @@ export function DepartmentDetailPage() {
         selectedIds={assignSelectedIds}
         onSelectedIdsChange={setAssignSelectedIds}
         targetDepartmentName={detail.name}
+      />
+
+      <DepartmentFormModal
+        open={childFormOpen}
+        onClose={() => setChildFormOpen(false)}
+        fixedParent={detail}
+        onSubmit={handleCreateChild}
+        loading={createDepartmentMutation.isPending}
+        serverError={childFormError}
       />
 
       <MemberDetailModal
