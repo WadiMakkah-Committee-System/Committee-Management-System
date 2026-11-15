@@ -361,7 +361,13 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
 
     الأخطاء: ImportValidationError بكل أخطاء الصفوف (لا يُكتب شيء).
     """
-    full_scope = actor.scope_for("users.import") == "all"
+    import_scope = actor.scope_for("users.import")
+    full_scope = import_scope == "all"
+    # الإدارات المسموح الرفع لها بدون نطاق all: إدارته فقط، أو إدارته وما
+    # تحتها لنطاق department_tree (migration 0048).
+    allowed_dep_ids = actor.department_ids_for_scope(
+        "department_tree" if import_scope == "department_tree" else "department"
+    )
     actor_permissions = actor.permission_codes
     if not full_scope and actor.dep_id is None:
         raise ImportFileError("حسابك غير مرتبط بإدارة — لا يمكنك رفع مستخدمين إلا لإدارتك")
@@ -481,8 +487,13 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
 
         if not full_scope and department_key is not None and not any(e.field == "الإدارة" for e in row_errors):
             target = departments.get(department_key)
-            if target is None or target.dep_id != actor.dep_id:
-                row_errors.append(RowError(row.row, "الإدارة", "يمكنك إضافة مستخدمين لإدارتك فقط"))
+            if target is None or target.dep_id not in allowed_dep_ids:
+                message = (
+                    "يمكنك إضافة مستخدمين لإدارتك أو الإدارات التابعة لها فقط"
+                    if import_scope == "department_tree"
+                    else "يمكنك إضافة مستخدمين لإدارتك فقط"
+                )
+                row_errors.append(RowError(row.row, "الإدارة", message))
 
         if department_key is not None:
             department_first_row.setdefault(department_key, row.row)

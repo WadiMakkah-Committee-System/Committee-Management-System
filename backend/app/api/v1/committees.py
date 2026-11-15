@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.background import run_detached
 from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
+from app.models.role import BROAD_SCOPES
 from app.schemas.committee import (
     CommitteeFormationRequestCreate,
     CommitteeFormationRequestOut,
@@ -105,7 +106,7 @@ async def create_committee_request(
 
 def _can_view_all_requests(current_user: CurrentUser) -> bool:
     """نطاق department/all يعني رؤية كل الطلبات؛ own يعني طلبات actor نفسه فقط."""
-    return current_user.scope_for("committees.request.view") in ("department", "all")
+    return current_user.scope_for("committees.request.view") in BROAD_SCOPES
 
 
 @router.get("", response_model=list[CommitteeFormationRequestOut])

@@ -75,7 +75,7 @@ from app.models.committee_request import (
 from app.models.decision import Decision
 from app.models.department import Department
 from app.models.meeting import Meeting
-from app.models.role import Permission, Role, RolePermission
+from app.models.role import BROAD_SCOPES, DEPARTMENT_SCOPES, Permission, Role, RolePermission
 from app.models.task import Task
 from app.models.user import User
 from app.services import audit_service
@@ -301,7 +301,7 @@ def _visible_statuses_for(actor: User) -> list[CommitteeRequestStatus]:
     تمييز على status، فتُرجع كل الحالات (حتى draft) لأي دور يملك النطاق
     الأوسع — بغض النظر عن مكانه الفعلي بدورة حياة الطلب.
     """
-    if actor.scope_for("committees.request.approve") in ("department", "all"):
+    if actor.scope_for("committees.request.approve") in BROAD_SCOPES:
         return [
             CommitteeRequestStatus.pending_approval,
             CommitteeRequestStatus.approved,
@@ -414,7 +414,7 @@ async def update_request(
         CommitteeRequestStatus.submitted,
         CommitteeRequestStatus.under_review,
     ):
-        if scope not in ("department", "all") and not actor.is_super_admin:
+        if scope not in BROAD_SCOPES and not actor.is_super_admin:
             raise CommitteeRequestForbiddenError(
                 "تعديل الطلب بعد إرساله متاح فقط للمكتب التنفيذي"
             )
@@ -545,7 +545,7 @@ async def return_to_admin_request(
     request = await _get_request_or_raise(db, request_id)
 
     scope = actor.scope_for("committees.request.update")
-    if scope not in ("department", "all") and not actor.is_super_admin:
+    if scope not in BROAD_SCOPES and not actor.is_super_admin:
         raise CommitteeRequestForbiddenError("إرجاع الطلب للادمن متاح فقط للمكتب التنفيذي")
 
     if request.status not in (
@@ -814,12 +814,15 @@ async def list_committees(
                 Committee.members.any(User.user_id == actor.user_id),
             )
         )
-    elif scope == "department":
-        if actor.dep_id is None:
+    elif scope in DEPARTMENT_SCOPES:
+        # department: إدارته فقط — department_tree: إدارته وكل إداراتها
+        # التابعة (migration 0048). بلا إدارة = لا شيء يُقارَن به.
+        scope_dep_ids = actor.department_ids_for_scope(scope)
+        if not scope_dep_ids:
             return []
         chair = aliased(User)
         stmt = stmt.join(chair, Committee.chair_user_id == chair.user_id).where(
-            chair.dep_id == actor.dep_id
+            chair.dep_id.in_(scope_dep_ids)
         )
     # scope == "all": بدون أي تصفية.
     result = await db.execute(stmt)
@@ -844,10 +847,10 @@ async def get_committee(
         )
         if not is_member:
             raise CommitteeForbiddenError("ليست لديك صلاحية لعرض هذه اللجنة")
-    elif scope == "department":
+    elif scope in DEPARTMENT_SCOPES:
         # committee.chair مُحمَّل تلقائيًا (lazy="selectin" على مستوى الـ mapper).
         committee_dep_id = committee.chair.dep_id if committee.chair else None
-        if actor.dep_id is None or committee_dep_id != actor.dep_id:
+        if not actor.scope_covers_department(scope, committee_dep_id):
             raise CommitteeForbiddenError("ليست لديك صلاحية لعرض هذه اللجنة")
     return committee
 
@@ -1218,8 +1221,15 @@ async def list_department_members_elsewhere(
     التابعة لها)، وليست وصولًا كامل التفاصيل للجنة نفسها (ذاك محجوز لنطاق
     department الكامل في list_committees حين تكون إدارة actor هي القائدة).
     actor بدون إدارة يرجع له قائمة فارغة.
+
+    نطاق department_tree على committees.view (migration 0048): "إدارته" هنا
+    تصير إدارته وكل إداراتها التابعة — موظفو أي منها بلجان رئيسها خارجها.
     """
-    if actor.dep_id is None:
+    view_scope = actor.scope_for("committees.view")
+    scope_dep_ids = actor.department_ids_for_scope(
+        "department_tree" if view_scope == "department_tree" else "department"
+    )
+    if not scope_dep_ids:
         return []
 
     member = aliased(User)
@@ -1233,12 +1243,12 @@ async def list_department_members_elsewhere(
         .join(Committee, committee_members.c.committee_id == Committee.committee_id)
         .outerjoin(chair, Committee.chair_user_id == chair.user_id)
         .outerjoin(chair_dept, chair.dep_id == chair_dept.dep_id)
-        .where(member.dep_id == actor.dep_id)
+        .where(member.dep_id.in_(scope_dep_ids))
         .where(
             or_(
                 Committee.chair_user_id.is_(None),
                 chair.dep_id.is_(None),
-                chair.dep_id != actor.dep_id,
+                chair.dep_id.not_in(scope_dep_ids),
             )
         )
         .order_by(Committee.created_at.desc())

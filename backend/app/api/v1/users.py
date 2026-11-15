@@ -30,6 +30,7 @@ from app.core.background import run_detached
 from app.core.config import settings
 from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
+from app.models.role import DEPARTMENT_SCOPES
 from app.models.user import User, UserStatus
 from app.schemas.user import ActiveRoleSwitch, UserCreate, UserDetailOut, UserOut, UserUpdate
 from app.schemas.user_import import (
@@ -55,8 +56,9 @@ def _check_user_scope_access(current_user: User, target: User, *permission_codes
     scope = current_user.scope_for(*permission_codes)
     if scope == "all":
         return
-    if scope == "department":
-        if current_user.dep_id is not None and target.dep_id == current_user.dep_id:
+    if scope in DEPARTMENT_SCOPES:
+        # department: إدارته فقط — department_tree: إدارته وما تحتها (0048).
+        if current_user.scope_covers_department(scope, target.dep_id):
             return
     elif scope == "own":
         if target.user_id == current_user.user_id:
@@ -65,6 +67,43 @@ def _check_user_scope_access(current_user: User, target: User, *permission_codes
         status_code=status.HTTP_403_FORBIDDEN,
         detail="ليست لديك صلاحية للوصول إلى بيانات هذا المستخدم",
     )
+
+
+def _check_department_assignment(
+    current_user: User, dep_id: uuid.UUID | None, *permission_codes: str
+) -> None:
+    """
+    الهدف:
+    منع إسناد مستخدم لإدارة خارج نطاق صلاحية من ينشئه/يعدّله (CLAUDE.md §10:
+    لا نثق بـDepartment ID القادم من الطرف الآخر) — إصلاح ثغرة موجودة سابقًا،
+    بطلب لاما 2026-11-15.
+
+    المدخلات:
+    - current_user: المنفّذ.
+    - dep_id: الإدارة المطلوب إسناد المستخدم لها (None = بلا إدارة).
+    - permission_codes: صلاحية العملية (users.create أو users.update).
+
+    قواعد العمل:
+    - super_admin أو نطاق all: أي إدارة (أو بلا إدارة).
+    - department: إدارته فقط. department_tree: إدارته أو إحدى إداراتها التابعة.
+    - own: إدارته هو فقط.
+    - بغير نطاق all لا يُسمح بمستخدم بلا إدارة (يخرج عن نطاق المنفّذ كليًا).
+
+    المخرجات: لا شيء. الأخطاء: HTTPException 403 لو الإدارة خارج النطاق.
+    بلا تأثيرات جانبية.
+    """
+    scope = current_user.scope_for(*permission_codes)
+    if current_user.is_super_admin or scope == "all":
+        return
+    if scope in DEPARTMENT_SCOPES:
+        allowed = current_user.department_ids_for_scope(scope)
+    else:
+        allowed = {current_user.dep_id} if current_user.dep_id is not None else set()
+    if dep_id is None or dep_id not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="لا يمكنك إسناد المستخدم لإدارة خارج نطاق صلاحيتك",
+        )
 
 
 @router.get("/me", response_model=UserDetailOut)
@@ -157,7 +196,11 @@ async def create_user(
     الحساب ينشأ بـmust_change_password=True فيُجبَر على تغييرها عند أول دخول
     (FR-UM-016). الإرسال عبر run_detached بعد commit، ففشل البريد لا يُفشل
     الإنشاء، ولا تُسجَّل كلمة المرور بأي سجل.
+
+    - 403 أيضًا: الإدارة المختارة خارج نطاق صلاحية المنفّذ على users.create
+      (راجعي _check_department_assignment).
     """
+    _check_department_assignment(current_user, payload.dep_id, "users.create")
     try:
         user = await user_service.create_user(
             db,
@@ -201,6 +244,8 @@ async def list_users(
     - own: قائمة تحوي المستخدم نفسه فقط (لا تُرجَع قائمة كاملة تلقائيًا).
     - department: مستخدمو إدارته فقط (تجاهل أي dep_id يرسله العميل غير
       إدارته — لا نثق بفلترة قادمة من الطرف الآخر لتوسيع النطاق).
+    - department_tree (migration 0048): مستخدمو إدارته وكل إداراتها التابعة؛
+      فلتر dep_id يُحترم فقط لو كان ضمن هذه الإدارات، وإلا يُتجاهل.
     - all: كل المستخدمين، مع احترام فلتر dep_id الاختياري إن أُرسل.
     """
     scope = current_user.scope_for("users.view")
@@ -208,6 +253,15 @@ async def list_users(
         return [UserOut.model_validate(current_user)]
     if scope == "department":
         users = await user_service.list_users(db, dep_id=current_user.dep_id)
+        return [UserOut.model_validate(u) for u in users]
+    if scope == "department_tree":
+        allowed = current_user.department_ids_for_scope(scope)
+        if not allowed:
+            return []
+        if dep_id is not None and dep_id in allowed:
+            users = await user_service.list_users(db, dep_id=dep_id)
+        else:
+            users = await user_service.list_users(db, dep_ids=allowed)
         return [UserOut.model_validate(u) for u in users]
     if scope == "all":
         users = await user_service.list_users(db, dep_id=dep_id)
@@ -363,6 +417,10 @@ async def update_user(
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="المستخدم غير موجود")
     _check_user_scope_access(current_user, target, "users.update")
+    # نقل المستخدم لإدارة أخرى: الإدارة الجديدة لازم تكون ضمن نطاق المنفّذ
+    # أيضًا (وليس فقط إدارته الحالية). update_user يتجاهل dep_id = None.
+    if payload.dep_id is not None and payload.dep_id != target.dep_id:
+        _check_department_assignment(current_user, payload.dep_id, "users.update")
     try:
         user = await user_service.update_user(
             db,

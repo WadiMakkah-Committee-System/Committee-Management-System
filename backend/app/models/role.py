@@ -46,11 +46,22 @@ from app.db.base import Base
 #: نطاقات الوصول المدعومة حاليًا — راجعي db/migrations/0014 للتفاصيل
 #: الكاملة. قائمة بسيطة (وليست Enum بقاعدة البيانات) لسهولة إضافة نطاق
 #: جديد مستقبلًا بـmigration بسيط (ALTER CONSTRAINT) دون تعديل Enum.
-VALID_SCOPES = ("own", "department", "all")
+#: department_tree (migration 0048 — قرار لاما 2026-11-15): "إدارته وما
+#: تحتها" — إدارة المستخدم + كل الإدارات التابعة لها (لمستخدم بإدارة أم).
+#: department يبقى بنفس معناه: إدارته هو فقط.
+VALID_SCOPES = ("own", "department", "department_tree", "all")
+
+#: النطاقان المرتبطان بالإدارة — راجعي User.department_ids_for_scope لحساب
+#: الإدارات اللي يغطيها كل واحد منهما.
+DEPARTMENT_SCOPES = ("department", "department_tree")
+
+#: كل نطاق أوسع من own (إدارة، إدارة وما تحتها، الكل) — للمواضع اللي تحتاج
+#: "نطاق مراجِع وليس مالك" فقط بغض النظر عن حدوده.
+BROAD_SCOPES = ("department", "department_tree", "all")
 
 #: ترتيب "الاتساع" من الأوسع للأضيق — يُستخدم فقط عند امتلاك الدور نفس
 #: الصلاحية عبر أكواد بديلة متعددة (راجعي Role.scope_for أدناه).
-_SCOPE_BREADTH_ORDER = ("all", "department", "own")
+_SCOPE_BREADTH_ORDER = ("all", "department_tree", "department", "own")
 
 
 class Permission(Base):

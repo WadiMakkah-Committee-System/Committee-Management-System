@@ -66,7 +66,7 @@ from app.models.decision import Decision
 from app.models.meeting import Meeting
 from app.models.meeting_minutes import MeetingMinutes
 from app.models.notification import Notification
-from app.models.role import Permission, RolePermission
+from app.models.role import BROAD_SCOPES, Permission, RolePermission
 from app.models.task import Task, TaskStatus
 from app.models.user import User
 from app.models.user_role import UserRole
@@ -469,7 +469,7 @@ async def _users_with_permission(session, code: str) -> list[uuid.UUID]:
         .join(Permission, Permission.permission_id == RolePermission.permission_id)
         .where(
             Permission.code == code,
-            RolePermission.scope.in_(("department", "all")),
+            RolePermission.scope.in_(BROAD_SCOPES),
             User.deleted_at.is_(None),
             User.status == "active",
         )

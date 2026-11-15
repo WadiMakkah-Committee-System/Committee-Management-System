@@ -162,6 +162,62 @@ class User(Base):
         """راجعي Role.scope_for — نفس المنطق، آمن مع مستخدم بدون دور (تُرجع None)."""
         return self.role.scope_for(*codes) if self.role is not None else None
 
+    def department_ids_for_scope(self, scope: str | None) -> set[uuid.UUID]:
+        """
+        الهدف:
+        الإدارات اللي يغطيها نطاق صلاحية مرتبط بالإدارة لهذا المستخدم —
+        نقطة واحدة لكل فحوصات النطاق بالنظام (بدل تكرار المقارنة بكل خدمة).
+
+        المدخلات:
+        - scope: نطاق الصلاحية (عادةً ناتج scope_for).
+
+        المخرجات (set[UUID]):
+        - department: {إدارته} فقط.
+        - department_tree: {إدارته} + كل الإدارات التابعة النشطة لها
+          (فارغة التوابع لو إدارته نفسها تابعة أو بلا توابع).
+        - أي نطاق آخر (own/all/None)، أو مستخدم بلا إدارة: مجموعة فارغة —
+          own وall لا يُحسبان بالإدارات أصلًا.
+
+        التأثيرات الجانبية: لا شيء (حساب بالذاكرة).
+
+        الاعتماديات / الأخطاء المحتملة:
+        department_tree يقرأ department.child_dep_ids — محمَّل مسبقًا على مسار
+        المصادقة (user_service._profile_options). مستخدم محمَّل بغير هذا
+        المسار يرمي خطأ raiseload واضحًا بدل نتيجة خاطئة صامتة.
+        """
+        if self.dep_id is None or scope not in ("department", "department_tree"):
+            return set()
+        ids = {self.dep_id}
+        if scope == "department_tree" and self.department is not None:
+            ids.update(self.department.child_dep_ids or [])
+        return ids
+
+    def related_department_ids(self) -> set[uuid.UUID]:
+        """
+        إدارته + إدارتها الأم (لو كانت تابعة) + إداراتها التابعة (لو كانت أمًّا)
+        — لرؤية ما يُشارَك على مستوى الإدارة (الوثائق وتصنيفاتها) عبر الهيكل
+        بالاتجاهين (قرار لاما 2026-11-15). مستخدم بلا إدارة: مجموعة فارغة.
+        يعتمد على department.child_dep_ids المحمَّل بمسار المصادقة (راجعي
+        department_ids_for_scope).
+        """
+        if self.dep_id is None:
+            return set()
+        ids = {self.dep_id}
+        if self.department is not None:
+            if self.department.parent_dep_id is not None:
+                ids.add(self.department.parent_dep_id)
+            ids.update(self.department.child_dep_ids or [])
+        return ids
+
+    def scope_covers_department(self, scope: str | None, dep_id: uuid.UUID | None) -> bool:
+        """
+        هل نطاق مرتبط بالإدارة (department/department_tree) يغطي إدارة معيّنة؟
+        dep_id = None (مثل لجنة رئيسها بلا إدارة) لا يُغطّى أبدًا. own/all
+        يرجعان False هنا — يُفحصان بمكانهما كما كانا. راجعي
+        department_ids_for_scope أعلاه.
+        """
+        return dep_id is not None and dep_id in self.department_ids_for_scope(scope)
+
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.middle_name} {self.last_name}"

@@ -35,7 +35,11 @@ export interface Permission {
 }
 
 /** نطاقات الوصول المدعومة — راجعي db/migrations/0014 وbackend/app/models/role.py. */
-export type PermissionScope = 'own' | 'department' | 'all'
+/**
+ * department_tree (migration 0048): "إدارته وما تحتها" — إدارة المستخدم وكل
+ * الإدارات التابعة لها. department يبقى "إدارته فقط".
+ */
+export type PermissionScope = 'own' | 'department' | 'department_tree' | 'all'
 
 /** صلاحية دور معيّن، مع نطاق الوصول الفعلي الممنوح لها (مراجعة لاما 2026-08-30). */
 export interface RolePermission extends Permission {
@@ -96,6 +100,8 @@ export interface Department {
   code: string | null
   description: string | null
   manager: DepartmentManager | null
+  /** الإدارة الأم (migration 0048) — null = إدارة بالمستوى الأعلى. */
+  parent_dep_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -188,9 +194,25 @@ export interface UserDetail extends User {
   roles_permissions?: Record<string, string[]>
 }
 
+/** مرجع مختصر لإدارة — الإدارة الأم بصفحة التفاصيل. */
+export interface DepartmentRef {
+  dep_id: string
+  name: string
+  code: string | null
+}
+
+/** إدارة تابعة مع عدد أعضائها — قائمة التوابع بصفحة تفاصيل الإدارة الأم. */
+export interface DepartmentChild extends Department {
+  member_count: number
+}
+
 export interface DepartmentDetail extends Department {
   member_count: number
   members: User[]
+  /** الإدارة الأم لو كانت هذه تابعة (migration 0048). */
+  parent?: DepartmentRef | null
+  /** الإدارات التابعة لو كانت هذه أمًّا (migration 0048). */
+  children?: DepartmentChild[]
 }
 
 export interface UserCreatePayload {
@@ -232,6 +254,8 @@ export interface DepartmentCreatePayload {
   manager_user_id: string
   /** أعضاء يُضافون للإدارة من نفس نموذج الإنشاء (اختياري) — المسؤول يُضاف تلقائيًا دائمًا. */
   member_user_ids?: string[]
+  /** الإدارة الأم (اختياري، migration 0048) — غيابه/null = إدارة بالمستوى الأعلى. */
+  parent_dep_id?: string | null
 }
 
 export interface DepartmentUpdatePayload {
@@ -239,6 +263,8 @@ export interface DepartmentUpdatePayload {
   code?: string
   description?: string | null
   manager_user_id?: string
+  /** غائب = بلا تغيير، null = فكّها من إدارتها الأم، معرّف = نقلها تحتها (migration 0048). */
+  parent_dep_id?: string | null
 }
 
 export interface LoginPayload {

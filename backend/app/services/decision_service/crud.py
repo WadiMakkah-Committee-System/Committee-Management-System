@@ -164,12 +164,14 @@ async def list_decisions(
     # نفسه: شرطان مستقلّان يُدمَجان بـOR بدل الإقصاء المتبادل.
     if scope != "all":
         conditions = []
-        if scope == "department" and actor.dep_id is not None:
+        # department: لجان إدارته — department_tree: لجان إدارته وما تحتها (0048).
+        scope_dep_ids = actor.department_ids_for_scope(scope)
+        if scope_dep_ids:
             chair = aliased(User)
             dept_committee_ids = (
                 select(Committee.committee_id)
                 .join(chair, Committee.chair_user_id == chair.user_id)
-                .where(chair.dep_id == actor.dep_id)
+                .where(chair.dep_id.in_(scope_dep_ids))
             )
             conditions.append(Decision.committee_id.in_(dept_committee_ids))
 

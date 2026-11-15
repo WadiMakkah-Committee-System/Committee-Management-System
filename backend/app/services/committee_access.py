@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.committee import Committee, committee_members
-from app.models.role import Permission, RolePermission
+from app.models.role import DEPARTMENT_SCOPES, Permission, RolePermission
 from app.models.user import User
 
 
@@ -30,9 +30,10 @@ def system_scope_allows(actor: User, committee: Committee, code: str) -> bool:
     scope = actor.scope_for(code)
     if scope == "all":
         return True
-    if scope == "department":
+    if scope in DEPARTMENT_SCOPES:
+        # department: إدارته فقط — department_tree: إدارته وما تحتها (0048).
         committee_dep_id = committee.chair.dep_id if committee.chair else None
-        return actor.dep_id is not None and actor.dep_id == committee_dep_id
+        return actor.scope_covers_department(scope, committee_dep_id)
     return False
 
 
