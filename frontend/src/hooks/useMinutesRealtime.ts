@@ -26,6 +26,13 @@ export function useMinutesRealtime(meetingId: string | undefined, sharedSocket?:
   const [remoteSections, setRemoteSections] = useState<{ sections: MinutesSection[]; at: number } | null>(
     null,
   )
+  // القالب العام: الخادم يبثّ القسم المحفوظ وحده بعد كل حفظ قسم (PATCH) —
+  // النسخة المعتمدة من الخادم، لا ما أرسله العميل.
+  const [remoteSection, setRemoteSection] = useState<{
+    section: MinutesSection
+    userId: string | null
+    at: number
+  } | null>(null)
   const socketRef = useRef<Socket | null>(null)
   // sharedSocket (لوحة المحضر داخل غرفة الاجتماع — 2026-11-09): undefined ⇒
   // اتصال خاص بهذا الهوك (صفحة المحضر، السلوك القديم بلا تغيير). null/Socket ⇒
@@ -58,6 +65,10 @@ export function useMinutesRealtime(meetingId: string | undefined, sharedSocket?:
     const onUpdated = (payload: { sections: MinutesSection[] }) => {
       setRemoteSections({ sections: payload.sections, at: Date.now() })
     }
+    const onSectionUpdated = (payload: { section: MinutesSection; user_id: string | null }) => {
+      if (!payload?.section?.id) return
+      setRemoteSection({ section: payload.section, userId: payload.user_id ?? null, at: Date.now() })
+    }
     const onLeft = (payload: { user_id: string }) => {
       setCollaborators((prev) => {
         const next = { ...prev }
@@ -69,12 +80,14 @@ export function useMinutesRealtime(meetingId: string | undefined, sharedSocket?:
     socket.on('disconnect', onDisconnect)
     socket.on('minutes.editing', onEditing)
     socket.on('minutes.updated', onUpdated)
+    socket.on('minutes.section_updated', onSectionUpdated)
     socket.on('presence.left', onLeft)
 
     return () => {
       socket.off('disconnect', onDisconnect)
       socket.off('minutes.editing', onEditing)
       socket.off('minutes.updated', onUpdated)
+      socket.off('minutes.section_updated', onSectionUpdated)
       socket.off('presence.left', onLeft)
       // الاتصال المشترك ملك غرفة الاجتماع — لا نقطعه من هنا.
       if (!usesShared) socket.disconnect()
@@ -98,6 +111,7 @@ export function useMinutesRealtime(meetingId: string | undefined, sharedSocket?:
   return {
     collaborators: Object.values(collaborators),
     remoteSections,
+    remoteSection,
     announceEditing,
     broadcastUpdate,
   }

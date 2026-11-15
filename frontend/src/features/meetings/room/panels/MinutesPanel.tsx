@@ -12,6 +12,8 @@ import { useAuthStore } from '@/store/authStore'
 import { cn, extractErrorMessage, scopeFor } from '@/lib/utils'
 import type { MinutesSection } from '@/types'
 import { errorStatusOf, MinutesStageBadge } from '../../minutesShared'
+import { GeneralMinutesEditor } from '../../minutes-general/GeneralMinutesEditor'
+import { isGeneralTemplate } from '../../minutes-general/types'
 
 /**
  * لوحة المحضر داخل غرفة الاجتماع (طلب لاما 2026-11-09 — "النائب يقدر يشاركني
@@ -52,7 +54,7 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
     minutes?.stage === 'preparing' || minutes?.stage === 'review' || minutes?.stage === 'approval'
   const editable = (isChair || !!detail?.can_edit) && approvableStage
 
-  const { collaborators, remoteSections, announceEditing, broadcastUpdate } = useMinutesRealtime(
+  const { collaborators, remoteSections, remoteSection, announceEditing, broadcastUpdate } = useMinutesRealtime(
     meetingId,
     sharedSocket,
   )
@@ -193,6 +195,7 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
   if (!minutes) return null
 
   const noTemplate = minutes.stage === 'none' || !minutes.template_id
+  const general = isGeneralTemplate(minutes.template_id)
   const saving = updateSectionsMutation.isPending
 
   return (
@@ -200,7 +203,7 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border-default bg-bg-surface px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <MinutesStageBadge stage={minutes.stage} />
-          {!noTemplate && editable && (
+          {!noTemplate && !general && editable && (
             <span className="flex items-center gap-1 text-[11px] text-text-muted">
               {saving ? (
                 <>
@@ -267,6 +270,16 @@ export function MinutesPanel({ meetingId, sharedSocket }: { meetingId: string; s
               description="يبدأ إعداد المحضر بعد أن يختار رئيس اللجنة قالب المحضر."
             />
           )
+        ) : general ? (
+          // القالب العام: نفس محرر صفحة المحضر بشكل مضغوط، والحفظ قسم قسم.
+          <GeneralMinutesEditor
+            meetingId={meetingId}
+            minutes={minutes}
+            editable={editable}
+            realtime={{ collaborators, remoteSections, remoteSection, announceEditing }}
+            currentUserId={user?.user_id}
+            compact
+          />
         ) : (
           <div className="flex flex-col gap-3">
             {sections.map((s) => {
