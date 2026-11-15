@@ -29,9 +29,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.background import run_detached
 from app.core.config import settings
 from app.core.dependencies import CurrentUser, require_permission
+from app.core.security import prelaunch_initial_password
 from app.db.session import get_db
 from app.models.user import User, UserStatus
-from app.schemas.user import ActiveRoleSwitch, UserCreate, UserDetailOut, UserOut, UserUpdate
+from app.schemas.user import (
+    ActiveRoleSwitch,
+    InitialPasswordPolicyOut,
+    UserCreate,
+    UserDetailOut,
+    UserOut,
+    UserUpdate,
+)
 from app.schemas.user_import import (
     ImportedDepartmentOut,
     ImportedUserOut,
@@ -183,6 +191,28 @@ async def create_user(
         )
     )
     return UserOut.model_validate(user)
+
+
+@router.get(
+    "/initial-password-policy",
+    response_model=InitialPasswordPolicyOut,
+    dependencies=[Depends(require_permission("users.create"))],
+)
+async def get_initial_password_policy() -> InitialPasswordPolicyOut:
+    """
+    هل سياسة كلمة المرور مفروضة على كلمة المرور الأولية بنموذج "إضافة مستخدم"؟
+    (مرحلة ما قبل التدشين — طلب الإدارة 2026-11-12).
+
+    - 200: {"rules_enforced": true} بالوضع الطبيعي، و false لما يكون
+      PRELAUNCH_INITIAL_PASSWORD مضبوطًا على الخادم.
+    - 403: بلا صلاحية users.create — نفس صلاحية الإنشاء، فلا يعرف حالة هذا
+      الوضع إلا من يقدر يضيف مستخدمين أصلًا (ليس عامًا مثل login-options).
+
+    ملاحظات أمنية: لا يرجّع قيمة كلمة المرور إطلاقًا، والواجهة تستخدم الرد
+    للعرض فقط (خانة فارغة بلا قواعد) — القرار النهائي دائمًا على UserCreate.
+    مُعرَّف قبل GET /users/{user_id} حتى لا يُطابَق المسار كمعرّف مستخدم.
+    """
+    return InitialPasswordPolicyOut(rules_enforced=not prelaunch_initial_password())
 
 
 @router.get(

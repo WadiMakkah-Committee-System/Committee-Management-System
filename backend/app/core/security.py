@@ -21,6 +21,7 @@ app.core.config لقراءة الإعدادات (JWT_SECRET, الخوارزمي�
   (Authentication)، أما التفويض (Authorization/RBAC) ففي core/dependencies.py.
 """
 
+import hmac
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -67,6 +68,42 @@ def validate_password_policy(plain_password: str) -> bool:
     رقم واحد على الأقل.
     """
     return bool(_PASSWORD_POLICY_RE.match(plain_password))
+
+
+def prelaunch_initial_password() -> str:
+    """
+    الهدف: كلمة المرور الأولية الموحّدة لمرحلة ما قبل التدشين (طلب الإدارة
+    2026-11-12)، من متغير البيئة PRELAUNCH_INITIAL_PASSWORD.
+
+    المخرجات: القيمة بعد إزالة المسافات الطرفية، أو "" لو المتغير غير مضبوط
+    (الوضع الطبيعي بعد التدشين).
+
+    ملاحظات أمنية:
+    - تُقرأ من settings وقت الاستدعاء (ليس وقت تحميل الملف)، فحذف المتغير
+      وإعادة التشغيل يكفي لإيقاف الوضع.
+    - لا تُرجَع هذه القيمة للواجهة إطلاقًا — راجعي GET /users/initial-password-policy
+      الذي يرجّع فقط هل القواعد مفروضة أم لا.
+    """
+    return settings.PRELAUNCH_INITIAL_PASSWORD.strip()
+
+
+def is_prelaunch_initial_password(plain_password: str) -> bool:
+    """
+    الهدف: هل كلمة المرور المكتوبة هي نفسها كلمة ما قبل التدشين المضبوطة؟
+
+    المدخلات: plain_password — كلمة المرور كما كتبها المسؤول (بلا تعديل).
+
+    المخرجات: True فقط لو الوضع مفعّل (المتغير غير فارغ) والكلمة تطابقه
+    حرفيًا. مع المتغير الفارغ ترجع False دائمًا، فلا تُقبل أي كلمة ضعيفة.
+
+    الاستخدام: نموذج إنشاء مستخدم (UserCreate) فقط — تغيير كلمة المرور
+    الإجباري ونسيت كلمة المرور لا يستدعيانها، فتبقى السياسة كاملة فيهما.
+    المقارنة بـhmac.compare_digest (زمن ثابت) احتياطًا.
+    """
+    expected = prelaunch_initial_password()
+    if not expected:
+        return False
+    return hmac.compare_digest(plain_password.encode("utf-8"), expected.encode("utf-8"))
 
 
 # =====================================================================

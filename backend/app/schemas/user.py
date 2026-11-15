@@ -17,7 +17,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.core.security import validate_password_policy
+from app.core.security import is_prelaunch_initial_password, validate_password_policy
 from app.models.user import UserStatus
 from app.schemas.department import DepartmentOut
 from app.schemas.job_title import JobTitleOut
@@ -30,7 +30,9 @@ class UserCreate(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
     username: str = Field(min_length=3, max_length=50)
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    # min_length=1 (وليس 8) لأن كلمة ما قبل التدشين قد تكون أقصر — حد الـ8
+    # أحرف ما زال مفروضًا فعليًا داخل _check_password_policy أدناه.
+    password: str = Field(min_length=1, max_length=128)
     # اختياري (مراجعة لاما 2026-08-30 — "لا تجعل حقل الدور إجباريًا عند
     # إضافة مستخدم"): مستخدم بلا دور يُنشأ بنجاح؛ راجعي user_service.create_user.
     # تعدد الأدوار (migration 0046): role_ids = كل أدوار المستخدم، وrole_id
@@ -45,13 +47,42 @@ class UserCreate(BaseModel):
     @field_validator("password")
     @classmethod
     def _check_password_policy(cls, v: str) -> str:
-        # FR-UM-015: 8 أحرف فأكثر + حرف كبير + حرف صغير + رقم
-        if not validate_password_policy(v):
-            raise ValueError(
-                "كلمة المرور يجب أن تحتوي على 8 أحرف على الأقل، "
-                "حرف كبير وحرف صغير ورقم واحد على الأقل"
-            )
-        return v
+        """
+        التحقق من كلمة المرور الأولية عند إنشاء مستخدم.
+
+        تُقبل إذا:
+        - طابقت سياسة FR-UM-015 (8 أحرف فأكثر + حرف كبير + حرف صغير + رقم)، أو
+        - طابقت حرفيًا كلمة ما قبل التدشين PRELAUNCH_INITIAL_PASSWORD لو كانت
+          مضبوطة (طلب الإدارة 2026-11-12 — مثل 123456). مع المتغير الفارغ لا
+          يتغيّر أي شيء عن السلوك السابق.
+
+        المستخدم يُنشأ دائمًا بـmust_change_password=True، وتغييرها عند أول
+        دخول يمر على ChangePasswordRequest بالسياسة الكاملة.
+        رسالة الخطأ نفسها بالحالتين — لا تلمّح لوجود كلمة ما قبل التدشين.
+        """
+        if validate_password_policy(v) or is_prelaunch_initial_password(v):
+            return v
+        raise ValueError(
+            "كلمة المرور يجب أن تحتوي على 8 أحرف على الأقل، "
+            "حرف كبير وحرف صغير ورقم واحد على الأقل"
+        )
+
+
+class InitialPasswordPolicyOut(BaseModel):
+    """
+    رد GET /users/initial-password-policy — يخبر نموذج "إضافة مستخدم" بالواجهة
+    كيف يتعامل مع خانة كلمة المرور الأولية.
+
+    - rules_enforced=True (الوضع الطبيعي): الواجهة تقترح كلمة قوية تلقائيًا
+      وتفرض سياسة FR-UM-015 قبل الإرسال.
+    - rules_enforced=False (مرحلة ما قبل التدشين — PRELAUNCH_INITIAL_PASSWORD
+      مضبوط): الخانة تبدأ فارغة ويكتبها المسؤول بنفسه، والتحقق النهائي على
+      الباك-إند (UserCreate).
+
+    لا يحتوي قيمة كلمة المرور نفسها أبدًا.
+    """
+
+    rules_enforced: bool
 
 
 class UserUpdate(BaseModel):

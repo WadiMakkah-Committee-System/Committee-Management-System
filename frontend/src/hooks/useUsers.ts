@@ -49,6 +49,27 @@ export function useUserDetail(userId: string | undefined) {
   })
 }
 
+/**
+ * هل سياسة كلمة المرور مفروضة على كلمة المرور الأولية بنموذج "إضافة مستخدم"؟
+ * (مرحلة ما قبل التدشين — طلب الإدارة 2026-11-12).
+ *
+ * - enabled: يُمرَّر open && !isEdit — لا جلب إلا عند فتح نموذج الإضافة فعليًا
+ *   (نفس نمط useRoleOptions/useJobTitles بنفس المودال).
+ * - مفتاح مستقل عن usersKeys.all عمدًا: إبطال قائمة المستخدمين بعد كل إنشاء
+ *   لا يعيد جلب هذه الحالة بلا داعٍ (تتغير فقط بتغيير متغير بيئة الخادم).
+ * - retry: false — مستخدم بلا users.create يأخذ 403 مرة واحدة، والنموذج
+ *   يرجع للسلوك الطبيعي الآمن (القواعد مفروضة).
+ */
+export function useInitialPasswordPolicy(options: { enabled: boolean }) {
+  return useQuery({
+    queryKey: ['initial-password-policy'] as const,
+    queryFn: usersApi.fetchInitialPasswordPolicy,
+    enabled: options.enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+
 export function useCreateUser() {
   const queryClient = useQueryClient()
   return useMutation({
