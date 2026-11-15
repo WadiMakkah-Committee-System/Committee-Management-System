@@ -38,8 +38,10 @@ from app.models.meeting_minutes import (
 )
 from app.models.role import DEPARTMENT_SCOPES
 from app.models.user import User
-from app.services import committee_service, meeting_service
+from app.services import committee_service, meeting_service, user_signature_service
 from app.services.committee_access import CommitteeAccess
+from app.services.minutes_general import sections as general_sections
+from app.services.minutes_general import snapshot as general_snapshot
 
 # ============================== القوالب الثابتة (Hardcoded) ==============================
 # لا واجهة إدارة قوالب بعد (لمى أجّلت هذا القرار صراحة لمرحلة لاحقة) —
@@ -85,6 +87,27 @@ MINUTES_TEMPLATES: dict[str, dict] = {
         "description": "يربط كل بند من جدول الأعمال بمناقشته وقراره ومهامه — قسم مستقل لكل بند فعلي بالاجتماع.",
         "sections": [],  # ديناميكي — راجعي _build_sections_from_template.
     },
+    # القالب العام (طلب صاحب المشروع 2026-11-15) — بشكل محضر وادي مكة المعتمد.
+    # أقسامه مُهيكلة (kind) وتتزامن مع بيانات الاجتماع حتى تُعدَّل يدويًا —
+    # المنطق كاملًا في app/services/minutes_general (لا في هذا الملف).
+    general_sections.TEMPLATE_ID: {
+        "id": general_sections.TEMPLATE_ID,
+        "name": general_sections.TEMPLATE_NAME,
+        "description": general_sections.TEMPLATE_DESCRIPTION,
+        "sections": [
+            "الترويسة (التاريخ، المكان، الزمان، الموضوع)",
+            "العنوان ورقم الاجتماع",
+            "الفقرة الافتتاحية",
+            "أعضاء اللجنة (الصفة، آلية الحضور، الحالة)",
+            "الحاضرون من خارج اللجنة",
+            "فقرة الافتتاح",
+            "جدول الأعمال",
+            "مناقشة أعضاء اللجنة",
+            "لكل موضوع: الحيثيات والقرار المرقّم",
+            "الختام",
+            "التوقيعات",
+        ],
+    },
 }
 
 
@@ -102,6 +125,17 @@ class MinutesInvalidStateError(Exception):
 
 class MinutesValidationError(Exception):
     """خطأ تحقق من بيانات العمل — تُترجَم إلى 400."""
+
+
+class MinutesSectionConflictError(MinutesInvalidStateError):
+    """
+    تعديل قسم في القالب العام بنسخة قديمة (rev) — تُترجَم إلى 409، وتحمل
+    current_section (نسخة القسم الحالية) حتى تعرضها الواجهة وتعيد التعديل.
+    """
+
+    def __init__(self, message: str, current_section: dict):
+        super().__init__(message)
+        self.current_section = current_section
 
 
 # ============================== تحميل وتحقق الصلاحية ==============================
@@ -468,6 +502,58 @@ def _build_sections_from_template(template_id: str, meeting: Meeting) -> list[di
     ]
 
 
+# ============================== القالب العام: المزامنة ==============================
+
+
+def is_general(minutes: MeetingMinutes | None) -> bool:
+    """هل المحضر مبني على "القالب العام"؟ (أقسامه مُهيكلة وتتزامن مع الاجتماع)."""
+    return minutes is not None and minutes.template_id == general_sections.TEMPLATE_ID
+
+
+async def _lock_minutes_row(db: AsyncSession, meeting_id: uuid.UUID) -> None:
+    """
+    الهدف: قفل صف المحضر (SELECT ... FOR UPDATE) حتى نهاية المعاملة.
+    السبب: الأقسام كلها في عمود JSONB واحد — بدون القفل، حفظان متزامنان
+    لقسمين مختلفين يقرأ كل منهما النسخة نفسها ويكتب فوق الآخر. مع القفل
+    يتسلسلان، والثاني يقرأ نسخة الأول قبل ما يدمج تعديله.
+    """
+    await db.execute(
+        select(MeetingMinutes.minutes_id).where(MeetingMinutes.meeting_id == meeting_id).with_for_update()
+    )
+
+
+async def _sync_general(
+    db: AsyncSession, *, minutes: MeetingMinutes, meeting: Meeting, committee: Committee
+) -> bool:
+    """
+    الهدف: تحديث الأجزاء التلقائية في محضر "القالب العام" من بيانات الاجتماع
+    الحالية (الحضور، الضيوف، البنود، وقت الانتهاء...) وحفظها لو تغيّرت.
+
+    القواعد: فقط أثناء التحضير (preparing) — بعد الاعتماد المحضر مُجمَّد. الحقول
+    المعدّلة يدويًا لا تتغير (راجعي minutes_general/sections.py).
+
+    المخرجات: True لو تغيّر شيء وانحفظ (المستدعي يبثّه لبقية الحاضرين).
+    التأثيرات الجانبية: قد يكتب meeting_minutes.sections (بقفل الصف) — بدون commit.
+    """
+    if not is_general(minutes) or minutes.stage != MeetingMinutesStage.preparing:
+        return False
+    snap = await general_snapshot.load_snapshot(db, meeting, committee)
+    synced = general_sections.sync_sections(minutes.sections, snap)
+    if synced == minutes.sections:
+        return False
+    # تغيّر شيء: نقفل الصف ونعيد الحساب على أحدث نسخة (ممكن أحد حفظ بينهما).
+    await _lock_minutes_row(db, meeting.meeting_id)
+    await db.refresh(minutes, attribute_names=["sections", "stage"])
+    if minutes.stage != MeetingMinutesStage.preparing:
+        return False
+    synced = general_sections.sync_sections(minutes.sections, snap)
+    if synced == minutes.sections:
+        return False
+    minutes.sections = synced
+    await db.flush()
+    return True
+
+
 async def select_template(
     db: AsyncSession, *, meeting_id: uuid.UUID, actor: User, template_id: str
 ) -> MeetingMinutes:
@@ -494,7 +580,12 @@ async def select_template(
         raise MinutesInvalidStateError("لا يمكن تغيير القالب بعد إرسال المحضر للمراجعة")
 
     minutes.template_id = template_id
-    minutes.sections = _build_sections_from_template(template_id, meeting)
+    if template_id == general_sections.TEMPLATE_ID:
+        # القالب العام: يُبنى من بيانات الاجتماع الحالية ويتزامن معها لاحقًا.
+        snap = await general_snapshot.load_snapshot(db, meeting, committee)
+        minutes.sections = general_sections.sync_sections(None, snap)
+    else:
+        minutes.sections = _build_sections_from_template(template_id, meeting)
     minutes.stage = MeetingMinutesStage.preparing
     if minutes.owner_user_id is None:
         minutes.owner_user_id = actor.user_id
@@ -525,6 +616,10 @@ async def get_or_create_minutes(db: AsyncSession, *, meeting_id: uuid.UUID, acto
 
     minutes = await _load_minutes_row(db, meeting_id)
     if minutes is not None:
+        # القالب العام: تحديث الأجزاء التلقائية قبل العرض (راجعي _sync_general).
+        if await _sync_general(db, minutes=minutes, meeting=meeting, committee=committee):
+            minutes = await _load_minutes_or_404(db, meeting_id)
+            await db.commit()
         return minutes
 
     _require_meeting_finished(meeting)
@@ -617,6 +712,13 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
         minutes = await _load_minutes_or_404(db, meeting_id)
         await db.commit()
 
+    # القالب العام: تحديث الأجزاء التلقائية من الاجتماع (الحضور، الضيوف،
+    # البنود، وقت الانتهاء) — synced=True يبلّغ الراوت يبثّ النسخة الجديدة.
+    synced = await _sync_general(db, minutes=minutes, meeting=meeting, committee=committee)
+    if synced:
+        minutes = await _load_minutes_or_404(db, meeting_id)
+        await db.commit()
+
     templates = (
         list_templates()
         if meeting.status in MINUTES_AVAILABLE_STATUSES
@@ -638,6 +740,7 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
         "templates": templates,
         "extracted_items": extracted_items,
         "can_edit": can_edit,
+        "synced": synced,
     }
 
 
@@ -772,12 +875,74 @@ async def update_sections(
     if minutes.stage != MeetingMinutesStage.preparing:
         raise MinutesInvalidStateError("لا يمكن تعديل المحضر في مرحلته الحالية")
 
+    if is_general(minutes):
+        # القالب العام: دمج مع المخزَّن (قفل الحقول المعدّلة، تسجيل المحذوف،
+        # فحص rev) بدل الاستبدال الأعمى — راجعي merge_user_sections.
+        await _lock_minutes_row(db, meeting_id)
+        await db.refresh(minutes, attribute_names=["sections", "stage"])
+        if minutes.stage != MeetingMinutesStage.preparing:
+            raise MinutesInvalidStateError("لا يمكن تعديل المحضر في مرحلته الحالية")
+        try:
+            sections = general_sections.merge_user_sections(list(minutes.sections or []), sections)
+        except general_sections.SectionConflictError as exc:
+            raise MinutesSectionConflictError(str(exc), exc.current) from exc
+        except general_sections.SectionsValidationError as exc:
+            raise MinutesValidationError(str(exc)) from exc
+
     minutes.sections = sections
     # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
     await db.flush()
     result = await _load_minutes_or_404(db, meeting_id)
     await db.commit()
     return result
+
+
+async def update_section(
+    db: AsyncSession, *, meeting_id: uuid.UUID, actor: User, section: dict
+) -> tuple[MeetingMinutes, dict]:
+    """
+    الهدف: حفظ قسم واحد فقط من محضر "القالب العام" (الحفظ الأساسي أثناء
+    التحرير الجماعي) — تعديلان متزامنان على قسمين مختلفين لا يمسح أحدهما الآخر.
+
+    المدخلات:
+    - meeting_id، actor.
+    - section: القسم المعدّل كما أرسلته الواجهة (id، kind، rev الحالي، data).
+
+    الصلاحيات: minutes.update على لجنة الاجتماع (مثل الحفظ الكامل).
+
+    قواعد العمل:
+    - المحضر بمرحلة التحضير (preparing) فقط.
+    - rev لازم يطابق المخزَّن، وإلا 409 مع نسخة القسم الحالية.
+    - الحقول التلقائية اللي غيّرها المستخدم تُقفل عن المزامنة.
+
+    المخرجات: (المحضر بعد الحفظ، القسم المحفوظ).
+    التأثيرات الجانبية: يكتب meeting_minutes.sections بقفل الصف.
+    الأخطاء: MinutesNotFoundError، MinutesForbiddenError، MinutesInvalidStateError،
+    MinutesSectionConflictError، MinutesValidationError.
+    """
+    meeting, committee = await _load_meeting_and_committee(db, meeting_id)
+    await _require_access(db, actor, committee, "minutes.update", "ليست لديك صلاحية تعديل محتوى المحضر")
+
+    await _lock_minutes_row(db, meeting_id)
+    minutes = await _load_minutes_or_404(db, meeting_id)
+    await db.refresh(minutes, attribute_names=["sections", "stage", "template_id"])
+    if minutes.stage != MeetingMinutesStage.preparing:
+        raise MinutesInvalidStateError("لا يمكن تعديل المحضر في مرحلته الحالية")
+    if not is_general(minutes):
+        raise MinutesValidationError("حفظ القسم الواحد متاح لمحاضر القالب العام فقط")
+
+    try:
+        sections, saved = general_sections.apply_user_section_update(list(minutes.sections or []), section)
+    except general_sections.SectionConflictError as exc:
+        raise MinutesSectionConflictError(str(exc), exc.current) from exc
+    except general_sections.SectionsValidationError as exc:
+        raise MinutesValidationError(str(exc)) from exc
+
+    minutes.sections = sections
+    await db.flush()
+    result = await _load_minutes_or_404(db, meeting_id)
+    await db.commit()
+    return result, saved
 
 
 # ============================== المراجعة ==============================
@@ -908,8 +1073,30 @@ async def send_for_signature(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
 
 
 async def sign_minutes(
-    db: AsyncSession, *, meeting_id: uuid.UUID, actor: User, signature_image: str
+    db: AsyncSession,
+    *,
+    meeting_id: uuid.UUID,
+    actor: User,
+    signature_image: str | None,
+    use_saved: bool = False,
+    save_for_later: bool = False,
 ) -> MeetingMinutes:
+    """
+    الهدف: توقيع العضو على المحضر — برسم توقيعه الآن، أو بتوقيعه المحفوظ في
+    المنصة (القالب العام — قرار صاحب المشروع 2026-11-15؛ يعمل لكل القوالب).
+
+    المدخلات:
+    - signature_image: صورة التوقيع المرسوم (PNG data URL)، أو None مع use_saved.
+    - use_saved: يستخدم توقيع actor المحفوظ — يُقرأ من الخادم فقط، ولا تُقبل
+      صورة "محفوظة" من الواجهة.
+    - save_for_later: مع الرسم — يحفظ الرسم كتوقيع محفوظ للمرات الجاية.
+
+    الصلاحيات: minutes.sign، والموقّع لازم يكون ضمن موقّعي المحضر.
+    التأثيرات الجانبية: يكتب meeting_minutes_signatures (وuser_saved_signatures
+    مع save_for_later)، ويكمل المحضر لو اكتملت كل التوقيعات.
+    الأخطاء: MinutesForbiddenError، MinutesInvalidStateError،
+    MinutesValidationError (لا توقيع محفوظ / صورة غير صالحة).
+    """
     meeting, committee = await _load_meeting_and_committee(db, meeting_id)
     await _require_access(db, actor, committee, "minutes.sign", "ليست لديك صلاحية التوقيع على هذا المحضر")
 
@@ -920,6 +1107,21 @@ async def sign_minutes(
     signature_row = next((s for s in minutes.signatures if s.user_id == actor.user_id), None)
     if signature_row is None:
         raise MinutesForbiddenError("لست ضمن الموقّعين المتوقَّعين لهذا المحضر")
+
+    if use_saved:
+        saved = await user_signature_service.get_saved_signature_image(db, user_id=actor.user_id)
+        if saved is None:
+            raise MinutesValidationError("ما عندك توقيع محفوظ — ارسم توقيعك أو احفظه من ملفك الشخصي")
+        signature_image = saved
+    elif signature_image is None:
+        raise MinutesValidationError("ارسم توقيعك أو اختر توقيعك المحفوظ")
+    elif save_for_later:
+        try:
+            await user_signature_service.upsert_saved_signature(db, actor=actor, signature_image=signature_image)
+        except user_signature_service.SignatureValidationError as exc:
+            raise MinutesValidationError(str(exc)) from exc
+        except user_signature_service.SignatureForbiddenError as exc:
+            raise MinutesForbiddenError(str(exc)) from exc
 
     signature_row.signature_image = signature_image
     signature_row.signed_at = datetime.now(UTC)
@@ -970,6 +1172,23 @@ async def get_minutes_pdf(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
     if not await CommitteeAccess(db, actor).has(committee, "minutes.view"):
         raise MinutesForbiddenError("ليست لديك صلاحية لعرض محضر هذا الاجتماع")
     minutes = await _load_minutes_or_404(db, meeting_id)
+
+    if is_general(minutes):
+        # القالب العام: ملف بشكل محضر وادي مكة المعتمد (minutes_general/pdf.py).
+        # أثناء التحضير تُطبَّق المزامنة بالذاكرة فقط (طلب قراءة — لا كتابة).
+        from app.services.minutes_general.pdf import GeneralMinutesPdfData, build_general_minutes_pdf
+
+        sections = list(minutes.sections or [])
+        if minutes.stage == MeetingMinutesStage.preparing:
+            snap = await general_snapshot.load_snapshot(db, meeting, committee)
+            sections = general_sections.sync_sections(sections, snap)
+        general_data = GeneralMinutesPdfData(
+            document_title=f"محضر {meeting.title}",
+            sections=sections,
+            signatures={str(s.user_id): s.signature_image for s in minutes.signatures if s.signed_at is not None},
+        )
+        content = await asyncio.to_thread(build_general_minutes_pdf, general_data)
+        return f"محضر - {meeting.title}.pdf", content
 
     data = MinutesPdfData(
         committee_name=committee.name,

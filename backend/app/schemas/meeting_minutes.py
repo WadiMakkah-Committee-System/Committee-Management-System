@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.meeting import MeetingMode, MeetingStatus
 from app.schemas.committee import CommitteeMemberUserOut
@@ -18,7 +18,22 @@ from app.schemas.meeting_extracted_item import MeetingExtractedItemOut
 
 MeetingMinutesStageOut = Literal["none", "preparing", "review", "approval", "signature", "completed"]
 MeetingMinutesReviewStatusOut = Literal["pending", "approved", "returned"]
-MinutesTemplateId = Literal["executive", "formal", "detailed"]
+MinutesTemplateId = Literal["executive", "formal", "detailed", "general"]
+#: أنواع أقسام المحضر — "text" للقوالب القديمة، والباقي لأقسام "القالب العام"
+#: المُهيكلة (راجعي app/services/minutes_general/sections.py).
+MinutesSectionKind = Literal[
+    "text",
+    "header",
+    "title",
+    "rich",
+    "members_table",
+    "guests_table",
+    "agenda_table",
+    "topic",
+    "closing",
+    "signatures",
+    "meta",
+]
 
 
 class MinutesSection(BaseModel):
@@ -30,6 +45,13 @@ class MinutesSection(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     body: str = ""
     order: int = 0
+    #: نوع القسم — القوالب القديمة "text" (title/body فقط). أقسام القالب العام
+    #: مُهيكلة: محتواها في data، ويتحقق منه الخادم حسب النوع
+    #: (minutes_general/sections.py) — لا يُقبل أي حقل خارج المعرّف لكل نوع.
+    kind: MinutesSectionKind = "text"
+    data: dict | None = None
+    #: رقم مراجعة القسم (القالب العام) — يرجع للخادم مع التعديل، ونسخة قديمة ⇒ 409.
+    rev: int = 0
 
 
 class MinutesTemplateOut(BaseModel):
@@ -202,8 +224,31 @@ class ReviewDecisionIn(BaseModel):
     comment: str | None = Field(default=None, max_length=1000)
 
 
+class UpdateSectionIn(BaseModel):
+    """حفظ قسم واحد من محضر "القالب العام" (PATCH) — section يحمل rev الحالي."""
+
+    section: MinutesSection
+
+
 class SignMinutesIn(BaseModel):
     """توقيع إلكتروني — صورة Base64 (PNG) من react-signature-canvas
-    بالفرونت-إند (توقيع فعلي مرسوم، وليس مجرد علم "تم")."""
+    بالفرونت-إند (توقيع فعلي مرسوم، وليس مجرد علم "تم")، أو التوقيع المحفوظ.
 
-    signature_image: str = Field(min_length=10)
+    - signature_image: التوقيع المرسوم الآن.
+    - use_saved: استخدام التوقيع المحفوظ في المنصة (يقرؤه الخادم — لا تُرسل صورته).
+    - save_for_later: مع الرسم — احفظه للمرات الجاية.
+    لازم مصدر واحد بالضبط: رسم أو محفوظ.
+    """
+
+    signature_image: str | None = Field(default=None, min_length=10)
+    use_saved: bool = False
+    save_for_later: bool = False
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "SignMinutesIn":
+        """الهدف: رسم أو محفوظ (واحد فقط)، وخيار الحفظ مع الرسم فقط."""
+        if self.use_saved == (self.signature_image is not None):
+            raise ValueError("ارسم توقيعك أو اختر التوقيع المحفوظ (واحد فقط)")
+        if self.save_for_later and self.use_saved:
+            raise ValueError("خيار الحفظ متاح مع التوقيع المرسوم فقط")
+        return self
