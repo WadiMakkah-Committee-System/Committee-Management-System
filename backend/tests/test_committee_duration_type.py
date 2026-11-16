@@ -2,13 +2,16 @@
 اختبارات "نوع مدة اللجنة" (دائمة/مؤقتة) — db/migrations/0037_committee_duration_type.sql،
 طلب صاحبة المشروع 2026-10-29.
 
+تحديث migration 0050 (قرار لاما 2026-11-16): الدائمة صار لها تاريخ بداية
+ونهاية إلزاميان مثل المؤقتة (وتُمدَّد من داخل اللجنة) — الدائمة القديمة بلا
+تواريخ تبقى صالحة.
+
 تغطي:
-- إنشاء طلب دائم بلا تواريخ، وتمرير النوع للجنة عند الاعتماد (جارية دائمًا).
-- رفض الدائمة مع تواريخ، ورفض المؤقتة بلا تواريخ.
-- تغيير النوع أثناء التعديل قبل الاعتماد (مسح التواريخ عند التحويل لدائمة،
-  واشتراطها عند التحويل لمؤقتة).
-- النوع ثابت بعد الاعتماد: لا تعديل لفترة لجنة دائمة.
-- فحوص فترة اللجنة (app/core/committee_period.py) تقبل أي تاريخ للدائمة.
+- إنشاء طلب دائم بتواريخ، وتمرير النوع والتواريخ للجنة عند الاعتماد.
+- رفض الدائمة بلا تواريخ، ورفض المؤقتة بلا تواريخ.
+- تغيير النوع أثناء التعديل قبل الاعتماد يحتفظ بالتواريخ.
+- فترة اللجنة الدائمة قابلة للتعديل بعد الاعتماد.
+- فحوص فترة اللجنة (app/core/committee_period.py) تقبل أي تاريخ للدائمة القديمة بلا فترة.
 - السلوك القديم (بلا duration_type) يبقى مؤقتًا كما كان.
 """
 
@@ -28,11 +31,13 @@ from tests.test_committees import _setup_actors
 
 
 def _permanent_payload(member_id: str, *, name: str = "لجنة دائمة") -> dict:
-    """حمولة طلب لجنة دائمة صالحة — بلا أي تاريخ."""
+    """حمولة طلب لجنة دائمة صالحة — بتاريخ بداية ونهاية (migration 0050)."""
     return {
         "committee_name": name,
         "statement": "بيان اللجنة",
         "duration_type": "permanent",
+        "start_date": "2026-09-01",
+        "end_date": "2027-09-01",
         "proposed_member_ids": [member_id],
         "chair_user_id": member_id,
     }
@@ -49,7 +54,7 @@ async def _approve(client: AsyncClient, actors: dict, request_id: str) -> str:
     return approve.json()["committee_id"]
 
 
-async def test_permanent_request_has_no_dates_and_committee_is_always_ongoing(
+async def test_permanent_request_keeps_dates_and_committee_follows_them(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:
     actors = await _setup_actors(client, auth_headers, roles_by_name)
@@ -62,8 +67,8 @@ async def test_permanent_request_has_no_dates_and_committee_is_always_ongoing(
     assert create.status_code == 201, create.text
     body = create.json()
     assert body["duration_type"] == "permanent"
-    assert body["start_date"] is None
-    assert body["end_date"] is None
+    assert body["start_date"] == "2026-09-01"
+    assert body["end_date"] == "2027-09-01"
 
     committee_id = await _approve(client, actors, body["request_id"])
 
@@ -71,17 +76,17 @@ async def test_permanent_request_has_no_dates_and_committee_is_always_ongoing(
     assert detail.status_code == 200, detail.text
     committee = detail.json()
     assert committee["duration_type"] == "permanent"
-    assert committee["start_date"] is None
-    assert committee["end_date"] is None
-    assert committee["lifecycle_state"] == "ongoing"
+    assert committee["start_date"] == "2026-09-01"
+    assert committee["end_date"] == "2027-09-01"
 
 
-async def test_permanent_request_with_dates_is_rejected(
+async def test_permanent_request_without_dates_is_rejected(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
     actors = await _setup_actors(client, auth_headers, roles_by_name)
     payload = _permanent_payload(actors["member_id"])
-    payload["start_date"] = "2026-09-01"
+    del payload["start_date"]
+    del payload["end_date"]
     response = await client.post(
         "/api/v1/committee-requests", json=payload, headers=actors["admin_headers"]
     )
@@ -94,7 +99,7 @@ async def test_temporary_request_without_dates_is_rejected(
     actors = await _setup_actors(client, auth_headers, roles_by_name)
     payload = _permanent_payload(actors["member_id"])
     payload["duration_type"] = "temporary"
-    payload["end_date"] = "2026-12-01"  # بلا start_date
+    del payload["start_date"]  # بلا start_date
     response = await client.post(
         "/api/v1/committee-requests", json=payload, headers=actors["admin_headers"]
     )
@@ -121,7 +126,7 @@ async def test_request_without_duration_type_defaults_to_temporary(
     assert response.json()["end_date"] == "2026-12-01"
 
 
-async def test_switching_type_on_draft_clears_or_requires_dates(
+async def test_switching_type_on_draft_keeps_dates(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
 ) -> None:
     actors = await _setup_actors(client, auth_headers, roles_by_name)
@@ -140,7 +145,7 @@ async def test_switching_type_on_draft_clears_or_requires_dates(
     assert create.status_code == 201, create.text
     request_id = create.json()["request_id"]
 
-    # مؤقتة → دائمة: التواريخ المحفوظة تُمسح.
+    # مؤقتة → دائمة: التواريخ المحفوظة تبقى (migration 0050).
     to_permanent = await client.patch(
         f"/api/v1/committee-requests/{request_id}",
         json={"duration_type": "permanent"},
@@ -148,16 +153,8 @@ async def test_switching_type_on_draft_clears_or_requires_dates(
     )
     assert to_permanent.status_code == 200, to_permanent.text
     assert to_permanent.json()["duration_type"] == "permanent"
-    assert to_permanent.json()["start_date"] is None
-    assert to_permanent.json()["end_date"] is None
-
-    # دائمة → مؤقتة بلا تواريخ: مرفوض (لا تواريخ محفوظة نرجع لها).
-    missing_dates = await client.patch(
-        f"/api/v1/committee-requests/{request_id}",
-        json={"duration_type": "temporary"},
-        headers=actors["admin_headers"],
-    )
-    assert missing_dates.status_code == 400, missing_dates.text
+    assert to_permanent.json()["start_date"] == "2026-09-01"
+    assert to_permanent.json()["end_date"] == "2026-12-01"
 
     # دائمة → مؤقتة مع تواريخ: مقبول.
     to_temporary = await client.patch(
@@ -170,10 +167,10 @@ async def test_switching_type_on_draft_clears_or_requires_dates(
     assert to_temporary.json()["start_date"] == "2026-10-01"
 
 
-async def test_permanent_committee_period_cannot_be_edited_after_approval(
+async def test_permanent_committee_period_can_be_edited_after_approval(
     client: AsyncClient, auth_headers, roles_by_name: dict[str, str], super_admin_user: User
 ) -> None:
-    """النوع ثابت بعد الاعتماد — شاشة "تعديل فترة اللجنة" ترفض اللجنة الدائمة."""
+    """migration 0050: فترة الدائمة قابلة للتعديل بعد الاعتماد (والنوع يبقى دائمًا)."""
     actors = await _setup_actors(client, auth_headers, roles_by_name)
     create = await client.post(
         "/api/v1/committee-requests",
@@ -184,14 +181,12 @@ async def test_permanent_committee_period_cannot_be_edited_after_approval(
 
     response = await client.patch(
         f"/api/v1/committees/{committee_id}",
-        json={"start_date": "2026-09-01", "end_date": "2026-12-01"},
+        json={"end_date": "2028-01-01"},
         headers=auth_headers,
     )
-    assert response.status_code == 400, response.text
-
-    detail = await client.get(f"/api/v1/committees/{committee_id}", headers=auth_headers)
-    assert detail.json()["duration_type"] == "permanent"
-    assert detail.json()["end_date"] is None
+    assert response.status_code == 200, response.text
+    assert response.json()["duration_type"] == "permanent"
+    assert response.json()["end_date"] == "2028-01-01"
 
 
 @pytest.mark.parametrize("value", [date(2000, 1, 1), date(2099, 12, 31)])

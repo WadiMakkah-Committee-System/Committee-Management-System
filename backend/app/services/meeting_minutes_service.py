@@ -957,7 +957,7 @@ async def submit_review(
     comment: str | None,
 ) -> MeetingMinutes:
     meeting, committee = await _load_meeting_and_committee(db, meeting_id)
-    await _require_access(db, actor, committee, "minutes.approve", "ليست لديك صلاحية اعتماد المراجعة")
+    await _require_access(db, actor, committee, "minutes.review", "ليست لديك صلاحية مراجعة المحضر")
 
     minutes = await _load_minutes_or_404(db, meeting_id)
     if minutes.stage != MeetingMinutesStage.preparing:
@@ -1024,7 +1024,7 @@ async def return_for_edit(
     فما فيه مرحلة "اعتماد" وسيطة يُنتظر فيها الرد — الإعادة هنا تلغي
     اعتمادًا سابقًا وترجّع المحضر قابلًا للتعديل من جديد)."""
     meeting, committee = await _load_meeting_and_committee(db, meeting_id)
-    await _require_access(db, actor, committee, "minutes.approve", "ليست لديك صلاحية إعادة المحضر للتعديل")
+    await _require_access(db, actor, committee, "minutes.return", "ليست لديك صلاحية إعادة المحضر للتعديل")
 
     minutes = await _load_minutes_or_404(db, meeting_id)
     if minutes.stage not in (MeetingMinutesStage.approval, MeetingMinutesStage.signature):
@@ -1052,7 +1052,7 @@ async def send_for_signature(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
     meeting, committee = await _load_meeting_and_committee(
         db, meeting_id, with_committee_members=True
     )
-    await _require_access(db, actor, committee, "minutes.approve", "ليست لديك صلاحية إرسال المحضر للتوقيع")
+    await _require_access(db, actor, committee, "minutes.send_signature", "ليست لديك صلاحية إرسال المحضر للتوقيع")
 
     minutes = await _load_minutes_or_404(db, meeting_id)
     if minutes.stage != MeetingMinutesStage.signature:
@@ -1169,8 +1169,9 @@ async def get_minutes_pdf(db: AsyncSession, *, meeting_id: uuid.UUID, actor: Use
     )
 
     meeting, committee = await _load_meeting_and_committee(db, meeting_id, with_participants=True)
-    if not await CommitteeAccess(db, actor).has(committee, "minutes.view"):
-        raise MinutesForbiddenError("ليست لديك صلاحية لعرض محضر هذا الاجتماع")
+    # migration 0050: تنزيل PDF المحضر بكوده المستقل minutes.export (كان minutes.view).
+    if not await CommitteeAccess(db, actor).has(committee, "minutes.export"):
+        raise MinutesForbiddenError("ليست لديك صلاحية تنزيل محضر هذا الاجتماع")
     minutes = await _load_minutes_or_404(db, meeting_id)
 
     if is_general(minutes):

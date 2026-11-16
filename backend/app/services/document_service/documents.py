@@ -211,7 +211,8 @@ async def create_document(
         if (
             category.scope == "department"
             and not actor.is_super_admin
-            and category.department_id != actor.dep_id
+            # تصنيف الإدارة الأم يشمل إداراتها التابعة تلقائيًا (لاما 2026-11-16).
+            and category.department_id not in actor.department_and_parent_ids()
         ):
             raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
 
@@ -310,7 +311,8 @@ async def update_document(
             if (
                 resolved_category.scope == "department"
                 and not actor.is_super_admin
-                and resolved_category.department_id != actor.dep_id
+                # تصنيف الإدارة الأم يشمل إداراتها التابعة تلقائيًا (لاما 2026-11-16).
+                and resolved_category.department_id not in actor.department_and_parent_ids()
             ):
                 raise DocumentValidationError("لا يمكن استخدام تصنيف خاص بإدارة غير إدارتك")
         else:

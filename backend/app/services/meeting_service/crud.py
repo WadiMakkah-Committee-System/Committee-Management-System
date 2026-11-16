@@ -320,7 +320,7 @@ async def extend_meeting(
     meeting = await load_meeting(db, meeting_id)
     committee = meeting.committee
     await _require_access(
-        db, actor, committee, "meetings.update", "ليست لديك صلاحية تمديد هذا الاجتماع"
+        db, actor, committee, "meetings.extend", "ليست لديك صلاحية تمديد هذا الاجتماع"
     )
 
     if meeting.status not in (MeetingStatus.upcoming, MeetingStatus.ongoing):

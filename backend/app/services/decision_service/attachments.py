@@ -47,7 +47,7 @@ async def add_attachment(
     decision = await load_decision(db, decision_id)
     committee = decision.committee  # محمَّلة مع القرار (loading.decision_options)
     await _require_access(
-        access, committee, "decisions.create", "ليست لديك صلاحية إرفاق ملف بهذا القرار"
+        access, committee, "decisions.attachments.add", "ليست لديك صلاحية إرفاق ملف بهذا القرار"
     )
 
     # الوثيقة تُرى افتراضيًا من أعضاء اللجنة نفسها (visible_committees) —

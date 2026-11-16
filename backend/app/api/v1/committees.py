@@ -34,6 +34,12 @@ from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
 from app.models.role import BROAD_SCOPES
 from app.schemas.committee import (
+    CommitteeCapabilitiesOut,
+    CommitteeChangeOut,
+    CommitteeExtendIn,
+    CommitteeMemberChangeIn,
+    CommitteeMemberRemoveIn,
+    ProposedMemberOut,
     CommitteeFormationRequestCreate,
     CommitteeFormationRequestOut,
     CommitteeFormationRequestUpdate,
@@ -44,7 +50,7 @@ from app.schemas.committee import (
     DepartmentMemberElsewhereOut,
 )
 from app.schemas.user import UserOut
-from app.services import committee_service, notification_service, user_service
+from app.services import committee_membership_service, committee_service, notification_service, user_service
 from app.services.committee_service import (
     CommitteeForbiddenError,
     CommitteeNotFoundError,
@@ -512,3 +518,145 @@ async def reject_committee_request(
         )
     )
     return CommitteeFormationRequestOut.model_validate(request)
+
+
+# =====================================================================
+# تعديل عضوية اللجنة الدائمة + تمديد الفترة + سجل التغييرات (migration 0050
+# — طلب لاما 2026-11-16). الصلاحيات تُفحص بالخدمة (نظامي أو دور لجنة) —
+# راجعي app/services/committee_membership_service.py.
+# =====================================================================
+
+
+@committees_router.get("/{committee_id}/capabilities", response_model=CommitteeCapabilitiesOut)
+async def get_committee_capabilities(
+    committee_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> CommitteeCapabilitiesOut:
+    """GET وش يقدر المستخدم الحالي يسوي على اللجنة — لإظهار الأزرار فقط."""
+    try:
+        caps = await committee_membership_service.capabilities(db, actor=current_user, committee_id=committee_id)
+    except CommitteeNotFoundError as exc:
+        raise _handle_errors(exc) from exc
+    return CommitteeCapabilitiesOut(**caps)
+
+
+@committees_router.get("/{committee_id}/changes", response_model=list[CommitteeChangeOut])
+async def list_committee_changes(
+    committee_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[CommitteeChangeOut]:
+    """
+    GET سجل تغييرات اللجنة (الأحدث أولًا). 403 لمن لا يقدر يشوف اللجنة.
+    """
+    try:
+        changes = await committee_membership_service.list_changes(
+            db, actor=current_user, committee_id=committee_id
+        )
+    except (CommitteeNotFoundError, CommitteeForbiddenError) as exc:
+        raise _handle_errors(exc) from exc
+    return [CommitteeChangeOut.model_validate(c) for c in changes]
+
+
+@committees_router.get("/{committee_id}/member-candidates", response_model=list[ProposedMemberOut])
+async def list_committee_member_candidates(
+    committee_id: uuid.UUID, current_user: CurrentUser, db: AsyncSession = Depends(get_db)
+) -> list[ProposedMemberOut]:
+    """GET المستخدمون المتاحون للإضافة (غير الأعضاء) — يتطلب committees.members.add."""
+    try:
+        users = await committee_membership_service.list_member_candidates(
+            db, actor=current_user, committee_id=committee_id
+        )
+    except (CommitteeNotFoundError, CommitteeForbiddenError) as exc:
+        raise _handle_errors(exc) from exc
+    return [ProposedMemberOut.model_validate(u) for u in users]
+
+
+@committees_router.post("/{committee_id}/members", response_model=CommitteeOut)
+async def add_committee_member(
+    committee_id: uuid.UUID,
+    payload: CommitteeMemberChangeIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CommitteeOut:
+    """
+    POST إضافة عضو للجنة دائمة — committees.members.add.
+    400: لجنة مؤقتة/عضو أصلًا/مستخدم غير صالح. 403: بلا صلاحية. 404: اللجنة.
+    """
+    if payload.user_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="اختر العضو")
+    try:
+        committee = await committee_membership_service.add_member(
+            db, actor=current_user, committee_id=committee_id, user_id=payload.user_id, reason=payload.reason
+        )
+    except (CommitteeNotFoundError, CommitteeForbiddenError, ValueError) as exc:
+        raise _handle_errors(exc) from exc
+    return CommitteeOut.model_validate(committee)
+
+
+@committees_router.post("/{committee_id}/members/{user_id}/remove", response_model=CommitteeOut)
+async def remove_committee_member(
+    committee_id: uuid.UUID,
+    user_id: uuid.UUID,
+    payload: CommitteeMemberRemoveIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CommitteeOut:
+    """POST حذف عضو من لجنة دائمة — committees.members.remove (الرئيس لا يُحذف مباشرة)."""
+    try:
+        committee = await committee_membership_service.remove_member(
+            db, actor=current_user, committee_id=committee_id, user_id=user_id, reason=payload.reason
+        )
+    except (CommitteeNotFoundError, CommitteeForbiddenError, ValueError) as exc:
+        raise _handle_errors(exc) from exc
+    return CommitteeOut.model_validate(committee)
+
+
+@committees_router.put("/{committee_id}/chair", response_model=CommitteeOut)
+async def change_committee_chair(
+    committee_id: uuid.UUID,
+    payload: CommitteeMemberChangeIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CommitteeOut:
+    """PUT تعيين رئيس جديد (من الأعضاء) للجنة دائمة — committees.members.roles."""
+    if payload.user_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="اختر الرئيس الجديد")
+    try:
+        committee = await committee_membership_service.change_chair(
+            db, actor=current_user, committee_id=committee_id, user_id=payload.user_id, reason=payload.reason
+        )
+    except (CommitteeNotFoundError, CommitteeForbiddenError, ValueError) as exc:
+        raise _handle_errors(exc) from exc
+    return CommitteeOut.model_validate(committee)
+
+
+@committees_router.put("/{committee_id}/secretary", response_model=CommitteeOut)
+async def change_committee_secretary(
+    committee_id: uuid.UUID,
+    payload: CommitteeMemberChangeIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CommitteeOut:
+    """PUT تعيين أمين سر (من الأعضاء) أو إلغاؤه (user_id=null) — committees.members.roles."""
+    try:
+        committee = await committee_membership_service.change_secretary(
+            db, actor=current_user, committee_id=committee_id, user_id=payload.user_id, reason=payload.reason
+        )
+    except (CommitteeNotFoundError, CommitteeForbiddenError, ValueError) as exc:
+        raise _handle_errors(exc) from exc
+    return CommitteeOut.model_validate(committee)
+
+
+@committees_router.post("/{committee_id}/extend", response_model=CommitteeOut)
+async def extend_committee(
+    committee_id: uuid.UUID,
+    payload: CommitteeExtendIn,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CommitteeOut:
+    """POST تمديد نهاية فترة اللجنة — committees.extend. 400 لو النهاية الجديدة ليست بعد الحالية."""
+    try:
+        committee = await committee_membership_service.extend_committee(
+            db, actor=current_user, committee_id=committee_id, end_date=payload.end_date, reason=payload.reason
+        )
+    except (CommitteeNotFoundError, CommitteeForbiddenError, ValueError) as exc:
+        raise _handle_errors(exc) from exc
+    return CommitteeOut.model_validate(committee)

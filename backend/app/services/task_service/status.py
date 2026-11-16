@@ -15,7 +15,7 @@ from app.services.task_service.access import (
     _require_object_scoped_access,
     _validate_assignee_membership,
 )
-from app.services.task_service.codes import _STATUS_UPDATE, _UPDATE
+from app.services.task_service.codes import _REASSIGN, _STATUS_UPDATE
 from app.services.task_service.errors import TaskInvalidStateError
 from app.services.task_service.loading import load_task
 
@@ -68,7 +68,7 @@ async def reassign_task(
     access = CommitteeAccess(db, actor)
     task = await load_task(db, task_id, with_members=True)
     committee = task.committee  # محمَّلة مع المهمة (loading.task_options)
-    await _require_access(access, committee, _UPDATE, "ليست لديك صلاحية إعادة إسناد هذه المهمة"
+    await _require_access(access, committee, _REASSIGN, "ليست لديك صلاحية إعادة إسناد هذه المهمة"
     )
 
     if task.status == TaskStatus.completed:

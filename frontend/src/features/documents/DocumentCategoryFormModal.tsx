@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import type { Department, DocumentCategory, DocumentCategoryScope } from '@/types'
+import { departmentHierarchyOptions } from '@/lib/utils'
 
 const schema = z
   .object({
@@ -33,6 +34,8 @@ interface DocumentCategoryFormModalProps {
   onClose: () => void
   category?: DocumentCategory | null
   departments: Department[]
+  /** كل الإدارات (لمعرفة الإدارة الأم وتوابعها في أسماء الخيارات). */
+  allDepartments?: Department[]
   /** يحدّد قيم "النطاق" المتاحة عند الإنشاء حسب صلاحيات المستخدم الفعلية فقط. */
   allowGlobal: boolean
   allowDepartment: boolean
@@ -51,6 +54,7 @@ export function DocumentCategoryFormModal({
   onClose,
   category,
   departments,
+  allDepartments,
   allowGlobal,
   allowDepartment,
   onSubmit,
@@ -87,7 +91,12 @@ export function DocumentCategoryFormModal({
     ...(allowDepartment ? [{ value: 'department', label: 'خاص بإدارة معيّنة' }] : []),
   ]
 
-  const departmentOptions = departments.map((d) => ({ value: d.dep_id, label: d.name }))
+  const departmentOptions = departmentHierarchyOptions(departments, allDepartments ?? departments)
+  const selectedDepartmentId = watch('department_id')
+  /** تصنيف إدارة رئيسية يشمل إداراتها التابعة تلقائيًا (طلب لاما 2026-11-16). */
+  const selectedChildren = (allDepartments ?? departments).filter(
+    (d) => !!selectedDepartmentId && d.parent_dep_id === selectedDepartmentId,
+  )
 
   return (
     <Modal
@@ -144,6 +153,11 @@ export function DocumentCategoryFormModal({
                 error={errors.department_id?.message}
                 {...register('department_id')}
               />
+            )}
+            {scope === 'department' && selectedChildren.length > 0 && (
+              <p className="rounded-sm border border-border-default bg-bg-elevated px-3 py-2 text-xs text-text-secondary">
+                يشمل تلقائيًا الإدارات التابعة: {selectedChildren.map((d) => d.name).join('، ')}
+              </p>
             )}
           </>
         )}

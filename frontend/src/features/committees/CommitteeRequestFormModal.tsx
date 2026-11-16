@@ -18,7 +18,8 @@ const schema = z
   .object({
     committee_name: z.string().min(2, 'اسم اللجنة يجب أن يكون حرفين على الأقل').max(200),
     statement: z.string().max(2000).optional(),
-    // دائمة/مؤقتة (الهجرة 0037) — التواريخ إلزامية للمؤقتة فقط (راجعي superRefine أدناه).
+    // دائمة/مؤقتة (الهجرة 0037) — التواريخ إلزامية للنوعين منذ migration 0050
+    // (قرار لاما 2026-11-16: الدائمة لها بداية ونهاية وتُمدَّد من داخل اللجنة).
     duration_type: z.enum(['temporary', 'permanent'], { message: 'يجب اختيار نوع اللجنة' }),
     start_date: z.string().optional(),
     end_date: z.string().optional(),
@@ -31,8 +32,6 @@ const schema = z
     secretary_user_id: z.string().optional(),
   })
   .superRefine((v, ctx) => {
-    // الدائمة بلا تواريخ إطلاقًا — لا تحقق عليها.
-    if (v.duration_type !== 'temporary') return
     if (!v.start_date) ctx.addIssue({ code: 'custom', message: 'تاريخ البداية مطلوب', path: ['start_date'] })
     if (!v.end_date) ctx.addIssue({ code: 'custom', message: 'تاريخ النهاية مطلوب', path: ['end_date'] })
     if (v.start_date && v.end_date && v.end_date <= v.start_date) {
@@ -152,8 +151,8 @@ export function CommitteeRequestFormModal({
       statement: values.statement?.trim() || null,
       duration_type: values.duration_type,
       // الدائمة تُرسَل بلا تواريخ حتى لو عُبّئت قبل تغيير النوع.
-      start_date: values.duration_type === 'temporary' ? values.start_date || null : null,
-      end_date: values.duration_type === 'temporary' ? values.end_date || null : null,
+      start_date: values.start_date || null,
+      end_date: values.end_date || null,
       proposed_member_ids: values.proposed_member_ids,
       chair_user_id: values.chair_user_id,
       secretary_user_id: values.secretary_user_id || null,
@@ -248,9 +247,11 @@ export function CommitteeRequestFormModal({
             {...register('duration_type')}
           />
           {durationType === 'permanent' && (
-            <p className="text-xs text-text-muted">اللجنة الدائمة ليس لها تاريخ بداية أو نهاية.</p>
+            <p className="text-xs text-text-muted">
+              اللجنة الدائمة يمكن تمديد مدتها وتعديل أعضائها من داخل اللجنة بعد اعتمادها.
+            </p>
           )}
-          {durationType === 'temporary' && (
+          {!!durationType && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Controller
                 control={control}

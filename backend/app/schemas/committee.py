@@ -133,12 +133,10 @@ class CommitteeFormationRequestCreate(BaseModel):
         تحقق مبكر (الطبقة الفعلية بالخدمة: committee_service._resolve_period):
         المؤقتة تتطلب بداية ونهاية (النهاية بعد البداية)، والدائمة بلا تواريخ.
         """
-        if self.duration_type == CommitteeDurationType.permanent:
-            if self.start_date is not None or self.end_date is not None:
-                raise ValueError("اللجنة الدائمة لا تحتوي على تاريخ بداية أو نهاية")
-            return self
+        # قرار لاما 2026-11-16 (migration 0050): الدائمة صار لها بداية ونهاية
+        # مثل المؤقتة (وتُمدَّد من داخل اللجنة) — التاريخان إلزاميان للنوعين.
         if self.start_date is None or self.end_date is None:
-            raise ValueError("تاريخ البداية والنهاية مطلوبان للجنة المؤقتة")
+            raise ValueError("تاريخ البداية والنهاية مطلوبان")
         if self.end_date <= self.start_date:
             raise ValueError("تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية")
         return self
@@ -281,6 +279,58 @@ class CommitteeUpdate(BaseModel):
 
     start_date: date | None = None
     end_date: date | None = None
+
+
+class CommitteeMemberChangeIn(BaseModel):
+    """
+    إضافة عضو / تعيين رئيس أو أمين سر للجنة دائمة (migration 0050). user_id =
+    None مسموح فقط لإلغاء تعيين أمين السر. reason اختياري يظهر بسجل التغييرات.
+    """
+
+    user_id: uuid.UUID | None = None
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class CommitteeMemberRemoveIn(BaseModel):
+    """حذف عضو من لجنة دائمة — السبب اختياري ويظهر بسجل التغييرات."""
+
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class CommitteeExtendIn(BaseModel):
+    """تمديد نهاية فترة اللجنة — النهاية الجديدة بعد الحالية (migration 0050)."""
+
+    end_date: date
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class CommitteeCapabilitiesOut(BaseModel):
+    """وش يقدر المستخدم الحالي يسوي على اللجنة (للواجهة فقط) — migration 0050."""
+
+    can_add_members: bool
+    can_remove_members: bool
+    can_change_roles: bool
+    can_extend: bool
+    can_view_history: bool
+
+
+class CommitteeChangeOut(BaseModel):
+    """
+    صف بسجل تغييرات اللجنة (migration 0050): من غيّر، وش تغيّر، ومتى.
+    change_type: member_added / member_removed / chair_changed /
+    secretary_changed / period_extended.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    change_id: uuid.UUID
+    change_type: str
+    subject_user: CommitteeMemberUserOut | None
+    previous_user: CommitteeMemberUserOut | None
+    details: dict
+    reason: str | None
+    changed_by_user: CommitteeMemberUserOut
+    created_at: datetime
 
 
 class DepartmentMemberElsewhereOut(BaseModel):

@@ -1,8 +1,28 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowRight, CalendarDays, Download, FileText, Mail, Pencil, Plus, Users as UsersIcon } from 'lucide-react'
-import { useCommitteeDetail, useUpdateCommitteeDates } from '@/hooks/useCommittees'
+import {
+  ArrowRight,
+  CalendarDays,
+  CalendarPlus,
+  Crown,
+  Download,
+  FileText,
+  Mail,
+  NotebookPen,
+  Pencil,
+  Plus,
+  UserMinus,
+  UserPlus,
+  Users as UsersIcon,
+} from 'lucide-react'
+import {
+  useCommitteeCapabilities,
+  useCommitteeDetail,
+  useCommitteeMembershipAction,
+  useUpdateCommitteeDates,
+  type CommitteeMembershipAction,
+} from '@/hooks/useCommittees'
 import {
   useDocumentPublishTargets,
   useDocuments,
@@ -21,14 +41,24 @@ import { Avatar } from '@/components/ui/Avatar'
 import { CommitteeLifecycleBadge, CommitteeRoleBadge } from '@/components/ui/StatusBadge'
 import { useToast } from '@/components/ui/Toast'
 import { CommitteeDatesEditModal } from '@/features/committees/CommitteeDatesEditModal'
+import {
+  AddCommitteeMemberModal,
+  CommitteeHistoryCard,
+  ExtendCommitteeModal,
+} from '@/features/committees/CommitteeMembershipTools'
+import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { ReasonConfirmDialog } from '@/components/ui/ReasonConfirmDialog'
 import { DocumentFormModal, type DocumentFormSubmitValues } from '@/features/documents/DocumentFormModal'
 import { cn, extractErrorMessage, formatDate, formatDateTime, formatFileSize } from '@/lib/utils'
 import { formatCommitteePeriod } from '@/features/committees/committeePeriod'
 
 /**
- * تفاصيل لجنة معتمدة واحدة — Phase 5، عرض فقط (Read-only) لبيانات
- * اللجنة والعضوية تحديدًا: لا أي إجراء تعديل/إضافة/حذف أعضاء هنا عمدًا —
- * قرار موثّق من Lama (راجعي project_memory: phase2-committee-formation-requests.md).
+ * تفاصيل لجنة معتمدة واحدة — Phase 5. العضوية كانت للعرض فقط؛ منذ
+ * migration 0050 (طلب لاما 2026-11-16) اللجان الدائمة تُعدَّل عضويتها من هنا
+ * (إضافة/حذف/تغيير الرئيس أو الأمين) مع سجل تغييرات، وأي لجنة بفترة تُمدَّد.
+ * المؤقتة تبقى عضويتها مقفلة بعد الاعتماد. الأزرار تتبع /capabilities، والفحص
+ * الفعلي بالباك-إند (committee_membership_service).
  * قسم "وثائق اللجنة" أدناه (2026-09-02) استثناء مقصود — ميزة منفصلة
  * تمامًا عن عضوية اللجنة (رفع وثيقة مرتبطة باللجنة مباشرة، راجعي
  * defaultCommitteeId بـDocumentFormModal)، وليست جزءًا من القرار أعلاه.
@@ -49,6 +79,29 @@ export function CommitteeDetailPage() {
   // التنفيذي فقط حاليًا).
   const canEditDates = permissions.includes('committees.update')
   const [datesEditOpen, setDatesEditOpen] = useState(false)
+
+  // تعديل العضوية + التمديد + السجل (migration 0050).
+  const { data: caps } = useCommitteeCapabilities(committeeId)
+  const membershipMutation = useCommitteeMembershipAction(committeeId ?? '')
+  const [extendOpen, setExtendOpen] = useState(false)
+  const [addMemberOpen, setAddMemberOpen] = useState(false)
+  const [membershipError, setMembershipError] = useState<string | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<{ user_id: string; name: string } | null>(null)
+  const [roleTarget, setRoleTarget] = useState<
+    { kind: 'chair' | 'secretary' | 'unset_secretary'; user_id: string; name: string } | null
+  >(null)
+
+  /** تنفيذ عملية عضوية/تمديد، وإغلاق نوافذها عند النجاح. */
+  function runMembership(action: CommitteeMembershipAction, successMessage: string, onDone: () => void) {
+    setMembershipError(null)
+    membershipMutation.mutate(action, {
+      onSuccess: () => {
+        onDone()
+        showToast(successMessage, 'success')
+      },
+      onError: (err) => setMembershipError(extractErrorMessage(err)),
+    })
+  }
   const [datesEditError, setDatesEditError] = useState<string | null>(null)
   const updateDatesMutation = useUpdateCommitteeDates(committeeId ?? '')
 
@@ -159,8 +212,21 @@ export function CommitteeDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* اللجنة الدائمة بلا فترة، ونوعها ثابت بعد الاعتماد (قرار 2026-10-29). */}
-          {canEditDates && committee.duration_type === 'temporary' && (
+          {caps?.can_extend && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<CalendarPlus size={14} />}
+              onClick={() => {
+                setMembershipError(null)
+                setExtendOpen(true)
+              }}
+            >
+              تمديد مدة اللجنة
+            </Button>
+          )}
+          {/* migration 0050: فترة الدائمة صارت قابلة للتعديل أيضًا. */}
+          {canEditDates && (
             <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => setDatesEditOpen(true)}>
               تعديل فترة اللجنة
             </Button>
@@ -233,6 +299,18 @@ export function CommitteeDetailPage() {
             <UsersIcon size={15} />
             أعضاء اللجنة
           </h2>
+          {caps?.can_add_members && (
+            <Button
+              size="sm"
+              icon={<UserPlus size={14} />}
+              onClick={() => {
+                setMembershipError(null)
+                setAddMemberOpen(true)
+              }}
+            >
+              إضافة عضو
+            </Button>
+          )}
         </div>
         {/* قائمة أعضاء بصف مرن بدل جدول — يتكيّف تلقائيًا على الجوال (البريد
             ينزل تحت الاسم) بدل جدول بعرض ثابت يحتاج تمريرًا أفقيًا. */}
@@ -255,10 +333,50 @@ export function CommitteeDetailPage() {
                 </p>
                 <CommitteeRoleBadge slug={roleSlugByUserId.get(member.user_id) ?? null} />
               </div>
-              <span className="flex items-center gap-1.5 text-sm text-text-secondary">
-                <Mail size={13} className="shrink-0" />
-                {member.email}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5 text-sm text-text-secondary">
+                  <Mail size={13} className="shrink-0" />
+                  {member.email}
+                </span>
+                {(() => {
+                  const name = `${member.first_name} ${member.last_name}`
+                  const isChair = committee.chair_user_id === member.user_id
+                  const isSecretary = committee.secretary_user_id === member.user_id
+                  const items: ActionMenuItem[] = []
+                  if (caps?.can_change_roles && !isChair) {
+                    items.push({
+                      label: 'تعيين رئيسًا للجنة',
+                      icon: <Crown size={14} />,
+                      onClick: () => setRoleTarget({ kind: 'chair', user_id: member.user_id, name }),
+                    })
+                    items.push(
+                      isSecretary
+                        ? {
+                            label: 'إلغاء تعيينه أمينًا للسر',
+                            icon: <NotebookPen size={14} />,
+                            onClick: () => setRoleTarget({ kind: 'unset_secretary', user_id: member.user_id, name }),
+                          }
+                        : {
+                            label: 'تعيين أمينًا للسر',
+                            icon: <NotebookPen size={14} />,
+                            onClick: () => setRoleTarget({ kind: 'secretary', user_id: member.user_id, name }),
+                          },
+                    )
+                  }
+                  if (caps?.can_remove_members && !isChair) {
+                    items.push({
+                      label: 'حذف من اللجنة',
+                      icon: <UserMinus size={14} />,
+                      tone: 'danger',
+                      onClick: () => {
+                        setMembershipError(null)
+                        setRemoveTarget({ user_id: member.user_id, name })
+                      },
+                    })
+                  }
+                  return items.length > 0 ? <ActionMenu items={items} /> : null
+                })()}
+              </div>
             </motion.li>
           ))}
         </ul>
@@ -326,6 +444,8 @@ export function CommitteeDetailPage() {
         )}
       </Card>
 
+      {caps?.can_view_history && <CommitteeHistoryCard committeeId={committee.committee_id} />}
+
       <p className="text-xs text-text-muted">أُنشئت اللجنة في {formatDateTime(committee.created_at)}</p>
 
       {canUploadDocuments && (
@@ -343,6 +463,81 @@ export function CommitteeDetailPage() {
           serverError={documentFormError}
         />
       )}
+
+      {caps?.can_extend && (
+        <ExtendCommitteeModal
+          open={extendOpen}
+          onClose={() => setExtendOpen(false)}
+          committee={committee}
+          loading={membershipMutation.isPending}
+          serverError={membershipError}
+          onSubmit={({ endDate, reason }) =>
+            runMembership({ kind: 'extend', endDate, reason }, 'تم تمديد مدة اللجنة', () => setExtendOpen(false))
+          }
+        />
+      )}
+
+      {caps?.can_add_members && (
+        <AddCommitteeMemberModal
+          open={addMemberOpen}
+          onClose={() => setAddMemberOpen(false)}
+          committeeId={committee.committee_id}
+          loading={membershipMutation.isPending}
+          serverError={membershipError}
+          onSubmit={({ userId, reason }) =>
+            runMembership({ kind: 'add', userId, reason }, 'تمت إضافة العضو للجنة', () => setAddMemberOpen(false))
+          }
+        />
+      )}
+
+      <ReasonConfirmDialog
+        open={!!removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        title="حذف عضو من اللجنة"
+        description={`سيُحذف ${removeTarget?.name ?? ''} من اللجنة ويُسجَّل ذلك بسجل التغييرات.`}
+        reasonLabel="سبب الحذف"
+        confirmLabel="حذف العضو"
+        variant="danger"
+        loading={membershipMutation.isPending}
+        errorMessage={membershipError}
+        onConfirm={(reason) =>
+          removeTarget &&
+          runMembership({ kind: 'remove', userId: removeTarget.user_id, reason }, 'تم حذف العضو من اللجنة', () =>
+            setRemoveTarget(null),
+          )
+        }
+      />
+
+      <ConfirmDialog
+        open={!!roleTarget}
+        onClose={() => setRoleTarget(null)}
+        title={
+          roleTarget?.kind === 'chair'
+            ? 'تغيير رئيس اللجنة'
+            : roleTarget?.kind === 'secretary'
+              ? 'تعيين أمين السر'
+              : 'إلغاء تعيين أمين السر'
+        }
+        description={
+          roleTarget?.kind === 'chair'
+            ? `سيصبح ${roleTarget.name} رئيس اللجنة، والرئيس الحالي عضوًا عاديًا.`
+            : roleTarget?.kind === 'secretary'
+              ? `سيصبح ${roleTarget.name} أمين سر اللجنة.`
+              : `سيصبح ${roleTarget?.name ?? ''} عضوًا عاديًا.`
+        }
+        confirmLabel="تأكيد"
+        variant="primary"
+        loading={membershipMutation.isPending}
+        errorMessage={membershipError}
+        onConfirm={() => {
+          if (!roleTarget) return
+          const action: CommitteeMembershipAction =
+            roleTarget.kind === 'chair'
+              ? { kind: 'chair', userId: roleTarget.user_id }
+              : { kind: 'secretary', userId: roleTarget.kind === 'secretary' ? roleTarget.user_id : null }
+          runMembership(action, 'تم تحديث أدوار اللجنة', () => setRoleTarget(null))
+        }}
+      />
 
       {canEditDates && (
         <CommitteeDatesEditModal

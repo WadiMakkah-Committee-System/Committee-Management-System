@@ -1,4 +1,4 @@
-import type { ApiErrorShape, PermissionScope, RoleSummary, SystemRoleName, UserDetail } from '@/types'
+import type { ApiErrorShape, Department, PermissionScope, RoleSummary, SystemRoleName, UserDetail } from '@/types'
 
 /**
  * ترتيب اتساع نطاقات الوصول من الأوسع للأضيق — يطابق تمامًا
@@ -327,4 +327,41 @@ export function formatChildDepartmentsCount(count: number): string {
   if (count === 2) return 'إدارتان تابعتان'
   if (count >= 3 && count <= 10) return `${count} إدارات تابعة`
   return `${count} إدارة تابعة`
+}
+
+/**
+ * خيارات اختيار إدارة مرتّبة حسب الهيكل (إدارة رئيسية ثم إداراتها التابعة)
+ * مع توضيح بالاسم: الرئيسية اللي تحتها إدارات تُكتب "(تشمل الإدارات التابعة)"،
+ * والتابعة "— تابعة لـ ...". تُستخدم حيث اختيار الإدارة الأم يشمل توابعها
+ * تلقائيًا (تصنيفات الوثائق — طلب لاما 2026-11-16).
+ *
+ * المدخلات: options — الإدارات المسموح اختيارها؛ all — كل الإدارات (لمعرفة
+ * أسماء الأمهات ووجود توابع). المخرجات: [{ value, label }].
+ */
+export function departmentHierarchyOptions(
+  options: Department[],
+  all: Department[] = options,
+): { value: string; label: string }[] {
+  const nameById = new Map(all.map((d) => [d.dep_id, d.name]))
+  const hasChildren = new Set(all.filter((d) => d.parent_dep_id).map((d) => d.parent_dep_id as string))
+  const allowed = new Set(options.map((d) => d.dep_id))
+  const label = (d: Department) =>
+    d.parent_dep_id
+      ? `— ${d.name} (تابعة لـ ${nameById.get(d.parent_dep_id) ?? '—'})`
+      : hasChildren.has(d.dep_id)
+        ? `${d.name} (تشمل الإدارات التابعة)`
+        : d.name
+  const result: { value: string; label: string }[] = []
+  const placed = new Set<string>()
+  for (const parent of options.filter((d) => !d.parent_dep_id)) {
+    result.push({ value: parent.dep_id, label: label(parent) })
+    placed.add(parent.dep_id)
+    for (const child of options.filter((d) => d.parent_dep_id === parent.dep_id)) {
+      result.push({ value: child.dep_id, label: label(child) })
+      placed.add(child.dep_id)
+    }
+  }
+  // تابعة أمها غير ضمن الخيارات (مثلًا مستخدم يختار إدارته فقط).
+  for (const d of options) if (!placed.has(d.dep_id) && allowed.has(d.dep_id)) result.push({ value: d.dep_id, label: label(d) })
+  return result
 }
