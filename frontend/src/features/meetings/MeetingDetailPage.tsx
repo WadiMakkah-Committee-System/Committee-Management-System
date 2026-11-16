@@ -220,8 +220,11 @@ export function MeetingDetailPage() {
    * الفحص الدقيق لكل إجراء على حدة يبقى مسؤولية الباك-إند كالمعتاد).
    */
   const canManage =
-    scopeFor(user, 'meetings.update', 'meetings.delete') === 'all' ||
+    scopeFor(user, 'meetings.update', 'meetings.delete', 'meetings.extend') === 'all' ||
     (committee && committee.chair_user_id === user?.user_id)
+  /** تمديد الاجتماع صار له كود مستقل (meetings.extend — migration 0050). */
+  const canExtend =
+    scopeFor(user, 'meetings.extend') === 'all' || (!!committee && committee.chair_user_id === user?.user_id)
 
   const canDeleteMeeting = !!meeting && new Date(meeting.scheduled_at).getTime() > Date.now()
 
@@ -695,7 +698,7 @@ export function MeetingDetailPage() {
                 {
                   label: 'تمديد الاجتماع',
                   icon: <Clock size={14} />,
-                  disabled: meeting.status === 'finished' || !meeting.scheduled_end_at,
+                  disabled: !canExtend || meeting.status === 'finished' || !meeting.scheduled_end_at,
                   onClick: () => {
                     setExtendError(null)
                     setExtendOpen(true)

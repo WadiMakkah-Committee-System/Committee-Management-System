@@ -21,7 +21,7 @@ function formatDuration(totalSeconds: number): string {
  * ملاحظة: اللي دخل من تطبيق Teams مباشرة (مو من المنصة) ما يظهر هنا.
  */
 export function MeetingAttendanceCard({ meetingId }: { meetingId: string }) {
-  const { data: rows, isLoading } = useMeetingAttendance(meetingId)
+  const { data: rows, isLoading, isError } = useMeetingAttendance(meetingId)
 
   return (
     <Card id="attendance-section" className="scroll-mt-4 p-0">
@@ -35,6 +35,9 @@ export function MeetingAttendanceCard({ meetingId }: { meetingId: string }) {
       <div className="p-4">
         {isLoading ? (
           <p className="py-4 text-center text-xs text-text-muted">جارِ التحميل...</p>
+        ) : isError ? (
+          // migration 0050: سجل الحضور له صلاحية مستقلة (meetings.attendance.view).
+          <p className="py-4 text-center text-xs text-text-muted">ليست لديك صلاحية عرض سجل الحضور</p>
         ) : !rows?.length ? (
           <p className="py-4 text-center text-xs text-text-muted">
             ما فيه حضور مسجّل بعد — يُسجَّل تلقائيًا لما يدخل الأعضاء الاجتماع من المنصة.

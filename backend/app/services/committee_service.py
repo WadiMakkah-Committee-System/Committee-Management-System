@@ -208,10 +208,12 @@ def _resolve_period(
 
     الأخطاء: ValueError (تُترجَم إلى 400) عند نقص تاريخ للمؤقتة أو ترتيب خاطئ.
     """
-    if duration_type == CommitteeDurationType.permanent:
-        return None, None
+    # قرار لاما 2026-11-16 (migration 0050): الدائمة صار لها بداية ونهاية مثل
+    # المؤقتة — الفرق بينهما الآن: الدائمة تُعدَّل عضويتها بعد الاعتماد
+    # (committee_membership_service). duration_type يبقى معاملًا للتوثيق.
+    del duration_type
     if start_date is None or end_date is None:
-        raise ValueError("تاريخ البداية والنهاية مطلوبان للجنة المؤقتة")
+        raise ValueError("تاريخ البداية والنهاية مطلوبان")
     _assert_dates_valid(start_date, end_date)
     return start_date, end_date
 
@@ -929,12 +931,12 @@ async def update_committee(
     committee = result.scalar_one_or_none()
     if committee is None or committee.is_deleted:
         raise CommitteeNotFoundError("اللجنة غير موجودة")
-    # نوع اللجنة ثابت بعد الاعتماد (قرار 2026-10-29) — الدائمة بلا فترة أصلًا.
-    if committee.is_permanent:
-        raise ValueError("اللجنة دائمة وليس لها فترة زمنية قابلة للتعديل")
-
+    # migration 0050 (قرار لاما 2026-11-16): الدائمة صار لها فترة قابلة
+    # للتعديل أيضًا. دائمة قديمة بلا تواريخ: يلزم إرسال التاريخين معًا.
     new_start = start_date if start_date is not None else committee.start_date
     new_end = end_date if end_date is not None else committee.end_date
+    if new_start is None or new_end is None:
+        raise ValueError("تاريخ البداية والنهاية مطلوبان")
     if new_end <= new_start:
         raise ValueError("تاريخ نهاية عمل اللجنة يجب أن يكون بعد تاريخ البداية")
 
@@ -944,8 +946,8 @@ async def update_committee(
         )
 
     before = {
-        "start_date": committee.start_date.isoformat(),
-        "end_date": committee.end_date.isoformat(),
+        "start_date": _iso(committee.start_date),
+        "end_date": _iso(committee.end_date),
     }
     committee.start_date = new_start
     committee.end_date = new_end

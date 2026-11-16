@@ -30,7 +30,7 @@ from app.models.user import User
 from app.services import document_service
 from app.services.committee_access import CommitteeAccess
 from app.services.task_service.access import _require_object_scoped_access
-from app.services.task_service.codes import _STATUS_UPDATE, _VIEW_DETAILS
+from app.services.task_service.codes import _ATTACHMENTS_MANAGE, _VIEW_DETAILS
 from app.services.task_service.errors import TaskNotFoundError
 from app.services.task_service.loading import load_task
 
@@ -56,7 +56,7 @@ async def add_attachment(
     task = await load_task(db, task_id)
     committee = task.committee  # محمَّلة مع المهمة (loading.task_options)
     await _require_object_scoped_access(
-        access, committee, task, _STATUS_UPDATE, "ليست لديك صلاحية إرفاق ملف بهذه المهمة",
+        access, committee, task, _ATTACHMENTS_MANAGE, "ليست لديك صلاحية إرفاق ملف بهذه المهمة",
         "لا يمكنك إرفاق ملف إلا بمهامك المسندة لك أنت تحديدًا",
     )
 
@@ -155,7 +155,7 @@ async def delete_attachment(
     task = await load_task(db, task_id)
     committee = task.committee
     await _require_object_scoped_access(
-        access, committee, task, _STATUS_UPDATE, "ليست لديك صلاحية حذف مرفقات هذه المهمة",
+        access, committee, task, _ATTACHMENTS_MANAGE, "ليست لديك صلاحية حذف مرفقات هذه المهمة",
         "لا يمكنك حذف مرفقات إلا من مهامك المسندة لك أنت تحديدًا",
     )
 

@@ -33,6 +33,11 @@ _CHAIR_MINUTES = [
     "minutes.view",
     "minutes.update",
     "minutes.approve",
+    # migration 0050: وظائف كانت تتبع minutes.approve صار لها أكواد مستقلة.
+    "minutes.send_signature",
+    "minutes.return",
+    "minutes.review",
+    "minutes.export",
     "minutes.sign",
 ]
 _MEMBER_MINUTES = ["minutes.view", "minutes.update", "minutes.sign"]

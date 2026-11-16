@@ -121,10 +121,12 @@ async def attendance_summary(db: AsyncSession, *, actor: User, meeting_id: uuid.
     جدول الحضور المجمّع لكل عضو، مرتّب بأول دخول.
     الجلسة المفتوحة: لو نبضتها حديثة ⇒ "لسا داخل" (المدة حتى الحين)، ولو قديمة ⇒
     منتهية عند آخر نبضة.
-    الصلاحية: meetings.view.
+    الصلاحية: meetings.attendance.view (كود مستقل منذ migration 0050 — كانت meetings.view).
     """
     meeting = await load_meeting(db, meeting_id)
-    await _require_access(db, actor, meeting.committee, "meetings.view", "ليست لديك صلاحية عرض هذا الاجتماع")
+    await _require_access(
+        db, actor, meeting.committee, "meetings.attendance.view", "ليست لديك صلاحية عرض سجل حضور هذا الاجتماع"
+    )
     return await summarize_attendance(db, meeting_id=meeting.meeting_id)
 
 

@@ -6,6 +6,7 @@ SQLAlchemy يكتشف كل النماذج والعلاقات بينها عند �
 
 from app.models.audit_log import AuditAction, AuditLog
 from app.models.committee import Committee
+from app.models.committee_change import CommitteeChange, CommitteeChangeType
 from app.models.committee_request import CommitteeFormationRequest, CommitteeRequestStatus
 from app.models.decision import (
     Decision,
@@ -41,6 +42,8 @@ from app.models.user_role import UserRole
 from app.models.user_saved_signature import UserSavedSignature
 
 __all__ = [
+    "CommitteeChange",
+    "CommitteeChangeType",
     "AuditAction",
     "AuditLog",
     "Committee",

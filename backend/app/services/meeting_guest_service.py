@@ -161,7 +161,7 @@ def _require_guest_link_usable(meeting: Meeting) -> None:
 async def get_or_create_guest_link(db: AsyncSession, *, actor: User, meeting_id: uuid.UUID) -> str:
     meeting = await load_meeting(db, meeting_id)
     await _require_access(
-        db, actor, meeting.committee, "meetings.join", "ليست لديك صلاحية مشاركة رابط هذا الاجتماع"
+        db, actor, meeting.committee, "meetings.guests.manage", "ليست لديك صلاحية مشاركة رابط هذا الاجتماع"
     )
     _require_guest_link_usable(meeting)
     if meeting.guest_link_token is None:
@@ -360,7 +360,7 @@ async def list_pending_requests(
 ) -> list[MeetingGuestRequest]:
     meeting = await load_meeting(db, meeting_id)
     await _require_access(
-        db, actor, meeting.committee, "meetings.join", "ليست لديك صلاحية عرض قاعة الانتظار"
+        db, actor, meeting.committee, "meetings.guests.manage", "ليست لديك صلاحية عرض قاعة الانتظار"
     )
     if not is_guest_meeting_active(meeting):
         return []
@@ -408,7 +408,7 @@ async def decide_guest_request(
 ) -> MeetingGuestRequest:
     meeting = await load_meeting(db, meeting_id)
     await _require_access(
-        db, actor, meeting.committee, "meetings.join", "ليست لديك صلاحية قبول الضيوف"
+        db, actor, meeting.committee, "meetings.guests.manage", "ليست لديك صلاحية قبول الضيوف"
     )
     if not is_guest_meeting_active(meeting):
         raise MeetingInvalidStateError("انتهى هذا الاجتماع")

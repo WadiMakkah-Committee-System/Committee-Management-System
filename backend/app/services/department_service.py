@@ -108,7 +108,7 @@ async def _flush_hierarchy(db: AsyncSession) -> None:
         await db.flush()
     except IntegrityError as exc:
         await db.rollback()
-        raise ValueError("تعذّر حفظ هيكل الإدارات بسبب تعديل متزامن — حدّثي الصفحة وحاولي مرة أخرى") from exc
+        raise ValueError("تعذّر حفظ هيكل الإدارات بسبب تعديل متزامن — حدّث الصفحة وحاول مرة أخرى") from exc
 
 
 async def _get_active_manager(db: AsyncSession, manager_user_id: uuid.UUID) -> User:
@@ -380,7 +380,7 @@ async def soft_delete_department(
     if department is None:
         return None
     if await _has_active_children(db, dep_id):
-        raise ValueError("لا يمكن حذف إدارة تحتها إدارات تابعة — احذفي أو انقلي الإدارات التابعة أولًا")
+        raise ValueError("لا يمكن حذف إدارة تحتها إدارات تابعة — احذف أو انقل الإدارات التابعة أولًا")
 
     department.deleted_at = func.now()
     await _flush_hierarchy(db)

@@ -20,3 +20,6 @@ _DELETE = "tasks.delete"
 _VIEW = "tasks.view"
 _VIEW_DETAILS = "tasks.view_details"
 _STATUS_UPDATE = "tasks.status.update"
+# migration 0050: وظيفتان صار لهما شيك بوكس مستقل (كانتا تتبعان _UPDATE/_STATUS_UPDATE).
+_REASSIGN = "tasks.reassign"
+_ATTACHMENTS_MANAGE = "tasks.attachments.manage"

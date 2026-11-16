@@ -209,6 +209,19 @@ class User(Base):
             ids.update(self.department.child_dep_ids or [])
         return ids
 
+    def department_and_parent_ids(self) -> set[uuid.UUID]:
+        """
+        إدارته + إدارتها الأم (لو كانت تابعة) — للأشياء المعرَّفة على مستوى
+        الإدارة الأم وتشمل إداراتها التابعة تلقائيًا (تصنيفات الوثائق الخاصة
+        بإدارة أم — طلب لاما 2026-11-16). مستخدم بلا إدارة: مجموعة فارغة.
+        """
+        if self.dep_id is None:
+            return set()
+        ids = {self.dep_id}
+        if self.department is not None and self.department.parent_dep_id is not None:
+            ids.add(self.department.parent_dep_id)
+        return ids
+
     def scope_covers_department(self, scope: str | None, dep_id: uuid.UUID | None) -> bool:
         """
         هل نطاق مرتبط بالإدارة (department/department_tree) يغطي إدارة معيّنة؟

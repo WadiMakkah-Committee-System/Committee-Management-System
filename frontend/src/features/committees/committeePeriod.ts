@@ -12,8 +12,8 @@ export const COMMITTEE_DURATION_OPTIONS: { value: CommitteeDurationType; label: 
  *
  * المدخلات: كائن فيه duration_type وstart_date/end_date (لجنة أو طلب تشكيل).
  *
- * المخرجات: "دائمة" للجنة الدائمة (بلا تواريخ — الهجرة 0037)، وإلا
- * "البداية — النهاية" بنفس تنسيق formatDate.
+ * المخرجات: "البداية — النهاية" بنفس تنسيق formatDate، مع "(دائمة)" للجنة
+ * الدائمة (لها تواريخ منذ migration 0050). دائمة قديمة بلا تواريخ: "دائمة".
  *
  * بلا تأثيرات جانبية.
  */
@@ -22,6 +22,7 @@ export function formatCommitteePeriod(item: {
   start_date: string | null
   end_date: string | null
 }): string {
-  if (item.duration_type === 'permanent') return 'دائمة'
-  return `${formatDate(item.start_date)} — ${formatDate(item.end_date)}`
+  if (item.duration_type === 'permanent' && (!item.start_date || !item.end_date)) return 'دائمة'
+  const period = `${formatDate(item.start_date)} — ${formatDate(item.end_date)}`
+  return item.duration_type === 'permanent' ? `${period} (دائمة)` : period
 }

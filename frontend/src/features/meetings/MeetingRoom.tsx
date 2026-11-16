@@ -451,12 +451,13 @@ export function MeetingRoom({
   // بالضبط: رئيس اللجنة، أو صاحب صلاحية meetings.record_audio بنطاق عام.
   // تمديد الاجتماع من داخل الغرفة (طلب لاما 2026-11-09) — نفس شرط canManage
   // بصفحة تفاصيل الاجتماع (رئيس اللجنة أو meetings.update عامة)؛ التحقق
-  // الفعلي بالباك-إند (extend_meeting: meetings.update + الحالة upcoming/ongoing).
+  // الفعلي بالباك-إند (extend_meeting: meetings.extend — كود مستقل منذ migration
+  // 0050 — + الحالة upcoming/ongoing).
   const canExtend = Boolean(
     currentUser &&
       meeting?.scheduled_end_at &&
       (meeting.status === 'upcoming' || meeting.status === 'ongoing') &&
-      (scopeFor(currentUser, 'meetings.update') === 'all' ||
+      (scopeFor(currentUser, 'meetings.extend') === 'all' ||
         committees?.some(
           (c) => c.committee_id === meeting.committee_id && c.chair_user_id === currentUser.user_id,
         )),

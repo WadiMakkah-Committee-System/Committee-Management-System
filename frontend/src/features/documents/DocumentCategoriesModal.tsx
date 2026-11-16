@@ -162,7 +162,13 @@ export function DocumentCategoriesModal({ open, onClose }: DocumentCategoriesMod
         <td className="px-4 py-3 text-sm font-medium text-text-primary">{category.name}</td>
         <td className="px-4 py-3 text-sm text-text-muted">
           {category.scope === 'department'
-            ? departments?.find((d) => d.dep_id === category.department_id)?.name ?? '—'
+            ? (() => {
+                const dep = departments?.find((d) => d.dep_id === category.department_id)
+                if (!dep) return '—'
+                // تصنيف إدارة رئيسية يشمل توابعها (طلب لاما 2026-11-16).
+                const hasChildren = departments?.some((d) => d.parent_dep_id === dep.dep_id)
+                return hasChildren ? `${dep.name} وإداراتها التابعة` : dep.name
+              })()
             : '—'}
         </td>
         <td className="w-12 px-4 py-3">{menuItems.length > 0 && <ActionMenu items={menuItems} />}</td>
@@ -262,6 +268,7 @@ export function DocumentCategoriesModal({ open, onClose }: DocumentCategoriesMod
         onClose={() => setFormOpen(false)}
         category={editingCategory}
         departments={formDepartments}
+        allDepartments={departments ?? []}
         allowGlobal={allowCreateGlobal}
         allowDepartment={allowCreateDepartment}
         onSubmit={handleSubmit}

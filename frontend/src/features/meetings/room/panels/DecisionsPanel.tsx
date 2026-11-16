@@ -43,9 +43,20 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
   // النموذج هنا يعرضها للتأكيد فقط قبل فتح التصويت.
   const [showVotingForm, setShowVotingForm] = useState(false)
 
-  async function vote(optionId: string) {
+  /**
+   * خيار "ممتنع" يتطلب سببًا إلزاميًا (الباك-إند يرفض الامتناع بلا سبب) —
+   * إصلاح بلاغ لاما 2026-11-16: الضغط على "ممتنع" هنا كان يرسل التصويت
+   * مباشرة بلا سؤال عن السبب. الآن يفتح حقل السبب أولًا (نفس سلوك
+   * VotingOverlay وDecisionDetailPage).
+   */
+  const [abstainOptionId, setAbstainOptionId] = useState<string | null>(null)
+  const [abstainReason, setAbstainReason] = useState('')
+
+  async function vote(optionId: string, reason?: string) {
     try {
-      await castVoteMutation.mutateAsync({ decisionId: decision.decision_id, optionId })
+      await castVoteMutation.mutateAsync({ decisionId: decision.decision_id, optionId, reason })
+      setAbstainOptionId(null)
+      setAbstainReason('')
     } catch (err) {
       showToast(extractErrorMessage(err), 'error')
     }
@@ -120,7 +131,7 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
                 key={opt.option_id}
                 type="button"
                 disabled={!!myVote || castVoteMutation.isPending}
-                onClick={() => vote(opt.option_id)}
+                onClick={() => (opt.is_abstain ? setAbstainOptionId(opt.option_id) : vote(opt.option_id))}
                 className={cn(
                   'flex items-center justify-between rounded-sm border px-2.5 py-1.5 text-[12px] transition-colors',
                   selected
@@ -144,6 +155,39 @@ function DecisionCard({ decision, currentUserId }: { decision: Decision; current
               </button>
             )
           })}
+
+          {abstainOptionId && !myVote && (
+            <div className="flex flex-col gap-1.5 rounded-sm border border-border-default bg-bg-elevated p-2">
+              <textarea
+                value={abstainReason}
+                onChange={(e) => setAbstainReason(e.target.value)}
+                rows={2}
+                autoFocus
+                placeholder="سبب الامتناع (إلزامي)"
+                className="rounded-sm border border-border-default bg-bg-surface p-2 text-[12px] text-text-primary focus:border-brand-primary focus:outline-none"
+              />
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm"
+                  disabled={!abstainReason.trim()}
+                  loading={castVoteMutation.isPending}
+                  onClick={() => vote(abstainOptionId, abstainReason.trim())}
+                >
+                  تأكيد الامتناع
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setAbstainOptionId(null)
+                    setAbstainReason('')
+                  }}
+                >
+                  رجوع
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* إصلاح 2026-09-14 (بلاغ لاما — "عند التصويت ما يظهر مين اللي
              ضغط موافق ومين اللي ضغط غير موافق، سوي نفس اللي بواجهة

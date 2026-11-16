@@ -64,3 +64,63 @@ export function useDepartmentMembersElsewhere(search: string, enabled: boolean) 
     enabled,
   })
 }
+
+// =====================================================================
+// تعديل عضوية اللجنة الدائمة + التمديد + سجل التغييرات (migration 0050).
+// =====================================================================
+
+export function useCommitteeCapabilities(committeeId: string | undefined) {
+  return useQuery({
+    queryKey: ['committees', committeeId ?? '', 'capabilities'],
+    queryFn: () => committeesApi.fetchCommitteeCapabilities(committeeId as string),
+    enabled: !!committeeId,
+  })
+}
+
+export function useCommitteeChanges(committeeId: string | undefined, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['committees', committeeId ?? '', 'changes'],
+    queryFn: () => committeesApi.fetchCommitteeChanges(committeeId as string),
+    enabled: !!committeeId && (options?.enabled ?? true),
+  })
+}
+
+export function useCommitteeMemberCandidates(committeeId: string | undefined, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['committees', committeeId ?? '', 'member-candidates'],
+    queryFn: () => committeesApi.fetchCommitteeMemberCandidates(committeeId as string),
+    enabled: !!committeeId && (options?.enabled ?? true),
+  })
+}
+
+/** نوع عملية تعديل العضوية/الفترة — كلها تُرجع اللجنة المحدَّثة وتُبطل بياناتها وسجلها. */
+export type CommitteeMembershipAction =
+  | { kind: 'add'; userId: string; reason?: string }
+  | { kind: 'remove'; userId: string; reason?: string }
+  | { kind: 'chair'; userId: string }
+  | { kind: 'secretary'; userId: string | null }
+  | { kind: 'extend'; endDate: string; reason?: string }
+
+export function useCommitteeMembershipAction(committeeId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (action: CommitteeMembershipAction) => {
+      switch (action.kind) {
+        case 'add':
+          return committeesApi.addCommitteeMember(committeeId, action.userId, action.reason)
+        case 'remove':
+          return committeesApi.removeCommitteeMember(committeeId, action.userId, action.reason)
+        case 'chair':
+          return committeesApi.changeCommitteeChair(committeeId, action.userId)
+        case 'secretary':
+          return committeesApi.changeCommitteeSecretary(committeeId, action.userId)
+        case 'extend':
+          return committeesApi.extendCommittee(committeeId, action.endDate, action.reason)
+      }
+    },
+    onSuccess: () => {
+      // يبطل اللجنة وقائمتها وسجلها وصلاحياتها ومرشحيها (كلها تحت ['committees', ...]).
+      queryClient.invalidateQueries({ queryKey: committeesKeys.all })
+    },
+  })
+}

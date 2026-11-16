@@ -426,6 +426,34 @@ export interface CommitteeMemberRole {
 }
 
 /** اللجنة المعتمدة رسميًا — سطح قراءة بسيط فقط (Phase 5 لاحقًا لإدارتها الكاملة). */
+/** سجل تغييرات اللجنة (migration 0050) — من غيّر، وش تغيّر، ومتى. */
+export type CommitteeChangeType =
+  | 'member_added'
+  | 'member_removed'
+  | 'chair_changed'
+  | 'secretary_changed'
+  | 'period_extended'
+
+export interface CommitteeChange {
+  change_id: string
+  change_type: CommitteeChangeType
+  subject_user: CommitteeMemberUser | null
+  previous_user: CommitteeMemberUser | null
+  details: { previous_end_date?: string; new_end_date?: string; was_secretary?: boolean }
+  reason: string | null
+  changed_by_user: CommitteeMemberUser
+  created_at: string
+}
+
+/** وش يقدر المستخدم الحالي يسوي على اللجنة — للواجهة فقط (الفحص الفعلي بالباك-إند). */
+export interface CommitteeCapabilities {
+  can_add_members: boolean
+  can_remove_members: boolean
+  can_change_roles: boolean
+  can_extend: boolean
+  can_view_history: boolean
+}
+
 export interface Committee {
   committee_id: string
   name: string

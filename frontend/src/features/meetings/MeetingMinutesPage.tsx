@@ -138,6 +138,10 @@ export function MeetingMinutesPage() {
 
   const canApprove =
     scopeFor(user, 'minutes.approve') === 'all' || (!!committee && committee.chair_user_id === user?.user_id)
+  // migration 0050: إرجاع المحضر للتعديل وإرساله للتوقيع صار لكل منهما كود مستقل.
+  const isChair = !!committee && committee.chair_user_id === user?.user_id
+  const canReturnMinutes = scopeFor(user, 'minutes.return') === 'all' || isChair
+  const canSendForSignature = scopeFor(user, 'minutes.send_signature') === 'all' || isChair
 
   const { collaborators, remoteSections, remoteSection, announceEditing, broadcastUpdate } =
     useMinutesRealtime(meetingId)
@@ -515,7 +519,7 @@ export function MeetingMinutesPage() {
           اعتماد المراجعة
         </Button>
       )
-    if (minutes.stage === 'signature' && canManage && minutes.signatures.length === 0)
+    if (minutes.stage === 'signature' && canSendForSignature && minutes.signatures.length === 0)
       return (
         <Button
           icon={<Send size={16} />}
@@ -1179,7 +1183,7 @@ export function MeetingMinutesPage() {
                 <Button variant="secondary" icon={<Eye size={14} />} onClick={() => setTab('view')}>
                   عرض المحضر
                 </Button>
-                {canApprove && minutes.stage === 'signature' && (
+                {canReturnMinutes && minutes.stage === 'signature' && (
                   <Button
                     variant="secondary"
                     icon={<RotateCcw size={14} />}
