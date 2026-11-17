@@ -1054,6 +1054,10 @@ export interface MeetingMinutesDetail {
    * _has_access (تشمل صلاحية الدور داخل هذي اللجنة تحديدًا، لا رئاسة
    * اللجنة فقط) — راجعي docstring can_edit بـschemas/meeting_minutes.py. */
   can_edit: boolean
+  /** إضافة 2026-11-17 (المراجعة اختيارية) — هل يقدر المستخدم يسجّل مراجعة:
+   * صلاحية minutes.review + عضوية اللجنة، محسوبة بالباك-إند بنفس قاعدة
+   * submit_review (_can_review). */
+  can_review: boolean
 }
 
 /** مصدر المسودة (migration 0041): تسجيل صوتي مرفوع، أو تفريغ Microsoft Teams الرسمي. */
