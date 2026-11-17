@@ -309,7 +309,7 @@ export function MinutesListPage() {
                     {summary?.stage && (
                       <div className="flex flex-wrap gap-2">
                         <span className="rounded-full border border-border-default bg-bg-surface px-3 py-1.5 text-xs text-text-secondary">
-                          حالة المراجعة: {summary.reviewers_approved}/{summary.reviewers_total} مراجع
+                          المراجعات (اختيارية): {summary.reviewers_approved} موافقة من {summary.reviewers_total}
                         </span>
                         <span className="rounded-full border border-border-default bg-bg-surface px-3 py-1.5 text-xs text-text-secondary">
                           حالة الاعتماد: {summary.approved_at ? 'معتمد' : 'بانتظار الاعتماد'}

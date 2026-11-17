@@ -193,7 +193,12 @@ class MeetingMinutesDetailOut(BaseModel):
     can_edit: إضافة 2026-09-15 (بلاغ لجين — عضوة لجنة عادية بصلاحية تعديل
     فعلية حسب دورها باللجنة كانت تشوف حقول للقراءة فقط): يحسبها الباك-إند
     فعليًا بنفس _has_access الحقيقية (مصدر الحقيقة الوحيد) بدل ما يخمّن
-    الفرونت محليًا (رئيسة اللجنة فقط) — راجعي get_minutes_detail."""
+    الفرونت محليًا (رئيسة اللجنة فقط) — راجعي get_minutes_detail.
+
+    can_review: إضافة 2026-11-17 (المراجعة اختيارية): هل يقدر المستخدم
+    يسجّل مراجعة على هذا المحضر (صلاحية minutes.review + عضوية اللجنة) —
+    نفس قاعدة submit_review حرفيًا (_can_review). الواجهة تُخفي المراجعة
+    كليًا لمن قيمته False بدل ما يضغط ويرجع له 403."""
 
     meeting: MinutesDetailMeetingOut
     committee: MinutesDetailCommitteeOut
@@ -201,6 +206,7 @@ class MeetingMinutesDetailOut(BaseModel):
     templates: list[MinutesTemplateOut]
     extracted_items: list[MeetingExtractedItemOut]
     can_edit: bool
+    can_review: bool
 
 
 class SelectTemplateIn(BaseModel):

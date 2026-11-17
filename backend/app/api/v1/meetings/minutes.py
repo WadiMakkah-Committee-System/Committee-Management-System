@@ -92,6 +92,10 @@ def _minutes_out(minutes) -> MeetingMinutesOut:
                 "reviewed_at": r.reviewed_at,
             }
             for r in minutes.reviewers
+            # المراجعة اختيارية (2026-11-17): نعرض فقط من سجّل مراجعة فعلًا.
+            # صفوف "pending" (معبّأة تلقائيًا بمحاضر قديمة، أو مُصفَّرة بعد
+            # إعادة المحضر للتعديل) لا تعني أن أحدًا مطالَب بالمراجعة.
+            if r.status.value != "pending"
         ],
         signatures=[
             {
@@ -170,6 +174,7 @@ async def get_meeting_minutes_detail(
         templates=[MinutesTemplateOut(**t) for t in detail["templates"]],
         extracted_items=[_extracted_item_out(item) for item in detail["extracted_items"]],
         can_edit=detail["can_edit"],
+        can_review=detail["can_review"],
     )
 
 

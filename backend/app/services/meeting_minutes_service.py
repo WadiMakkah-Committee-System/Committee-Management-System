@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, noload, selectinload
 
-from app.models.committee import Committee
+from app.models.committee import Committee, committee_members
 from app.models.meeting import Meeting, MeetingStatus
 from app.models.meeting_minutes import (
     MeetingMinutes,
@@ -290,6 +290,69 @@ async def _require_access(
 ) -> None:
     if not await _has_access(db, actor, committee, code):
         raise MinutesForbiddenError(message)
+
+
+async def _is_committee_member(db: AsyncSession, committee: Committee, user_id: uuid.UUID) -> bool:
+    """
+    الهدف:
+    التحقق من أن المستخدم عضو في هذه اللجنة تحديدًا (رئيسها أو عضو فيها).
+
+    المسؤولية:
+    تُستخدم لبوابة المراجعة الاختيارية (submit_review / can_review) — المراجعة
+    رأي من أعضاء اللجنة نفسها، فلا يكفي امتلاك صلاحية minutes.review بنطاق
+    نظامي (مثل نائب الرئيس التنفيذي) لمن ليس عضوًا.
+
+    المدخلات:
+    - db: جلسة قاعدة البيانات.
+    - committee: اللجنة (مُحمَّلة؛ يُقرأ منها chair_user_id فقط).
+    - user_id: معرّف المستخدم المراد فحصه (يُؤخذ من التوكن، لا من الطلب).
+
+    المخرجات:
+    - bool: True لو المستخدم رئيس اللجنة أو له صف بـcommittee_members.
+
+    التأثيرات الجانبية:
+    - قراءة فقط (استعلام EXISTS واحد، ولا شيء لو كان هو الرئيس).
+    """
+    if committee.chair_user_id == user_id:
+        return True
+    result = await db.execute(
+        select(committee_members.c.user_id)
+        .where(
+            committee_members.c.committee_id == committee.committee_id,
+            committee_members.c.user_id == user_id,
+        )
+        .limit(1)
+    )
+    return result.first() is not None
+
+
+async def _can_review(db: AsyncSession, actor: User, committee: Committee, access: CommitteeAccess | None = None) -> bool:
+    """
+    الهدف:
+    مصدر الحقيقة الواحد لسؤال "هل يقدر هذا المستخدم يسجّل مراجعة على محضر
+    هذه اللجنة؟" — تستخدمه submit_review (للمنع) وget_minutes_detail (لإرجاع
+    can_review للواجهة) بنفس القاعدة حرفيًا.
+
+    قواعد العمل (قرار لاما 2026-11-17 — المراجعة اختيارية):
+    - صلاحية minutes.review (نظامية أو دور لجنة) — يتحكم بها الأدمن من شاشة
+      الأدوار والصلاحيات.
+    - و عضوية اللجنة نفسها (راجعي _is_committee_member).
+
+    المدخلات:
+    - access: فاحص صلاحيات موجود مسبقًا (اختياري) لإعادة استخدام أكواد أدوار
+      اللجان المجلوبة بنفس الطلب بدل استعلام جديد.
+
+    المخرجات:
+    - bool.
+    """
+    has_permission = (
+        await access.has(committee, "minutes.review")
+        if access is not None
+        else await _has_access(db, actor, committee, "minutes.review")
+    )
+    if not has_permission:
+        return False
+    return await _is_committee_member(db, committee, actor.user_id)
 
 
 async def _load_meeting_and_committee(
@@ -590,15 +653,12 @@ async def select_template(
     if minutes.owner_user_id is None:
         minutes.owner_user_id = actor.user_id
 
-    # تحديث 2026-09-10 (قرار لاما — إلغاء اختيار المراجعين يدويًا،
-    # المراجعة تصير "مفتوحة" لكل أعضاء اللجنة تلقائيًا بمجرد اختيار
-    # القالب، بمن فيهم رئيسها): تُعبَّأ مرة واحدة فقط (لو فارغة) — إعادة
-    # اختيار القالب لاحقًا لا تصفّر مراجعات موجودة أصلًا.
-    if not minutes.reviewers:
-        minutes.reviewers = [
-            MeetingMinutesReviewer(minutes_id=minutes.minutes_id, user_id=member.user_id)
-            for member in _all_committee_members(committee)
-        ]
+    # تحديث 2026-11-17 (قرار لاما — المراجعة اختيارية): لا تُعبَّأ قائمة
+    # مراجعين تلقائيًا بعد الآن. كانت سابقًا (قرار 2026-09-10) تضيف كل أعضاء
+    # اللجنة كمراجعين "بانتظار المراجعة"، فيظهر للعضو زر مراجعة وهو لا يملك
+    # صلاحية minutes.review أصلًا (403). الآن صف المراجع يُنشأ فقط عند تسجيل
+    # مراجعة فعلية (راجعي submit_review)، ومن يراجع يحدده الأدمن عبر شيك بوكس
+    # "مراجعة المحضر وإبداء الرأي" بشاشة الأدوار والصلاحيات.
 
     # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
     await db.flush()
@@ -701,6 +761,9 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
     # "الصلاحيات بالفرونت تقريب بصري فقط") ونُرجعها صراحة، فيعرض الفرونت
     # زر الكتابة تبعًا لصلاحية حقيقية بدل تخمين محلي ناقص.
     can_edit = await access.has(committee, "minutes.update")
+    # المراجعة الاختيارية (2026-11-17): الواجهة تعرض زر/نموذج المراجعة فقط
+    # لمن can_review=True — نفس قاعدة submit_review حرفيًا (_can_review).
+    can_review = await _can_review(db, actor, committee, access)
 
     minutes = await _load_minutes_row(db, meeting_id)
     if minutes is None:
@@ -740,6 +803,7 @@ async def get_minutes_detail(db: AsyncSession, *, meeting_id: uuid.UUID, actor: 
         "templates": templates,
         "extracted_items": extracted_items,
         "can_edit": can_edit,
+        "can_review": can_review,
         "synced": synced,
     }
 
@@ -853,7 +917,11 @@ async def list_minutes_summaries(
                 "not_finished_yet": False,
                 "stage": minutes.stage.value,
                 "owner_name": owner_name,
-                "reviewers_total": len(minutes.reviewers),
+                # المراجعة اختيارية (2026-11-17): العدد = من سجّل مراجعة فعلًا
+                # (صفوف pending القديمة المعبّأة تلقائيًا لا تُحسب).
+                "reviewers_total": sum(
+                    1 for r in minutes.reviewers if r.status != MeetingMinutesReviewStatus.pending
+                ),
                 "reviewers_approved": sum(
                     1 for r in minutes.reviewers if r.status == MeetingMinutesReviewStatus.approved
                 ),
@@ -957,15 +1025,21 @@ async def submit_review(
     comment: str | None,
 ) -> MeetingMinutes:
     meeting, committee = await _load_meeting_and_committee(db, meeting_id)
-    await _require_access(db, actor, committee, "minutes.review", "ليست لديك صلاحية مراجعة المحضر")
+    if not await _can_review(db, actor, committee):
+        raise MinutesForbiddenError("ليست لديك صلاحية مراجعة المحضر")
 
     minutes = await _load_minutes_or_404(db, meeting_id)
     if minutes.stage != MeetingMinutesStage.preparing:
         raise MinutesInvalidStateError("المحضر ليس بمرحلة تسمح بالمراجعة")
 
+    # تحديث 2026-11-17 (المراجعة اختيارية): صف المراجع يُنشأ هنا عند أول
+    # مراجعة فعلية بدل تعبئته مسبقًا لكل الأعضاء. محاضر قديمة فيها صفوف
+    # "pending" مسبقة تُحدَّث كما هي. UniqueConstraint (minutes_id, user_id)
+    # بقاعدة البيانات يمنع أي تكرار.
     reviewer_row = next((r for r in minutes.reviewers if r.user_id == actor.user_id), None)
     if reviewer_row is None:
-        raise MinutesForbiddenError("لست ضمن مراجعي هذا المحضر")
+        reviewer_row = MeetingMinutesReviewer(minutes_id=minutes.minutes_id, user_id=actor.user_id)
+        minutes.reviewers.append(reviewer_row)
 
     # تحديث 2026-09-10 (قرار لاما — المراجعة "مفتوحة" لكل الأعضاء تلقائيًا،
     # ولا تُستخدم كبوابة أصلًا): تسجيل رأي/ملاحظة المراجع فقط، بلا أي أثر

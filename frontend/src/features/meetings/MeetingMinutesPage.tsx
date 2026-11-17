@@ -239,6 +239,11 @@ export function MeetingMinutesPage() {
   const sendForSignatureMutation = useSendMinutesForSignature()
 
   const myReviewer = minutes?.reviewers.find((r) => r.user.user_id === user?.user_id) ?? null
+  // المراجعة اختيارية (قرار لاما 2026-11-17): يقدر يراجع فقط من عنده صلاحية
+  // "مراجعة المحضر وإبداء الرأي" وهو عضو باللجنة — محسوبة بالباك-إند
+  // (detail.can_review، نفس قاعدة submit_review). الباك-إند يُرجع فقط
+  // المراجعات المسجَّلة فعلًا (بدون pending)، فـ!myReviewer = "ما راجعت بعد".
+  const canReview = !!detail?.can_review
   // تحديث 2026-09-10: محاضر قديمة تكوّنت قبل هذا التحديث ممكن تكون
   // متوقفة فعليًا بمرحلة 'review' أو 'approval' (القيم القديمة قبل حذف
   // خطوة "إرسال للمراجعة") — لازم نتعامل معهم هنا كـ"قابل للاعتماد/تعديل"
@@ -279,8 +284,10 @@ export function MeetingMinutesPage() {
     let items = TAB_ITEMS
     if (!canManage) items = items.filter((t) => t.key !== 'templates')
     if (!canApprove) items = items.filter((t) => t.key !== 'approval')
+    // تبويب المراجعة: لمن يقدر يراجع، أو لمن يعتمد المحضر (يحتاج يشوف الملاحظات).
+    if (!canReview && !canApprove) items = items.filter((t) => t.key !== 'review')
     return items
-  }, [canManage, canApprove])
+  }, [canManage, canApprove, canReview])
 
   function persistSections(next: MinutesSection[]) {
     if (!meetingId) return
@@ -513,7 +520,7 @@ export function MeetingMinutesPage() {
           اعتماد المحضر
         </Button>
       )
-    if (approvableStage && myReviewer && myReviewer.status === 'pending')
+    if (approvableStage && canReview && !myReviewer)
       return (
         <Button icon={<Check size={16} />} loading={approveReviewMutation.isPending} onClick={handleApproveReview}>
           اعتماد المراجعة
@@ -1055,10 +1062,10 @@ export function MeetingMinutesPage() {
           {tab === 'review' && (
             <div className="grid gap-4 lg:grid-cols-3">
               <Card className="lg:col-span-2">
-                <h3 className="text-sm font-semibold text-text-primary">مراجعة المحضر قبل الاعتماد</h3>
+                <h3 className="text-sm font-semibold text-text-primary">مراجعة المحضر قبل الاعتماد (اختيارية)</h3>
                 <p className="mt-1 text-xs text-text-muted">
-                  المراجعة مفتوحة تلقائيًا لكل أعضاء اللجنة بمجرد اختيار القالب — راجع محتوى المحضر وسجِّل
-                  ملاحظاتك، ورئيس اللجنة يقدر يعتمد المحضر في أي وقت دون انتظار اكتمال المراجعات.
+                  المراجعة اختيارية — من لديه صلاحية المراجعة يقدر يسجّل رأيه وملاحظاته على المحضر، ورئيس
+                  اللجنة يقدر يعتمد المحضر في أي وقت دون انتظار أي مراجعة.
                 </p>
 
                 {minutes.stage === 'none' || !minutes.template_id ? (
@@ -1086,7 +1093,7 @@ export function MeetingMinutesPage() {
                       ))}
                     </div>
                     )}
-                    {myReviewer && myReviewer.status === 'pending' && approvableStage && (
+                    {canReview && !myReviewer && approvableStage && (
                       <>
                         <Textarea
                           value={reviewComment}
@@ -1114,9 +1121,9 @@ export function MeetingMinutesPage() {
               </Card>
 
               <Card className="h-fit">
-                <p className="mb-3 text-sm font-semibold text-text-primary">المراجعون</p>
+                <p className="mb-3 text-sm font-semibold text-text-primary">المراجعات المسجَّلة</p>
                 {minutes.reviewers.length === 0 ? (
-                  <p className="text-xs text-text-muted">لم يُحدَّد مراجعون بعد.</p>
+                  <p className="text-xs text-text-muted">لم يسجّل أحد مراجعة بعد.</p>
                 ) : (
                   minutes.reviewers.map((r, i) => (
                     <div
@@ -1159,9 +1166,9 @@ export function MeetingMinutesPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-text-primary">اعتماد المحضر</h3>
                     <p className="mt-1 text-xs text-text-muted">
-                      رئيس اللجنة يقدر يعتمد المحضر في أي وقت دون انتظار اكتمال مراجعة الأعضاء (
-                      {minutes.reviewers.filter((r) => r.status === 'approved').length}/{minutes.reviewers.length}
-                      موافقة مسجَّلة حتى الآن).
+                      رئيس اللجنة يقدر يعتمد المحضر في أي وقت — المراجعة اختيارية (
+                      {minutes.reviewers.filter((r) => r.status === 'approved').length} موافقة من{' '}
+                      {minutes.reviewers.length} مراجعة مسجَّلة حتى الآن).
                     </p>
                   </div>
                 </div>
