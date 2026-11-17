@@ -19,6 +19,8 @@ import {
   ClipboardList,
   CheckCircle2,
   FileSignature,
+  Headset,
+  Ticket,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -93,6 +95,15 @@ const NAV_ITEMS: NavItem[] = [
     icon: Sparkles,
     path: '/documents/search',
     requiredPermission: ['documents.search_all_agent'],
+  },
+  // نظام التذاكر (claude/tickets_spec.md): "تذاكري" لمقدّم الطلب، وصندوق الدعم
+  // لمن يملك "عرض جميع التذاكر" (دور "دعم فني" ينشئه السوبر أدمن).
+  { label: 'تذاكري', icon: Ticket, path: '/tickets', requiredPermission: ['tickets.create'] },
+  {
+    label: 'تذاكر الدعم الفني',
+    icon: Headset,
+    path: '/support/tickets',
+    requiredPermission: ['tickets.view_all'],
   },
   { label: 'الإشعارات', icon: Bell, path: '/notifications' },
 ]

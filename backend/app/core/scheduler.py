@@ -17,7 +17,10 @@
    "قاعدة فترة اللجنة" (طلب صاحبة المشروع 2026-09-13). راجعي
    db/migrations/0033_committee_expiry_notified_at.sql.
 
-آلية منع التكرار (كلا الفحصين): عمود طابع زمن مخصَّص بكل جدول
+3) جدول tickets لإغلاق التذاكر اللي مرّ على حلّها 4 أيام (TKT-FR-021 —
+   migration 0051). منع التكرار هنا بالحالة نفسها: "مغلقة" نهائية.
+
+آلية منع التكرار (الفحصين الأولين): عمود طابع زمن مخصَّص بكل جدول
 (reminder_sent_at/overdue_notified_at بـtasks، expiry_notified_at
 بـcommittees) — تُقارَن بتاريخ اليوم (date) أو بوجودها أصلًا، لا بالطابع
 الزمني الكامل، فلا يتكرر نفس الإشعار حتى لو دارت الحلقة أكثر من مرة.
@@ -99,6 +102,28 @@ async def _check_committee_expiry() -> None:
             await db.commit()
 
 
+async def _close_resolved_tickets() -> None:
+    """
+    الهدف: الإغلاق التلقائي للتذاكر بعد 4 أيام من "تم الحل" (TKT-FR-021).
+
+    المسؤولية: يستدعي ticket_service.auto_close_resolved ثم يشعر كل مقدّم طلب
+    (جرس فقط) ويبث التحديث لمن فاتح التذكرة.
+    منع التكرار: الحالة نفسها (closed نهائية) — التذكرة ما تنقفل مرتين.
+    التأثيرات الجانبية: UPDATE + تدقيق (الفاعل None) + إشعارات + بث لحظي.
+    """
+    from app.core import ticket_realtime
+    from app.services import ticket_service
+    from app.services.notification_service import notify_ticket_auto_closed
+
+    async with AsyncSessionLocal() as db:
+        closed = await ticket_service.auto_close_resolved(db)
+    for item in closed:
+        await notify_ticket_auto_closed(
+            item.ticket_id, ticket_number=item.ticket_number, requester_id=item.requester_id
+        )
+        await ticket_realtime.emit_ticket_updated(item.ticket_id, support_only=False)
+
+
 async def _scheduler_loop() -> None:
     while True:
         try:
@@ -109,6 +134,10 @@ async def _scheduler_loop() -> None:
             await _check_committee_expiry()
         except Exception:  # noqa: BLE001 — نفس فلسفة الفحص أعلاه، فحص مستقل تمامًا
             logger.exception("فشل فحص انتهاء فترة اللجان المجدول")
+        try:
+            await _close_resolved_tickets()
+        except Exception:  # noqa: BLE001 — فحص مستقل، فشله ما يوقف الحلقة
+            logger.exception("فشل الإغلاق التلقائي للتذاكر المحلولة")
         await asyncio.sleep(_CHECK_INTERVAL_SECONDS)
 
 

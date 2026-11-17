@@ -692,3 +692,51 @@ h1 {
     text-decoration: none;
   }
 }
+
+/* --- رسائل التذاكر (TipTap): الكتابة والعرض بنفس الشكل — features/tickets/ticketEditor.tsx --- */
+.ticket-rich {
+  font-size: 0.875rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+/* اتجاه كل فقرة من أول حرف قوي: العربي من اليمين والإنجليزي (رسالة خطأ منسوخة مثلًا) من اليسار. */
+.ticket-rich :is(p, li) {
+  unicode-bidi: plaintext;
+}
+
+.ticket-rich p {
+  margin: 0;
+  min-height: 1.75em;
+}
+
+.ticket-rich p + p {
+  margin-top: 0.25rem;
+}
+
+.ticket-rich ul,
+.ticket-rich ol {
+  margin: 0.25rem 0;
+  padding-inline-start: 1.4rem;
+}
+
+.ticket-rich ul {
+  list-style: disc;
+}
+
+.ticket-rich ol {
+  list-style: decimal;
+}
+
+.ticket-rich strong {
+  font-weight: 700;
+}
+
+/* النص الإرشادي الرمادي بالمحرر الفاضي. */
+.ticket-rich-editable p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  float: right;
+  height: 0;
+  pointer-events: none;
+}

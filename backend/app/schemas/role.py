@@ -20,7 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 #: القادمة — is_enforced تسمح للواجهة بعرضها كـ "قريبًا" بدل تكرار هذه
 #: القائمة يدويًا في كود الفرونت. "committees" أُضيفت بعد تفعيل Phase 2
 #: (طلبات تشكيل اللجان — db/migrations/0009 + app/api/v1/committees.py).
-ENFORCED_CATEGORIES = {"departments", "users", "committees", "job_titles"}
+#: "tickets" (migration 0051): كل خانات التذاكر مُنفَّذة بـapp/services/ticket_service.
+ENFORCED_CATEGORIES = {"departments", "users", "committees", "job_titles", "tickets"}
 
 #: أكواد صلاحيات مفردة مُنفَّذة فعليًا رغم أن فئتها الكاملة لم تُدرَج
 #: أعلاه (بعض أكواد نفس الفئة يبقى كتالوج فقط) — أعيد هذا الاستثناء لأول

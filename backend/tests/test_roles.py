@@ -22,6 +22,8 @@ async def test_permissions_catalog_has_all_categories(client: AsyncClient, auth_
         "documents",
         "minutes",
         "job_titles",
+        # التذاكر (migration 0051).
+        "tickets",
     }
     # مراجعة لاما 2026-09-01: فئة "committee_roles" المصطنعة أُزيلت
     # (db/migrations/0017_remove_committee_roles_category.sql) — أدوار
@@ -49,7 +51,7 @@ async def test_permissions_catalog_marks_enforced_categories(
     body = response.json()
     enforced = {p["category"] for p in body if p["is_enforced"]}
     not_enforced = {p["category"] for p in body if not p["is_enforced"]}
-    assert enforced == {"departments", "users", "committees", "job_titles"}
+    assert enforced == {"departments", "users", "committees", "job_titles", "tickets"}
     assert "meetings" in not_enforced and "tasks" in not_enforced
 
 

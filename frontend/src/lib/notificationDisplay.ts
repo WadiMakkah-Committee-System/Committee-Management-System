@@ -3,6 +3,7 @@ import {
   ClipboardList,
   Gavel,
   ListChecks,
+  Ticket,
   Users2,
   type LucideIcon,
 } from 'lucide-react'
@@ -22,6 +23,7 @@ export const ENTITY_TYPE_LABELS: Record<NotificationEntityType, string> = {
   committee: 'اللجان',
   decision: 'القرارات',
   meeting: 'الاجتماعات',
+  ticket: 'التذاكر',
 }
 
 export const ENTITY_TYPE_ICONS: Record<NotificationEntityType, LucideIcon> = {
@@ -30,6 +32,7 @@ export const ENTITY_TYPE_ICONS: Record<NotificationEntityType, LucideIcon> = {
   committee: Users2,
   decision: Gavel,
   meeting: CalendarDays,
+  ticket: Ticket,
 }
 
 export type NotificationTone = 'info' | 'success' | 'warning' | 'danger' | 'neutral'
@@ -56,6 +59,13 @@ const EVENT_TONE: Record<string, NotificationTone> = {
   meeting_cancelled: 'danger',
   // قاعدة فترة اللجنة (2026-09-13) — راجعي notification_service.notify_committee_expired.
   committee_expired: 'warning',
+  // نظام التذاكر — راجعي notify_ticket_* بـnotification_service.py.
+  ticket_created: 'warning',
+  ticket_replied: 'info',
+  ticket_reopened: 'warning',
+  ticket_resolved: 'success',
+  ticket_assigned: 'info',
+  ticket_closed: 'neutral',
 }
 
 export function notificationTone(eventType: string): NotificationTone {
@@ -104,6 +114,9 @@ export function notificationLinkPath(notification: Notification): string | null 
       return `/decisions/${notification.related_entity_id}`
     case 'meeting':
       return `/meetings/${notification.related_entity_id}`
+    // صفحة التذكرة واحدة للطرفين (الباك-إند يحدد صفة المشاهد).
+    case 'ticket':
+      return `/tickets/${notification.related_entity_id}`
     default:
       return null
   }

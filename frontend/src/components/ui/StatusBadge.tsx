@@ -40,7 +40,7 @@ import type {
   UserStatus,
 } from '@/types'
 
-type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
+export type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
 const TONE_CLASSES: Record<BadgeTone, string> = {
   success: 'bg-success-bg text-success border-success-border/30',
@@ -50,7 +50,11 @@ const TONE_CLASSES: Record<BadgeTone, string> = {
   neutral: 'bg-neutral-bg text-neutral border-neutral-border/30',
 }
 
-function Badge({ tone, icon, children }: { tone: BadgeTone; icon?: ReactNode; children: ReactNode }) {
+/**
+ * الشارة الأساسية الموحّدة (لون حالة + أيقونة + نص) — مُصدَّرة لشارات الوحدات
+ * اللي لها ملف خاص (مثل features/tickets/TicketBadges.tsx) بدل تكرار الألوان.
+ */
+export function Badge({ tone, icon, children }: { tone: BadgeTone; icon?: ReactNode; children: ReactNode }) {
   return (
     <span
       className={cn(

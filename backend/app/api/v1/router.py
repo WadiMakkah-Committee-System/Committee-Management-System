@@ -19,6 +19,7 @@ from app.api.v1 import (
     notifications,
     roles,
     tasks,
+    tickets,
     user_signature,
     users,
 )
@@ -46,5 +47,7 @@ api_router.include_router(meetings.router)
 api_router.include_router(meeting_guests_public_router)
 api_router.include_router(decisions.router)
 api_router.include_router(tasks.router)
+# التذاكر (الدعم الفني — migration 0051).
+api_router.include_router(tickets.router)
 api_router.include_router(notifications.router)
 api_router.include_router(dashboard.router)
