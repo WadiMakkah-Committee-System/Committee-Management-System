@@ -68,6 +68,7 @@ from app.models.meeting_minutes import MeetingMinutes
 from app.models.notification import Notification
 from app.models.role import BROAD_SCOPES, Permission, RolePermission
 from app.models.task import Task, TaskStatus
+from app.models.ticket import Ticket
 from app.models.user import User
 from app.models.user_role import UserRole
 
@@ -912,6 +913,194 @@ async def notify_decision_rejected(decision: Decision) -> None:
         body=decision.rejection_reason or f"ضمن لجنة {decision.committee.name}.",
         related_entity_type="decision",
         related_entity_id=decision.decision_id,
+    )
+
+
+# =====================================================================
+# التذاكر (الدعم الفني) — نقاط الإطلاق بـapp/api/v1/tickets.py والمجدول.
+# القسم 8 بمواصفات التذاكر (tickets_spec.md):
+# - الجرس لكل حدث، والإيميل تنبيه مختصر **بدون محتوى الرسالة** (رقم التذكرة
+#   ورابطها فقط)، لأن المحادثة تبقى داخل المنصة.
+# - إيميلات التذاكر غير أساسية (essential=False): تلتزم بمفتاح
+#   EMAIL_NOTIFICATIONS_ENABLED — مقفل حاليًا، وتشتغل تلقائيًا لما ينفتح.
+# - الفاعل ما يوصله إشعار عن فعله، والملاحظات الداخلية ما لها إشعار.
+# - أعضاء الدعم = من يملك tickets.view_all بنطاق "all" عبر أي من أدواره.
+# =====================================================================
+
+_TICKET_ENTITY = "ticket"
+
+
+def _ticket_link(ticket: Ticket) -> str | None:
+    """رابط التذكرة بالمنصة (لو FRONTEND_URL مضبوط) — يُضاف لإيميل التنبيه."""
+    if not settings.FRONTEND_URL:
+        return None
+    return f"{settings.FRONTEND_URL.rstrip('/')}/tickets/{ticket.ticket_id}"
+
+
+async def _ticket_support_ids() -> list[uuid.UUID]:
+    """
+    الهدف: معرّفات أعضاء الدعم المؤهلين الآن (جلسة مستقلة — يُستدعى منفصلًا عن الطلب).
+    المخرجات: قائمة (فاضية لو فشل الاستعلام — يُسجَّل الفشل ولا يُرفع).
+    """
+    from app.services.ticket_service.access import eligible_support_user_ids_query
+
+    try:
+        async with AsyncSessionLocal() as session:
+            return list((await session.scalars(eligible_support_user_ids_query())).all())
+    except Exception:
+        logger.exception("فشل جلب أعضاء الدعم لإشعار تذكرة")
+        return []
+
+
+async def _ticket_email(recipient_ids: Iterable[uuid.UUID], *, ticket: Ticket, subject: str, line: str) -> None:
+    """
+    الهدف: إيميل تنبيه مختصر لتذكرة — سطر واحد + الرابط + "لا ترد على هذا البريد".
+
+    المدخلات: المستلمون (معرّفات)، التذكرة، عنوان الرسالة، والسطر (بدون محتوى المحادثة).
+    التأثيرات الجانبية: استعلام بريد المستلمين النشطين، ثم send_email (essential=False).
+    لا يرفع استثناء (نفس فلسفة send_email).
+    """
+    ids = {uid for uid in recipient_ids}
+    if not ids:
+        return
+    try:
+        async with AsyncSessionLocal() as session:
+            emails = list(
+                (
+                    await session.scalars(
+                        select(User.email).where(
+                            User.user_id.in_(ids), User.deleted_at.is_(None), User.status == "active"
+                        )
+                    )
+                ).all()
+            )
+    except Exception:
+        logger.exception("فشل جلب بريد مستلمي إشعار تذكرة")
+        return
+    link = _ticket_link(ticket)
+    link_html = f'<p><a href="{_escape_html(link)}">فتح التذكرة</a></p>' if link else ""
+    body = _wrap_html(
+        f"<p>{_escape_html(line)}</p>{link_html}"
+        '<p style="color:#6b7280;font-size:12px;">هذا تنبيه آلي — لا ترد على هذا البريد. المحادثة داخل المنصة.</p>'
+    )
+    await send_email(to=emails, subject=subject, html_body=body, essential=False)
+
+
+async def notify_ticket_created(ticket: Ticket, *, actor_user_id: uuid.UUID) -> None:
+    """
+    الهدف: تذكرة جديدة ← كل أعضاء الدعم (جرس + إيميل).
+    المدخلات: التذكرة بعد الحفظ، ومرسلها (يُستبعد لو كان عضو دعم).
+    """
+    recipients = [uid for uid in await _ticket_support_ids() if uid != actor_user_id]
+    await _notify_many(
+        recipients,
+        event_type="ticket_created",
+        title=f"تذكرة جديدة {ticket.ticket_number}: {ticket.title}",
+        related_entity_type=_TICKET_ENTITY,
+        related_entity_id=ticket.ticket_id,
+    )
+    await _ticket_email(
+        recipients,
+        ticket=ticket,
+        subject=f"تذكرة دعم جديدة {ticket.ticket_number}",
+        line=f"وصلت تذكرة دعم جديدة {ticket.ticket_number}، افتحها من المنصة.",
+    )
+
+
+async def notify_ticket_requester_replied(
+    ticket: Ticket, *, actor_user_id: uuid.UUID, reopened: bool
+) -> None:
+    """
+    الهدف: رد مقدّم الطلب ← المسند إليه، وإذا غير مسندة (أو المسند ما عاد
+    عضو دعم): كل الدعم. إعادة الفتح لها عنوان خاص (جرس + إيميل).
+    """
+    support_ids = await _ticket_support_ids()
+    if ticket.assignee_id is not None and ticket.assignee_id in support_ids:
+        recipients = [ticket.assignee_id]
+    else:
+        recipients = support_ids
+    recipients = [uid for uid in recipients if uid != actor_user_id]
+    if reopened:
+        title = f"أُعيد فتح التذكرة {ticket.ticket_number}"
+        line = f"مقدّم الطلب أعاد فتح التذكرة {ticket.ticket_number}، افتحها من المنصة."
+    else:
+        title = f"رد جديد على التذكرة {ticket.ticket_number}"
+        line = f"وصل رد جديد على التذكرة {ticket.ticket_number}، افتحها من المنصة."
+    await _notify_many(
+        recipients,
+        event_type="ticket_reopened" if reopened else "ticket_replied",
+        title=title,
+        related_entity_type=_TICKET_ENTITY,
+        related_entity_id=ticket.ticket_id,
+    )
+    await _ticket_email(recipients, ticket=ticket, subject=title, line=line)
+
+
+async def notify_ticket_support_replied(ticket: Ticket, *, actor_user_id: uuid.UUID) -> None:
+    """
+    الهدف: رد الدعم (مع أي تغيير حالة بنفس الخطوة) ← مقدّم الطلب، إشعار واحد
+    فقط (القسم 8). لو صارت "تم الحل" العنوان يقول كذا (جرس + إيميل).
+    """
+    if ticket.requester_id == actor_user_id:
+        return
+    if ticket.status == "resolved":
+        title = f"تم حل تذكرتك {ticket.ticket_number}"
+        line = f"تم حل تذكرتك {ticket.ticket_number}، افتحها من المنصة. لو ما انحلت، رد عليها خلال 4 أيام."
+    else:
+        title = f"وصلك رد على تذكرتك {ticket.ticket_number}"
+        line = f"وصلك رد على تذكرتك {ticket.ticket_number}، افتحها من المنصة."
+    await _notify_user(
+        ticket.requester_id,
+        event_type="ticket_resolved" if ticket.status == "resolved" else "ticket_replied",
+        title=title,
+        related_entity_type=_TICKET_ENTITY,
+        related_entity_id=ticket.ticket_id,
+    )
+    await _ticket_email([ticket.requester_id], ticket=ticket, subject=title, line=line)
+
+
+async def notify_ticket_resolved(ticket: Ticket, *, actor_user_id: uuid.UUID) -> None:
+    """الهدف: تغيير الحالة إلى "تم الحل" بدون رد ← مقدّم الطلب (جرس + إيميل)."""
+    if ticket.requester_id == actor_user_id:
+        return
+    title = f"تم حل تذكرتك {ticket.ticket_number}"
+    await _notify_user(
+        ticket.requester_id,
+        event_type="ticket_resolved",
+        title=title,
+        related_entity_type=_TICKET_ENTITY,
+        related_entity_id=ticket.ticket_id,
+    )
+    await _ticket_email(
+        [ticket.requester_id],
+        ticket=ticket,
+        subject=title,
+        line=f"تم حل تذكرتك {ticket.ticket_number}، افتحها من المنصة. لو ما انحلت، رد عليها خلال 4 أيام.",
+    )
+
+
+async def notify_ticket_assigned(ticket: Ticket, *, actor_user_id: uuid.UUID) -> None:
+    """الهدف: إسناد تذكرة لعضو دعم من غيره ← العضو المسند إليه (جرس فقط)."""
+    if ticket.assignee_id is None or ticket.assignee_id == actor_user_id:
+        return
+    await _notify_user(
+        ticket.assignee_id,
+        event_type="ticket_assigned",
+        title=f"أُسندت لك التذكرة {ticket.ticket_number}: {ticket.title}",
+        related_entity_type=_TICKET_ENTITY,
+        related_entity_id=ticket.ticket_id,
+    )
+
+
+async def notify_ticket_auto_closed(ticket_id: uuid.UUID, *, ticket_number: str, requester_id: uuid.UUID) -> None:
+    """الهدف: الإغلاق التلقائي بعد 4 أيام من الحل ← مقدّم الطلب (جرس فقط)."""
+    await _notify_user(
+        requester_id,
+        event_type="ticket_closed",
+        title=f"أُغلقت تذكرتك {ticket_number}",
+        body="مرّت 4 أيام على حلّها. لو تحتاج متابعة، افتح تذكرة جديدة واذكر رقم هذه.",
+        related_entity_type=_TICKET_ENTITY,
+        related_entity_id=ticket_id,
     )
 
 
