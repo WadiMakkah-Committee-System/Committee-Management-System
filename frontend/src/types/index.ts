@@ -1268,7 +1268,7 @@ export interface TaskActivityEntry {
  * رأس db/migrations/0027_notifications_schema.sql لكل الاجتهادات
  * الموثّقة (event_type نصي حر، related_entity_type/id بدون FK فعلي).
  */
-export type NotificationEntityType = 'task' | 'committee_request' | 'committee' | 'decision' | 'meeting'
+export type NotificationEntityType = 'task' | 'committee_request' | 'committee' | 'decision' | 'meeting' | 'ticket'
 
 export interface Notification {
   notification_id: string

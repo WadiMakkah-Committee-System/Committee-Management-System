@@ -113,6 +113,7 @@ export const PERMISSION_CATEGORY_LABELS: Record<string, string> = {
   documents: 'الوثائق',
   document_categories: 'تصنيفات الوثائق',
   minutes: 'المحاضر',
+  tickets: 'التذاكر',
 }
 
 /** ترتيب عرض الأقسام في نموذج إنشاء/تعديل الدور — يطابق ترتيب طلب المتطلبات. */
@@ -128,6 +129,7 @@ export const PERMISSION_CATEGORY_ORDER = [
   'documents',
   'document_categories',
   'minutes',
+  'tickets',
 ]
 
 /**

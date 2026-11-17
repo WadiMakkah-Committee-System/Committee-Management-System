@@ -121,6 +121,16 @@ const ProfilePage = lazy(() =>
 const NotificationsPage = lazy(() =>
   import('@/features/notifications/NotificationsPage').then((m) => ({ default: m.NotificationsPage })),
 )
+// نظام التذاكر (الدعم الفني) — راجعي claude/tickets_spec.md.
+const MyTicketsPage = lazy(() =>
+  import('@/features/tickets/MyTicketsPage').then((m) => ({ default: m.MyTicketsPage })),
+)
+const SupportTicketsPage = lazy(() =>
+  import('@/features/tickets/SupportTicketsPage').then((m) => ({ default: m.SupportTicketsPage })),
+)
+const TicketDetailPage = lazy(() =>
+  import('@/features/tickets/TicketDetailPage').then((m) => ({ default: m.TicketDetailPage })),
+)
 
 /**
  * عند تحديث الصفحة يوجد accessToken في التخزين لكن user في الحالة يكون
@@ -276,6 +286,21 @@ function App() {
             <Route element={<ProtectedRoute anyPermission={['tasks.view']} />}>
               <Route path="/tasks" element={<TasksPage />} />
               <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+            </Route>
+
+            {/* نظام التذاكر (الدعم الفني): "تذاكري" لمن يملك إرسال التذاكر، وصندوق
+                الدعم لمن يملك "عرض جميع التذاكر". صفحة التذكرة نفسها للطرفين —
+                الباك-إند يحدد صفة المشاهد (ويرجع 404 لتذكرة مستخدم آخر). رابط
+                الإشعار /tickets/{id} يفتح للطرفين. */}
+            <Route element={<ProtectedRoute anyPermission={['tickets.create']} />}>
+              <Route path="/tickets" element={<MyTicketsPage />} />
+            </Route>
+            <Route element={<ProtectedRoute anyPermission={['tickets.create', 'tickets.view_all']} />}>
+              <Route path="/tickets/:ticketId" element={<TicketDetailPage />} />
+            </Route>
+            <Route element={<ProtectedRoute anyPermission={['tickets.view_all']} />}>
+              <Route path="/support/tickets" element={<SupportTicketsPage />} />
+              <Route path="/support/tickets/:ticketId" element={<TicketDetailPage />} />
             </Route>
 
             {/* SRS حرفيًا: "توجيه المستخدم بعد تسجيل الدخول للوحة التحكم
