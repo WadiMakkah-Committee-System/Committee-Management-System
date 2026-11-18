@@ -19,6 +19,7 @@ import {
   ClipboardList,
   CheckCircle2,
   FileSignature,
+  BookOpen,
   Headset,
   Ticket,
   type LucideIcon,
@@ -27,6 +28,7 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
 import { BrandWave } from '@/components/brand/BrandWave'
+import { USER_GUIDE } from '@/lib/userGuide'
 
 interface NavItem {
   label: string
@@ -363,6 +365,24 @@ export function Sidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean; on
             })}
           </ul>
         </nav>
+
+        {/*
+         * رابط دليل المستخدم — ثابت أسفل القائمة (خارج NAV_ITEMS لأنه يفتح ملف
+         * PDF بتبويب جديد وليس مسارًا داخليًا). يظهر لكل المستخدمين المسجّلين
+         * بغض النظر عن الدور/الصلاحيات. المسار من USER_GUIDE (src/lib/userGuide.ts).
+         */}
+        <div className="relative shrink-0 border-t border-white/10 px-3 pt-2">
+          <a
+            href={USER_GUIDE.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onCloseMobile}
+            className="group flex items-center gap-3 rounded-sm px-3 py-2.5 text-sm font-medium text-white/70 transition-colors duration-200 hover:bg-sidebar-hover-bg hover:text-white"
+          >
+            <BookOpen size={18} className="transition-transform duration-300 group-hover:scale-110" />
+            <span>{USER_GUIDE.label}</span>
+          </a>
+        </div>
 
         {/* موجة الهوية أسفل القائمة — زخرفة خافتة ثابتة الموقع */}
         <div aria-hidden className="pointer-events-none relative shrink-0 overflow-hidden opacity-[0.55]">
