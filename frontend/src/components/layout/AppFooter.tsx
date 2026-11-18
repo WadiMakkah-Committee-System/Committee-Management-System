@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
-import { Globe, Mail, MapPin, Phone, Printer } from 'lucide-react'
+import { BookOpen, Globe, Mail, MapPin, Phone, Printer } from 'lucide-react'
 import wadiMakkahMark from '@/assets/wadi-makkah-mark.png'
 import { COMPANY_INFO } from '@/lib/companyInfo'
+import { USER_GUIDE } from '@/lib/userGuide'
 
 /**
  * أيقونات حسابات التواصل — SVG مضمّنة لأن lucide-react (v1) لم تعد تشمل
@@ -67,6 +68,8 @@ function ColumnTitle({ children }: { children: ReactNode }) {
  * وسطر الحقوق — كلها من COMPANY_INFO (src/lib/companyInfo.ts).
  * الألوان من tokens الهوية فقط، ويعمل بالوضعين الفاتح والداكن.
  *
+ * يتضمن عمود "روابط" رابط دليل المستخدم (USER_GUIDE من src/lib/userGuide.ts).
+ *
  * بلا تأثيرات جانبية ولا استدعاءات API. الروابط الخارجية تفتح بتبويب جديد.
  */
 export function AppFooter() {
@@ -128,6 +131,17 @@ export function AppFooter() {
                 className="transition-colors hover:text-brand-primary"
               >
                 الموقع الرسمي للشركة
+              </a>
+            </ContactRow>
+            {/* دليل المستخدم (PDF) — المسار من USER_GUIDE (src/lib/userGuide.ts). */}
+            <ContactRow icon={<BookOpen size={16} />}>
+              <a
+                href={USER_GUIDE.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors hover:text-brand-primary"
+              >
+                {USER_GUIDE.label}
               </a>
             </ContactRow>
           </ul>
