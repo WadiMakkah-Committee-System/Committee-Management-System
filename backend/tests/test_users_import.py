@@ -28,6 +28,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import notification_service
 from app.services.user_import_service import (
+    LEGACY_TEMPLATE_HEADERS,
     MAX_ROWS,
     PRELAUNCH_INITIAL_PASSWORD,
     TEMPLATE_HEADERS,
@@ -41,7 +42,10 @@ TEMPLATE = "/api/v1/users/import/template"
 MANAGER = "مدير إدارة (أدمن)"
 
 
-def _xlsx(rows: list[list[str | None]], headers: list[str] = TEMPLATE_HEADERS, sheet: str = "المستخدمين") -> bytes:
+# الاختبارات القديمة بأعمدة النموذج القديم (7 أعمدة، صف لكل مستخدم) — تثبت
+# أن الملفات القديمة ما زالت مقبولة بعد migration 0052. اختبارات النموذج
+# الجديد (صف لكل تعيين) بـtests/test_users_import_assignments.py.
+def _xlsx(rows: list[list[str | None]], headers: list[str] = LEGACY_TEMPLATE_HEADERS, sheet: str = "المستخدمين") -> bytes:
     workbook = Workbook()
     ws = workbook.active
     ws.title = sheet
@@ -166,7 +170,7 @@ async def test_import_creates_users_departments_and_sends_credentials(
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["created_count"] == 3 and body["emails_queued"] == 3
-    assert body["departments_created"] == [{"name": "إدارة الابتكار", "code": "DEP-001"}]
+    assert body["departments_created"] == [{"name": "إدارة الابتكار", "code": "DEP-001", "parent_name": None}]
     by_email = {u["email"]: u for u in body["users"]}
     assert by_email["Sara.Otaibi@example.com"]["username"] == "sara.otaibi"
     assert by_email["Sara.Otaibi@example.com"]["is_department_manager"] is True
@@ -251,7 +255,8 @@ async def test_any_invalid_row_creates_nobody(client: AsyncClient, auth_headers,
         [
             ["سارة", "محمد", "العتيبي", "sara@example.com", None, None, None],  # صالح
             ["", "علي", "الحربي", "not-an-email", None, "مسمى غير موجود", "دور غير موجود"],
-            ["نورة", "سعد", "القحطاني", "SARA@example.com", None, None, None],  # مكرر بالملف
+            # نفس البريد = نفس الشخص (migration 0052) — باسم مختلف ← خطأ بالاسم.
+            ["نورة", "سعد", "القحطاني", "SARA@example.com", None, None, None],
             ["فهد", "سعد", "الدوسري", "super_admin_test@example.com", None, None, None],  # موجود بالنظام
         ]
     )
@@ -262,8 +267,8 @@ async def test_any_invalid_row_creates_nobody(client: AsyncClient, auth_headers,
     assert (3, "الاسم الأول") in errors
     assert (3, "البريد الإلكتروني") in errors
     assert (3, "المسمى الوظيفي") not in errors  # المسمى الجديد يُضاف تلقائيًا (ليس خطأ)
-    assert (3, "الدور في النظام") in errors
-    assert (4, "البريد الإلكتروني") in errors
+    assert (3, "الدور في الإدارة") in errors
+    assert (4, "الاسم الأول") in errors
     assert (5, "البريد الإلكتروني") in errors
     assert "لم يُضف أي مستخدم" in detail["message"]
     await _flush_background()
@@ -305,7 +310,7 @@ async def test_existing_department_with_manager_rejects_new_manager(
 async def test_super_admin_role_cannot_be_assigned(client: AsyncClient, auth_headers, sent) -> None:
     response = await _upload(client, auth_headers, _xlsx([["أ", "ب", "ج", "x@example.com", None, None, "super_admin"]]))
     assert response.status_code == 400
-    assert response.json()["detail"]["errors"][0]["field"] == "الدور في النظام"
+    assert response.json()["detail"]["errors"][0]["field"] == "الدور في الإدارة"
 
 
 # ---------------------------------------------------------------- حدود الملف

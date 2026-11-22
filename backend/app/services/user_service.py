@@ -13,25 +13,28 @@ FR-UM-021 → FR-UM-022 (إنشاء، عرض، تعديل، حذف، إيقاف�
 ملاحظات:
 - لا يوجد أي تحقق من الصلاحيات (RBAC) هنا — هذا مسؤولية core/dependencies.py
   وطبقة الـ API. هذه الخدمة تفترض أن الاستدعاء مصرّح له مسبقًا.
-- قاعدة عمل مهمة (موثّقة في ERD): كل مستخدم ينتمي لإدارة واحدة فقط
-  (dep_id مفرد، وليس علاقة متعددة).
+- تعدد الإدارات (migration 0052): users.dep_id = الإدارة الأساسية، وبقية
+  إدارات المستخدم (بدور محدد في كل إدارة) بجدول user_department_roles —
+  راجعي user_assignment_service.
 """
 
 import asyncio
 import uuid
 
-from sqlalchemy import delete, func, literal_column, or_, select, type_coerce
+from sqlalchemy import delete, exists, func, literal_column, or_, select, type_coerce
 from sqlalchemy.dialects.postgresql import JSONB, aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, noload, raiseload, selectinload
+from sqlalchemy.orm import joinedload, noload, raiseload, selectinload, undefer
 
 from app.core.security import hash_password
 from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.role import Permission, Role, RolePermission
 from app.models.user import User, UserStatus
+from app.models.user_department_role import UserDepartmentRole
 from app.models.user_role import UserRole
-from app.services import audit_service
+from app.services import audit_service, user_assignment_service
+from app.services.user_assignment_service import Assignment
 
 
 async def _count_other_active_super_admins(db: AsyncSession, *, excluding_user_id: uuid.UUID) -> int:
@@ -250,6 +253,15 @@ async def load_profile_extras(db: AsyncSession, *, user_id: uuid.UUID) -> dict:
     }
 
 
+def _assignments_audit(assignments: list[Assignment] | None) -> list[dict] | None:
+    """شكل التعيينات بسجل التدقيق (معرّفات كنص)."""
+    if assignments is None:
+        return None
+    return [
+        {"role_id": str(a.role_id), "dep_id": str(a.dep_id) if a.dep_id else None} for a in assignments
+    ]
+
+
 async def create_user(
     db: AsyncSession,
     *,
@@ -265,6 +277,7 @@ async def create_user(
     dep_id: uuid.UUID | None = None,
     job_title_id: uuid.UUID | None = None,
     status: UserStatus = UserStatus.active,
+    assignments: list[Assignment] | None = None,
 ) -> User | None:
     """
     إنشاء مستخدم جديد. يرفع ValueError إذا كان username أو email مستخدمًا
@@ -280,9 +293,22 @@ async def create_user(
     بالقائمة). role_id وحده = دور واحد (الطريقة القديمة). راجعي
     _normalize_role_selection.
 
-    التأثيرات الجانبية: صف users + صف user_roles لكل دور + سجل تدقيق — كلها
-    بمعاملة واحدة.
+    تعدد الإدارات (migration 0052): assignments = تعيينات (دور + إدارة).
+    لو أُرسلت تحلّ محل role_ids/role_id: الأدوار = أدوار التعيينات (أول دور =
+    الدور الحالي ما لم يُحدَّد role_id)، والإدارة الأساسية = dep_id لو أُرسل
+    وإلا أول إدارة بالتعيينات. بدونها (المسار القديم): كل دور على dep_id.
+
+    التأثيرات الجانبية: صف users + صف user_roles لكل دور + تعييناته + سجل
+    تدقيق — كلها بمعاملة واحدة.
     """
+    if assignments is not None:
+        assignments = user_assignment_service.normalize_assignments(assignments)
+        await user_assignment_service.validate_departments(
+            db, user_assignment_service.department_ids_of(assignments)
+        )
+        role_ids = user_assignment_service.role_ids_of(assignments)
+        if dep_id is None:
+            dep_id = next(iter(user_assignment_service.department_ids_of(assignments)), None)
     requested_ids, preferred_active = _normalize_role_selection(role_ids, role_id)
     requested_ids = requested_ids or []
 
@@ -326,6 +352,16 @@ async def create_user(
     db.add_all(
         [UserRole(user_id=user.user_id, role_id=role.role_id, assigned_by=actor_user_id) for role in roles]
     )
+    await db.flush()  # user_roles قبل التعيينات (قيد user_department_roles_role_assigned_fkey)
+    if assignments is not None:
+        await user_assignment_service.replace_assignments(
+            db, user_id=user.user_id, assignments=assignments, actor_user_id=actor_user_id
+        )
+    else:
+        await user_assignment_service.sync_roles_to_primary(
+            db, user_id=user.user_id, role_ids=[r.role_id for r in roles], dep_id=dep_id,
+            actor_user_id=actor_user_id,
+        )
 
     active_name = next((r.name for r in roles if r.role_id == active_role_id), None)
     await audit_service.log_action(
@@ -338,6 +374,9 @@ async def create_user(
             "username": username,
             "role": active_name,
             "roles": [r.name for r in roles],
+            "assignments": _assignments_audit(assignments)
+            if assignments is not None
+            else None,
         },
     )
 
@@ -386,17 +425,37 @@ async def list_users(
             # باستعلام واحد إضافي فقط (selectin = IN على كل المعرّفات)، بأعمدة
             # الدور فقط بلا صلاحياته — تعرضها صفحة المستخدمين ونموذج التعديل.
             selectinload(User.assigned_roles).raiseload("*", sql_only=True),
+            *_assignment_link_options(),
             raiseload("*", sql_only=True),
         )
         # حسابات الضيوف المؤقتة (0047) لا تظهر بقائمة المستخدمين ولا بمنتقيات الأعضاء.
         .where(User.deleted_at.is_(None), User.is_guest.is_(False))
     )
+    # العضوية (migration 0052): الإدارة الأساسية أو أي تعيين عليها.
     if dep_id is not None:
-        stmt = stmt.where(User.dep_id == dep_id)
+        stmt = stmt.where(_member_of_any([dep_id]))
     if dep_ids is not None:
-        stmt = stmt.where(User.dep_id.in_(dep_ids))
+        stmt = stmt.where(_member_of_any(list(dep_ids)))
     result = await db.execute(stmt.order_by(User.created_at.desc()))
     return list(result.unique().scalars().all())
+
+
+def _member_of_any(dep_ids: list[uuid.UUID]):
+    """شرط: المستخدم عضو بإحدى الإدارات (أساسية أو تعيين) — migration 0052."""
+    return or_(
+        User.dep_id.in_(dep_ids),
+        exists().where(UserDepartmentRole.user_id == User.user_id, UserDepartmentRole.dep_id.in_(dep_ids))
+        .correlate_except(UserDepartmentRole),
+    )
+
+
+def _assignment_link_options() -> tuple:
+    """تعيينات المستخدم (UserOut.assignments) باسم الإدارة والدور — استعلام واحد إضافي."""
+    links = selectinload(User.assignment_links)
+    return (
+        links.joinedload(UserDepartmentRole.department).raiseload("*", sql_only=True),
+        links.joinedload(UserDepartmentRole.role).raiseload("*", sql_only=True),
+    )
 
 
 def _profile_options() -> tuple:
@@ -407,6 +466,9 @@ def _profile_options() -> tuple:
         # إدارات تابعة لإدارة المستخدم (نطاق department_tree — migration
         # 0048): subquery داخل نفس الاستعلام، بلا رحلة إضافية.
         joinedload(User.department).undefer(Department.child_dep_ids),
+        # تعيينات (إدارة + دور) بكل إداراتها وتوابعها وأمّها — عمود JSONB
+        # داخل نفس الاستعلام (migration 0052)، يحسب منه النطاق بالذاكرة.
+        undefer(User.department_assignment_rows),
         manager.noload(User.role),
         manager.noload(User.job_title),
         joinedload(User.role).joinedload(Role.role_permission_links).joinedload(
@@ -463,6 +525,7 @@ async def get_user_with_roles(db: AsyncSession, user_id: uuid.UUID) -> User | No
         .options(
             *_profile_options(),
             selectinload(User.assigned_roles).raiseload("*", sql_only=True),
+            *_assignment_link_options(),
         )
         .where(User.user_id == user_id, User.deleted_at.is_(None))
     )
@@ -569,9 +632,17 @@ async def update_user(
     role_ids: list[uuid.UUID] | None = None,
     dep_id: uuid.UUID | None = None,
     job_title_id: uuid.UUID | None = None,
+    assignments: list[Assignment] | None = None,
 ) -> User | None:
     """
     تعديل بيانات مستخدم موجود. يرجع None إذا لم يوجد.
+
+    تعدد الإدارات (migration 0052): assignments (لو أُرسلت) تستبدل أدوار
+    المستخدم وتعييناته بالكامل (الأدوار = أدوار التعيينات)، والإدارة الأساسية
+    = dep_id لو أُرسل وإلا تبقى لو ما زالت من إداراته، وإلا أول إدارة
+    بالتعيينات. بدونها: المسار القديم (role_ids/dep_id) — الأدوار المعدّلة أو
+    الإدارة المنقولة تُعاد مزامنتها كدور × الإدارة الأساسية، إلا لمستخدم متعدد
+    الإدارات (تعييناته تبقى، فلا تُمسح بصمت من عميل قديم).
 
     الأدوار (تعدد الأدوار — migration 0046):
     - role_ids = None و role_id = None: الأدوار بلا تغيير.
@@ -588,6 +659,17 @@ async def update_user(
     if user is None:
         return None
 
+    before_assignments = await user_assignment_service.load_assignments(db, user.user_id)
+    if assignments is not None:
+        assignments = user_assignment_service.normalize_assignments(assignments)
+        assignment_deps = user_assignment_service.department_ids_of(assignments)
+        await user_assignment_service.validate_departments(db, assignment_deps)
+        role_ids = user_assignment_service.role_ids_of(assignments)
+        if dep_id is None:
+            if user.dep_id is not None and (user.dep_id in assignment_deps or not assignment_deps):
+                dep_id = user.dep_id
+            else:
+                dep_id = next(iter(assignment_deps), None)
     requested_ids, preferred_active = _normalize_role_selection(role_ids, role_id)
 
     current_roles = await _load_assigned_roles(db, user.user_id)
@@ -595,6 +677,7 @@ async def update_user(
         "role": user.role.name if user.role else None,
         "roles": [r.name for r in current_roles],
         "dep_id": str(user.dep_id) if user.dep_id else None,
+        "assignments": _assignments_audit(before_assignments),
     }
 
     new_roles: list | None = None
@@ -626,8 +709,26 @@ async def update_user(
             preferred_active=preferred_active,
             actor_user_id=actor_user_id,
         )
-    if dep_id is not None:
+    old_dep_id = user.dep_id
+    if assignments is not None:
         user.dep_id = dep_id
+        await db.flush()  # user_roles الجديدة قبل التعيينات
+        await user_assignment_service.replace_assignments(
+            db, user_id=user.user_id, assignments=assignments, actor_user_id=actor_user_id
+        )
+    elif new_roles is not None or (dep_id is not None and dep_id != old_dep_id):
+        if dep_id is not None:
+            user.dep_id = dep_id
+        multi = {a.dep_id for a in before_assignments if a.dep_id is not None} - {old_dep_id}
+        if not multi:
+            await db.flush()
+            await user_assignment_service.sync_roles_to_primary(
+                db,
+                user_id=user.user_id,
+                role_ids=[r.role_id for r in (new_roles if new_roles is not None else current_roles)],
+                dep_id=user.dep_id,
+                actor_user_id=actor_user_id,
+            )
     if job_title_id is not None:
         job_title = await db.get(JobTitle, job_title_id)
         if job_title is None:
@@ -649,13 +750,20 @@ async def update_user(
             "after": {
                 "role": user.role.name if user.role else None,
                 "roles": [r.name for r in after_roles],
+                "dep_id": str(user.dep_id) if user.dep_id else None,
+                "assignments": _assignments_audit(assignments)
+                if assignments is not None
+                else None,
             },
         },
     )
 
     # تحسين أداء 2026-10-28: إعادة التحميل داخل نفس المعاملة قبل commit (بعد flush) بدل بعده — توفّر رحلتي BEGIN/ROLLBACK لمعاملة قراءة ثانية.
     await db.flush()
-    result = await get_user_with_roles(db, user.user_id)
+    # الإدارة الأساسية والتعيينات تغيّرت بنفس الجلسة — إعادة تحميل كاملة.
+    target_user_id = user.user_id
+    db.expire(user)
+    result = await get_user_with_roles(db, target_user_id)
     await db.commit()
     return result
 

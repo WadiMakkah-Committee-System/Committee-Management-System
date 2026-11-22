@@ -111,6 +111,13 @@ export function useImportUsers() {
   })
 }
 
+/** معاينة ملف المستخدمين قبل الرفع الفعلي — بلا كتابة، فلا تحديث للقوائم. */
+export function usePreviewImportUsers() {
+  return useMutation({
+    mutationFn: (file: File) => usersApi.previewImportUsers(file),
+  })
+}
+
 /** تحميل نموذج رفع المستخدمين كملف .xlsx (يمر عبر axios لأن التحميل يحتاج التوكن). */
 export function useDownloadImportTemplate() {
   return useMutation({

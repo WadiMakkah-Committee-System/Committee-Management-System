@@ -367,3 +367,18 @@ export function departmentHierarchyOptions(
   for (const d of options) if (!placed.has(d.dep_id) && allowed.has(d.dep_id)) result.push({ value: d.dep_id, label: label(d) })
   return result
 }
+
+/**
+ * إدارات المستخدم الأخرى غير الأساسية (تعدد الإدارات — migration 0052)، بلا
+ * تكرار — لعرض "+N" بجانب الإدارة الأساسية. [] لو التعيينات غير محمّلة.
+ */
+export function otherDepartmentNames(user: {
+  dep_id: string | null
+  assignments?: { department: { dep_id: string; name: string } }[] | null
+}): string[] {
+  const names = new Map<string, string>()
+  for (const a of user.assignments ?? []) {
+    if (a.department.dep_id !== user.dep_id) names.set(a.department.dep_id, a.department.name)
+  }
+  return [...names.values()]
+}

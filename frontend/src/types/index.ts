@@ -136,8 +136,14 @@ export interface User {
    * assignedRoles() من @/lib/utils بدل قراءة هذا الحقل مباشرة.
    */
   roles?: RoleSummary[] | null
+  /** الإدارة الأساسية (migration 0052) — للعرض. بقية إداراته في assignments. */
   dep_id: string | null
   department: Department | null
+  /**
+   * تعيينات المستخدم (إدارة + دور) — migration 0052. null/غائب حين لا يحمّلها
+   * المسار (مثل أعضاء الإدارة) — النموذج يجلب تفاصيل المستخدم وقتها.
+   */
+  assignments?: UserAssignment[] | null
   job_title_id: string | null
   job_title: JobTitle | null
   status: UserStatus
@@ -215,6 +221,18 @@ export interface DepartmentDetail extends Department {
   children?: DepartmentChild[]
 }
 
+/** تعيين: دور نظامي على إدارة (migration 0052). */
+export interface UserAssignment {
+  role: RoleSummary
+  department: { dep_id: string; name: string; parent_dep_id: string | null }
+}
+
+/** تعيين بالطلب — dep_id = null ⇒ دور بلا إدارة محددة (نطاقه على الإدارة الأساسية). */
+export interface UserAssignmentInput {
+  role_id: string
+  dep_id: string | null
+}
+
 export interface UserCreatePayload {
   first_name: string
   middle_name: string
@@ -226,10 +244,13 @@ export interface UserCreatePayload {
    * أدوار المستخدم (تعدد الأدوار، migration 0046) — دور واحد أو أكثر، أو []
    * بلا دور (مراجعة لاما 2026-08-30). أول دور = دوره الحالي عند أول دخول.
    */
-  role_ids: string[]
+  role_ids?: string[]
+  /** الإدارة الأساسية — مع assignments: الافتراضي أول إدارة بالتعيينات. */
   dep_id: string | null
   job_title_id: string | null
   status: UserStatus
+  /** تعدد الإدارات (migration 0052): لو أُرسلت تحلّ محل role_ids. أول تعيين = الدور الحالي. */
+  assignments?: UserAssignmentInput[]
 }
 
 export interface UserUpdatePayload {
@@ -245,6 +266,8 @@ export interface UserUpdatePayload {
   role_ids?: string[]
   dep_id?: string | null
   job_title_id?: string | null
+  /** تعدد الإدارات (migration 0052): استبدال الأدوار والتعيينات بالكامل — غائب = بلا تغيير. */
+  assignments?: UserAssignmentInput[]
 }
 
 export interface DepartmentCreatePayload {

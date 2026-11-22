@@ -24,6 +24,35 @@ from app.schemas.job_title import JobTitleOut
 from app.schemas.role import RoleSummaryOut
 
 
+class UserAssignmentIn(BaseModel):
+    """
+    تعيين واحد (migration 0052): دور نظامي على إدارة. dep_id = None ⇒ دور
+    بلا إدارة محددة (نطاقه على الإدارة الأساسية).
+    """
+
+    role_id: uuid.UUID
+    dep_id: uuid.UUID | None = None
+
+
+class AssignmentDepartmentOut(BaseModel):
+    """الإدارة داخل التعيين — أعمدتها فقط (بلا مديرها)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    dep_id: uuid.UUID
+    name: str
+    parent_dep_id: uuid.UUID | None = None
+
+
+class UserAssignmentOut(BaseModel):
+    """تعيين للعرض: الإدارة والدور بأسمائهما."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    role: RoleSummaryOut
+    department: AssignmentDepartmentOut
+
+
 class UserCreate(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     middle_name: str = Field(min_length=1, max_length=100)
@@ -41,6 +70,9 @@ class UserCreate(BaseModel):
     dep_id: uuid.UUID | None = None
     job_title_id: uuid.UUID | None = None
     status: UserStatus = UserStatus.active
+    # تعدد الإدارات (migration 0052): لو أُرسلت تحلّ محل role_ids/role_id،
+    # وdep_id يصير "الإدارة الأساسية" (الافتراضي: أول إدارة بالتعيينات).
+    assignments: list[UserAssignmentIn] | None = Field(default=None, max_length=50)
 
     @field_validator("password")
     @classmethod
@@ -65,6 +97,9 @@ class UserUpdate(BaseModel):
     role_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
     dep_id: uuid.UUID | None = None
     job_title_id: uuid.UUID | None = None
+    # تعدد الإدارات (migration 0052): None = بلا تغيير، قائمة = استبدال
+    # الأدوار والتعيينات بالكامل — راجعي user_service.update_user.
+    assignments: list[UserAssignmentIn] | None = Field(default=None, max_length=50)
 
 
 class ActiveRoleSwitch(BaseModel):
@@ -96,8 +131,11 @@ class UserOut(BaseModel):
     # لا يحمّلها المسار (مثل قائمة أعضاء الإدارة) — بدل استعلام إضافي خفي.
     # راجعي User.roles.
     roles: list[RoleSummaryOut] | None = None
+    # الإدارة الأساسية (migration 0052) — للعرض. بقية إداراته في assignments.
     dep_id: uuid.UUID | None
     department: DepartmentOut | None = None
+    # تعيينات (إدارة + دور) — null حين لا يحمّلها المسار (راجعي User.assignments).
+    assignments: list[UserAssignmentOut] | None = None
     job_title_id: uuid.UUID | None
     job_title: JobTitleOut | None = None
     status: UserStatus

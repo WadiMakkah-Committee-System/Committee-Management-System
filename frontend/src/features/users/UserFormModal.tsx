@@ -1,14 +1,13 @@
 import { useEffect, useRef } from 'react'
-import { Controller, useForm, useWatch } from 'react-hook-form'
+import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Copy, RefreshCw, Save } from 'lucide-react'
+import { Copy, Plus, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Button } from '@/components/ui/Button'
 import { CreatableSelect } from '@/components/ui/CreatableSelect'
-import { MultiCheckPicker } from '@/components/ui/MultiCheckPicker'
 import { useToast } from '@/components/ui/Toast'
 import { useRoleOptions } from '@/hooks/useRoles'
 import { useUserDetail } from '@/hooks/useUsers'
@@ -19,17 +18,23 @@ import {
   suggestUsernameFromEmail,
 } from '@/lib/credentialSuggestions'
 import { assignedRoles, roleLabel } from '@/lib/utils'
-import type { Department, RoleOption, User, UserCreatePayload, UserUpdatePayload } from '@/types'
+import type { Department, User, UserAssignmentInput, UserCreatePayload, UserUpdatePayload } from '@/types'
 
 const baseFields = {
   first_name: z.string().min(1, 'الاسم الأول مطلوب').max(100),
   middle_name: z.string().min(1, 'الاسم الأوسط مطلوب').max(100),
   last_name: z.string().min(1, 'اسم العائلة مطلوب').max(100),
   email: z.string().email('بريد إلكتروني غير صحيح'),
-  // اختياري (مراجعة لاما 2026-08-30 — "لا تجعل حقل الدور إجباريًا عند إضافة مستخدم").
-  // تعدد الأدوار (migration 0046): دور واحد أو أكثر — [] = بلا دور. أول دور
-  // مختار = دوره الحالي عند أول دخول (ويبدّل بينها من الشريط العلوي).
-  role_ids: z.array(z.string()),
+  // تعدد الإدارات (migration 0052 — قرار لاما 2026-11-22): صف لكل تعيين
+  // (إدارة + دور). [] = بلا دور (مراجعة لاما 2026-08-30: الدور اختياري). أول
+  // تعيين = دوره الحالي عند أول دخول، ويبدّل بين أدواره من الشريط العلوي.
+  assignments: z.array(
+    z.object({
+      dep_id: z.string(),
+      role_id: z.string().min(1, 'اختر الدور'),
+    }),
+  ),
+  // الإدارة الأساسية (للعرض) — من إدارات التعيينات، أو أي إدارة لو بلا تعيينات.
   dep_id: z.string(),
   job_title_id: z.string(),
 }
@@ -55,15 +60,29 @@ const editSchema = z.object(baseFields)
 type CreateFormValues = z.infer<typeof createSchema>
 type EditFormValues = z.infer<typeof editSchema>
 
-/** معرّفات أدوار المستخدم: الدور الحالي أولًا ثم بقية أدواره المسندة (تعدد الأدوار). */
-function orderedRoleIds(user: User): string[] {
+type AssignmentRow = { dep_id: string; role_id: string }
+
+/**
+ * تعيينات المستخدم كصفوف النموذج: الدور الحالي أولًا (فيبقى الحالي بعد الحفظ)،
+ * وأدواره المسندة بلا إدارة محددة تظهر بـ"بدون إدارة". مستخدم بلا
+ * assignments محمّلة: كل دور على إدارته الأساسية (نفس معنى ما قبل 0052).
+ */
+function assignmentRows(user: User): AssignmentRow[] {
   const currentId = user.role?.role_id
-  return [
-    ...(currentId ? [currentId] : []),
-    ...assignedRoles(user)
-      .map((r) => r.role_id)
-      .filter((id) => id !== currentId),
-  ]
+  const rows: AssignmentRow[] = user.assignments
+    ? user.assignments.map((a) => ({ dep_id: a.department.dep_id, role_id: a.role.role_id }))
+    : []
+  const withDep = new Set(rows.map((r) => r.role_id))
+  for (const role of assignedRoles(user)) {
+    if (!withDep.has(role.role_id)) {
+      rows.push({ dep_id: user.assignments ? '' : (user.dep_id ?? ''), role_id: role.role_id })
+    }
+  }
+  return [...rows.filter((r) => r.role_id === currentId), ...rows.filter((r) => r.role_id !== currentId)]
+}
+
+function toPayload(rows: AssignmentRow[]): UserAssignmentInput[] {
+  return rows.map((r) => ({ role_id: r.role_id, dep_id: r.dep_id || null }))
 }
 
 interface UserFormModalProps {
@@ -91,10 +110,10 @@ export function UserFormModal({
   serverError,
 }: UserFormModalProps) {
   const isEdit = !!user
-  // تعدد الأدوار (migration 0046): بعض الشاشات (أعضاء الإدارة) تمرّر مستخدمًا
-  // بدون قائمة أدواره كاملة (roles = null) — نجلب تفاصيله عند فتح النموذج حتى
-  // يعرض المنتقي كل أدواره، بدل أن يظهر الدور الحالي وحده ثم يُحفظ وحده.
-  const rolesUnknown = isEdit && open && !user?.roles
+  // تعدد الأدوار/الإدارات (0046/0052): بعض الشاشات (أعضاء الإدارة) تمرّر
+  // مستخدمًا بدون أدواره وتعييناته كاملة — نجلب تفاصيله عند فتح النموذج حتى
+  // يعرض كل تعييناته، بدل أن يظهر بعضها ثم يُحفظ ناقصًا.
+  const rolesUnknown = isEdit && open && (!user?.roles || !user?.assignments)
   const { data: userDetail } = useUserDetail(rolesUnknown ? user?.user_id : undefined)
   // تحديث 2026-09-12 (بلاغ لاما — بطء ملحوظ بكل الصفحات): هذا المودال
   // يُركَّب (mount) ضمن شجرة UsersPage/MeetingFormModal بشكل دائم — كان
@@ -112,10 +131,17 @@ export function UserFormModal({
   // أبدًا (الباك-إند يرفضها فعليًا أيضًا — راجعي user_service.create_user).
   const systemRoles = (roles ?? []).filter((r) => r.kind === 'user')
   const jobTitleOptions = (jobTitles ?? []).map((jt) => ({ value: jt.job_title_id, label: jt.name }))
+  // الإدارة التابعة تظهر باسم أمها (هيكل المستويين — migration 0048).
+  const departmentName = new Map(departments.map((d) => [d.dep_id, d.name]))
+  const departmentLabel = (d: Department) =>
+    d.parent_dep_id && departmentName.has(d.parent_dep_id)
+      ? `${departmentName.get(d.parent_dep_id)} ← ${d.name}`
+      : d.name
   const depOptions = [
     { value: '', label: 'بدون إدارة' },
-    ...departments.map((d) => ({ value: d.dep_id, label: d.name })),
+    ...departments.map((d) => ({ value: d.dep_id, label: departmentLabel(d) })),
   ]
+  const roleOptions = systemRoles.map((r) => ({ value: r.role_id, label: roleLabel(r) }))
   const statusOptions = [
     { value: 'active', label: 'نشط' },
     { value: 'suspended', label: 'موقوف' },
@@ -131,14 +157,22 @@ export function UserFormModal({
     setValue,
     getValues,
     getFieldState,
+    resetField,
     formState: { errors, isSubmitted, dirtyFields },
   } = useForm<CreateFormValues | EditFormValues>({
     resolver: zodResolver(isEdit ? editSchema : createSchema),
   })
 
+  const { fields, append, remove } = useFieldArray({ control, name: 'assignments' })
+
   // هل عدّل السوبر ادمن اسم المستخدم يدويًا؟ طالما لا، يتبع الحقل
   // البريد الإلكتروني تلقائيًا. إذا مسح الحقل بالكامل يعود الاقتراح التلقائي.
   const usernameEditedManually = useRef(false)
+  const detailRef = useRef<User | undefined>(undefined)
+  // قبل تأثير reset أدناه (التأثيرات تعمل بترتيب تعريفها).
+  useEffect(() => {
+    detailRef.current = rolesUnknown ? userDetail : undefined
+  }, [rolesUnknown, userDetail])
 
   useEffect(() => {
     if (open) {
@@ -148,7 +182,8 @@ export function UserFormModal({
         middle_name: user?.middle_name ?? '',
         last_name: user?.last_name ?? '',
         email: user?.email ?? '',
-        role_ids: user ? orderedRoleIds(user) : [],
+        // التفاصيل الكاملة لو وصلت قبل الفتح (من الكاش) — وإلا تُحدَّث عند وصولها أدناه.
+        assignments: user ? assignmentRows(detailRef.current ?? user) : [],
         dep_id: user?.dep_id ?? defaultDepId ?? '',
         job_title_id: user?.job_title_id ?? '',
         // كلمة المرور المؤقتة تُملأ تلقائيًا عند فتح نموذج الإضافة (قابلة للتعديل).
@@ -159,14 +194,29 @@ export function UserFormModal({
     }
   }, [open, user, isEdit, defaultDepId, reset])
 
-  // وصلت أدوار المستخدم الكاملة (حين لم تكن مع بيانات الشاشة): نحدّث حقل
-  // الأدوار وحده — بدون مسح أي تعديل بدأه المسؤول بالحقول الأخرى، وبدون
-  // الكتابة فوق الأدوار لو عدّلها هو بنفسه قبل الوصول.
+  // وصلت تعيينات المستخدم الكاملة (حين لم تكن مع بيانات الشاشة): نحدّث حقل
+  // التعيينات وحده — بدون مسح أي تعديل بدأه المسؤول بالحقول الأخرى، وبدون
+  // الكتابة فوقه لو عدّله هو بنفسه قبل الوصول.
   useEffect(() => {
     if (!rolesUnknown || !userDetail) return
-    if (getFieldState('role_ids').isDirty) return
-    setValue('role_ids', orderedRoleIds(userDetail), { shouldDirty: false })
-  }, [rolesUnknown, userDetail, getFieldState, setValue])
+    if (getFieldState('assignments').isDirty) return
+    resetField('assignments', { defaultValue: assignmentRows(userDetail) })
+  }, [rolesUnknown, userDetail, getFieldState, resetField])
+
+  const watchedAssignments = useWatch({ control, name: 'assignments' }) as AssignmentRow[] | undefined
+  // خيارات الإدارة الأساسية: إدارات التعيينات، وإلا كل الإدارات.
+  const assignmentDepIds = [...new Set((watchedAssignments ?? []).map((a) => a.dep_id).filter(Boolean))]
+  const primaryOptions = assignmentDepIds.length
+    ? depOptions.filter((o) => assignmentDepIds.includes(o.value))
+    : depOptions
+  const primaryDepId = useWatch({ control, name: 'dep_id' })
+  // الإدارة الأساسية لازم تكون من إدارات التعيينات — تُصحَّح تلقائيًا لأولها.
+  const assignmentDepKey = assignmentDepIds.join(',')
+  useEffect(() => {
+    const ids = assignmentDepKey ? assignmentDepKey.split(',') : []
+    if (!open || !ids.length || ids.includes(primaryDepId ?? '')) return
+    setValue('dep_id', ids[0], { shouldDirty: true })
+  }, [open, assignmentDepKey, primaryDepId, setValue])
 
   const email = useWatch({ control, name: 'email' })
 
@@ -206,9 +256,11 @@ export function UserFormModal({
         middle_name: v.middle_name,
         last_name: v.last_name,
         email: v.email,
-        // تعدد الأدوار: الأدوار تُرسَل فقط لو عدّلها المسؤول فعلًا — حماية
-        // إضافية من استبدال أدوار المستخدم بقائمة ناقصة لو تعذّر جلبها كاملة.
-        ...((dirtyFields as { role_ids?: unknown }).role_ids ? { role_ids: v.role_ids } : {}),
+        // التعيينات تُرسَل فقط لو عدّلها المسؤول فعلًا — حماية إضافية من
+        // استبدال تعيينات المستخدم بقائمة ناقصة لو تعذّر جلبها كاملة.
+        ...((dirtyFields as { assignments?: unknown }).assignments
+          ? { assignments: toPayload(v.assignments) }
+          : {}),
         dep_id: v.dep_id || null,
         job_title_id: v.job_title_id || null,
       })
@@ -221,7 +273,7 @@ export function UserFormModal({
         username: v.username,
         email: v.email,
         password: v.password,
-        role_ids: v.role_ids,
+        assignments: toPayload(v.assignments),
         dep_id: v.dep_id || null,
         job_title_id: v.job_title_id || null,
         status: v.status,
@@ -304,33 +356,63 @@ export function UserFormModal({
           </div>
         )}
 
-        <Controller
-          name="role_ids"
-          control={control}
-          render={({ field }) => (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-text-primary">الأدوار</span>
-              <MultiCheckPicker<RoleOption>
-                items={systemRoles}
-                getId={(r) => r.role_id}
-                getLabel={(r) => roleLabel(r)}
-                getSublabel={(r) => r.description}
-                selected={field.value ?? []}
-                onChange={field.onChange}
-                searchPlaceholder="ابحث عن دور..."
-                emptyText="لا توجد أدوار مطابقة"
-                error={errors.role_ids?.message}
-              />
-              <p className="text-xs text-text-muted">
-                {isEdit
-                  ? 'يمكن اختيار أكثر من دور — يبقى دوره الحالي كما هو لو ما زال ضمن أدواره، والمستخدم يبدّل بينها من الشريط العلوي'
-                  : 'اختياري، ويمكن اختيار أكثر من دور — أول دور تختاره يكون دوره عند أول دخول، ويبدّل بينها من الشريط العلوي'}
-              </p>
-            </div>
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium text-text-primary">الإدارات والأدوار</span>
+          {fields.length === 0 && (
+            <p className="rounded-sm border border-dashed border-border-default px-3 py-2 text-xs text-text-muted">
+              بلا دور — أضيفي تعيينًا لو يحتاج المستخدم صلاحيات
+            </p>
           )}
-        />
+          {fields.map((item, index) => (
+            <div key={item.id} className="flex items-start gap-2">
+              <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
+                <Select
+                  aria-label="الإدارة"
+                  options={depOptions}
+                  {...register(`assignments.${index}.dep_id` as const)}
+                />
+                <Select
+                  aria-label="الدور"
+                  placeholder="اختر الدور"
+                  options={roleOptions}
+                  error={errors.assignments?.[index]?.role_id?.message}
+                  {...register(`assignments.${index}.role_id` as const)}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="إزالة التعيين"
+                icon={<Trash2 size={14} />}
+                className="mt-1"
+                onClick={() => remove(index)}
+              />
+            </div>
+          ))}
+          <div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              icon={<Plus size={14} />}
+              onClick={() => append({ dep_id: primaryDepId || defaultDepId || '', role_id: '' })}
+            >
+              إضافة إدارة ودور
+            </Button>
+          </div>
+          <p className="text-xs text-text-muted">
+            صف لكل إدارة يشتغل فيها المستخدم بدوره فيها (مثل: مدير بالقانونية، وعضو بمكتب الرئيس). أول صف =
+            دوره عند أول دخول، ويبدّل بين أدواره من الشريط العلوي — وكل دور تكون صلاحياته على إداراته فقط.
+          </p>
+        </div>
 
-        <Select label="الإدارة" placeholder="اختر الإدارة" options={depOptions} {...register('dep_id')} />
+        <Select
+          label="الإدارة الأساسية"
+          placeholder="اختر الإدارة"
+          options={primaryOptions}
+          {...register('dep_id')}
+        />
 
         <Controller
           name="job_title_id"

@@ -66,10 +66,28 @@ export interface ImportedUser {
 export interface UserImportResult {
   created_count: number
   users: ImportedUser[]
-  departments_created: { name: string; code: string }[]
+  /** parent_name: الإدارة الأم للإدارة الجديدة (null = بالمستوى الأعلى) — migration 0052. */
+  departments_created: { name: string; code: string; parent_name: string | null }[]
   /** مسميات وظيفية أُضيفت تلقائيًا لأنها لم تكن موجودة. */
   job_titles_created: string[]
   emails_queued: number
+  /** عدد التعيينات (إدارة + دور) — قد يزيد على عدد المستخدمين. */
+  assignments_count: number
+}
+
+/** معاينة الرفع قبل التأكيد — POST /users/import/preview (لا يُكتب شيء). */
+export interface UserImportPreview {
+  users_count: number
+  assignments_count: number
+  users: {
+    row: number
+    full_name: string
+    email: string
+    primary_department: string | null
+    assignments: { department: string | null; role: string | null }[]
+  }[]
+  departments_to_create: { name: string; parent_name: string | null }[]
+  job_titles_to_create: string[]
 }
 
 /** خطأ بصف محدد بالملف (row = رقم الصف كما يظهر بالـExcel). */
@@ -88,6 +106,19 @@ export async function importUsers(file: File): Promise<UserImportResult> {
   const form = new FormData()
   form.append('file', file)
   const { data } = await apiClient.post<UserImportResult>('/users/import', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+/**
+ * معاينة ملف المستخدمين — POST /users/import/preview: نفس تحقق الرفع بالكامل
+ * (ونفس شكل أخطاء 400)، ويرجع ملخص ما سيُنشأ بلا أي كتابة.
+ */
+export async function previewImportUsers(file: File): Promise<UserImportPreview> {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await apiClient.post<UserImportPreview>('/users/import/preview', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
   return data

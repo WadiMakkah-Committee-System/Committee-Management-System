@@ -160,65 +160,119 @@ const OFFICE = ROLE('r-office', 'executive_office_manager')
 const ADMIN = ROLE('r-admin', 'admin')
 const CHAIR = { ...ROLE('r-chair', 'رئيس اللجنة'), kind: 'committee', committee_role_slug: 'chair' }
 
-const roleCheckbox = (label: RegExp) => screen.getByRole('checkbox', { name: label })
-const saveEdit = () => screen.getByRole('button', { name: 'حفظ التعديلات' })
+const LEGAL = { dep_id: 'd-legal', name: 'الإدارة القانونية', parent_dep_id: null } as const
+const OFFICE_DEP = { dep_id: 'd-office', name: 'مكتب الرئيس التنفيذي', parent_dep_id: null } as const
+const DEPARTMENTS = [LEGAL, OFFICE_DEP] as unknown as Parameters<typeof UserFormModal>[0]['departments']
 
-describe('UserFormModal — تعدد الأدوار', () => {
-  it('يعرض الأدوار النظامية فقط ويرسل كل الأدوار المختارة عند الإضافة', async () => {
+const saveEdit = () => screen.getByRole('button', { name: 'حفظ التعديلات' })
+const roleSelects = () => screen.getAllByLabelText('الدور') as HTMLSelectElement[]
+const depSelects = () => screen.getAllByLabelText('الإدارة') as HTMLSelectElement[]
+
+describe('UserFormModal — الإدارات والأدوار (migration 0052)', () => {
+  it('يعرض الأدوار النظامية فقط ويرسل كل التعيينات عند الإضافة', async () => {
     mocks.roleOptions = [OFFICE, ADMIN, CHAIR]
     const user = userEvent.setup()
-    const { onSubmitCreate } = renderModal()
+    const { onSubmitCreate } = renderModal({ departments: DEPARTMENTS })
 
-    expect(screen.queryByRole('checkbox', { name: /رئيس اللجنة/ })).not.toBeInTheDocument()
-    await user.type(screen.getByLabelText(/الاسم الأول/), 'نائب')
-    await user.type(screen.getByLabelText(/الاسم الأوسط/), 'الرئيس')
-    await user.type(screen.getByLabelText(/اسم العائلة/), 'التنفيذي')
-    await user.type(emailInput(), 'deputy@wadimakkah.sa')
-    await user.click(roleCheckbox(/مدير المكتب التنفيذي/))
-    await user.click(roleCheckbox(/مسؤول إدارة/))
+    await user.type(screen.getByLabelText(/الاسم الأول/), 'معاذ')
+    await user.type(screen.getByLabelText(/الاسم الأوسط/), 'محمد')
+    await user.type(screen.getByLabelText(/اسم العائلة/), 'العتيبي')
+    await user.type(emailInput(), 'moath@wadimakkah.sa')
+    await user.click(screen.getByRole('button', { name: 'إضافة إدارة ودور' }))
+    await user.click(screen.getByRole('button', { name: 'إضافة إدارة ودور' }))
+    expect(screen.queryByRole('option', { name: /رئيس اللجنة/ })).not.toBeInTheDocument()
+    await user.selectOptions(depSelects()[0], 'd-office')
+    await user.selectOptions(roleSelects()[0], 'r-office')
+    await user.selectOptions(depSelects()[1], 'd-legal')
+    await user.selectOptions(roleSelects()[1], 'r-admin')
     await user.click(screen.getByRole('button', { name: 'إضافة المستخدم' }))
 
-    expect(onSubmitCreate).toHaveBeenCalledWith(expect.objectContaining({ role_ids: ['r-office', 'r-admin'] }))
+    expect(onSubmitCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignments: [
+          { role_id: 'r-office', dep_id: 'd-office' },
+          { role_id: 'r-admin', dep_id: 'd-legal' },
+        ],
+        dep_id: 'd-office',
+      }),
+    )
   })
 
-  it('لا يرسل الأدوار عند التعديل لو لم يغيّرها المسؤول', async () => {
+  it('لا يرسل التعيينات عند التعديل لو لم يغيّرها المسؤول', async () => {
     mocks.roleOptions = [OFFICE, ADMIN]
     const user = userEvent.setup()
     const { onSubmitEdit } = renderModal({
-      user: { ...EXISTING_USER, role: OFFICE, roles: [OFFICE, ADMIN] } as unknown as User,
+      departments: DEPARTMENTS,
+      user: {
+        ...EXISTING_USER,
+        role: OFFICE,
+        roles: [OFFICE, ADMIN],
+        dep_id: 'd-office',
+        assignments: [
+          { role: OFFICE, department: OFFICE_DEP },
+          { role: ADMIN, department: LEGAL },
+        ],
+      } as unknown as User,
     })
-    expect(roleCheckbox(/مدير المكتب التنفيذي/)).toBeChecked()
-    expect(roleCheckbox(/مسؤول إدارة/)).toBeChecked()
+    expect(roleSelects().map((s) => s.value)).toEqual(['r-office', 'r-admin'])
+    expect(depSelects().map((s) => s.value)).toEqual(['d-office', 'd-legal'])
 
     await user.click(saveEdit())
     expect(onSubmitEdit).toHaveBeenCalledTimes(1)
-    expect(onSubmitEdit.mock.calls[0][0]).not.toHaveProperty('role_ids')
+    expect(onSubmitEdit.mock.calls[0][0]).not.toHaveProperty('assignments')
   })
 
-  it('يرسل قائمة الأدوار كاملة لو عدّلها المسؤول', async () => {
+  it('يرسل التعيينات كاملة لو عدّلها المسؤول', async () => {
     mocks.roleOptions = [OFFICE, ADMIN]
     const user = userEvent.setup()
     const { onSubmitEdit } = renderModal({
-      user: { ...EXISTING_USER, role: OFFICE, roles: [OFFICE] } as unknown as User,
+      departments: DEPARTMENTS,
+      user: {
+        ...EXISTING_USER,
+        role: OFFICE,
+        roles: [OFFICE],
+        dep_id: 'd-office',
+        assignments: [{ role: OFFICE, department: OFFICE_DEP }],
+      } as unknown as User,
     })
-    await user.click(roleCheckbox(/مسؤول إدارة/))
+    await user.click(screen.getByRole('button', { name: 'إضافة إدارة ودور' }))
+    await user.selectOptions(depSelects()[1], 'd-legal')
+    await user.selectOptions(roleSelects()[1], 'r-admin')
     await user.click(saveEdit())
-    expect(onSubmitEdit).toHaveBeenCalledWith(expect.objectContaining({ role_ids: ['r-office', 'r-admin'] }))
+    expect(onSubmitEdit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assignments: [
+          { role_id: 'r-office', dep_id: 'd-office' },
+          { role_id: 'r-admin', dep_id: 'd-legal' },
+        ],
+      }),
+    )
   })
 
-  it('يجلب أدوار المستخدم كاملة لو الشاشة مرّرت دوره الحالي فقط', async () => {
+  it('يجلب تعيينات المستخدم كاملة لو الشاشة مرّرت دوره الحالي فقط', async () => {
     mocks.roleOptions = [OFFICE, ADMIN]
-    mocks.userDetail = { ...EXISTING_USER, role: OFFICE, roles: [OFFICE, ADMIN] }
+    mocks.userDetail = {
+      ...EXISTING_USER,
+      role: OFFICE,
+      roles: [OFFICE, ADMIN],
+      dep_id: 'd-office',
+      assignments: [
+        { role: OFFICE, department: OFFICE_DEP },
+        { role: ADMIN, department: LEGAL },
+      ],
+    }
     const user = userEvent.setup()
     const { onSubmitEdit } = renderModal({
-      // مثل أعضاء الإدارة: roles غير محمّلة (null)
-      user: { ...EXISTING_USER, role: OFFICE, roles: null } as unknown as User,
+      departments: DEPARTMENTS,
+      // مثل أعضاء الإدارة: roles/assignments غير محمّلة (null)
+      user: { ...EXISTING_USER, role: OFFICE, roles: null, dep_id: 'd-office' } as unknown as User,
     })
-    expect(await screen.findByRole('checkbox', { name: /مسؤول إدارة/ })).toBeChecked()
-    expect(roleCheckbox(/مدير المكتب التنفيذي/)).toBeChecked()
+    await screen.findAllByLabelText('الدور')
+    await vi.waitFor(() => expect(roleSelects()).toHaveLength(2))
+    expect(roleSelects().map((s) => s.value)).toEqual(['r-office', 'r-admin'])
 
-    // لم يغيّر الأدوار → لا تُرسل (حتى لا تُستبدل أدواره بقائمة ناقصة)
+    // لم يغيّر التعيينات → لا تُرسل (حتى لا تُستبدل بقائمة ناقصة)
     await user.click(saveEdit())
-    expect(onSubmitEdit.mock.calls[0][0]).not.toHaveProperty('role_ids')
+    expect(onSubmitEdit.mock.calls[0][0]).not.toHaveProperty('assignments')
   })
 })

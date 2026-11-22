@@ -9,26 +9,24 @@
 - import_users(): التحقق من كل الصفوف أولًا، ثم الإنشاء بمعاملة واحدة.
 - build_template(): توليد نموذج فارغ بقوائم منسدلة من بيانات النظام الحالية.
 
-قواعد العمل (قرارات لاما 2026-11-01):
+قواعد العمل (قرارات لاما 2026-11-01، ومحدّثة 2026-11-22 — migration 0052):
+- صف لكل تعيين (إدارة + دور)، والصفوف بنفس البريد = مستخدم واحد. التفاصيل
+  الكاملة بـ_validate.
 - الكل أو لا شيء: أي خطأ بأي صف ← لا يُنشأ أحد، وتُرجَع كل الأخطاء برقم الصف.
-- الحقول الإلزامية: الاسم الأول/الأوسط/العائلة + البريد. الإدارة والمسمى
-  والدور اختيارية.
-- الدور: أسماء النموذج الأربعة تُقابَل بأدوار النظام (ROLE_ALIASES)، وأي
-  اسم/وصف دور نظامي آخر يُقبل كما هو. الفارغ = بلا دور. دور المسؤول الأعلى
-  وأدوار اللجان لا تُسند عبر الملف أبدًا.
-- المسمى الوظيفي: الموجود يُستخدم، وغير الموجود يُضاف تلقائيًا لقائمة
-  المسميات (طلب لاما 2026-11-01) — لمن يملك نطاق 'all' أو صلاحية
-  job_titles.create فقط، وإلا يُرفض الصف.
-- الإدارة: الموجودة يُضاف لها المستخدم؛ غير الموجودة تُنشأ تلقائيًا برمز
-  DEP-001... ومديرها صاحب الصف الذي دوره "مدير إدارة (أدمن)" بنفس الإدارة
-  (إلزامي للإدارة الجديدة — نفس قاعدة create_department: الإدارة لها مدير).
-  إدارة موجودة لها مدير + صف مدير جديد لها ← خطأ (التغيير من صفحة الإدارات).
-  أكثر من مدير لنفس الإدارة بالملف ← خطأ.
-- الحد الأقصى MAX_ROWS صفًا (حد Brevo المجاني 300 بريد/يوم).
+- الحقول الإلزامية: الاسم الأول/الأوسط/العائلة + البريد.
+- الدور: أسماء النموذج تُقابَل بأدوار النظام (ROLE_ALIASES)، وأي اسم/وصف دور
+  نظامي آخر يُقبل كما هو. دور المسؤول الأعلى وأدوار اللجان لا تُسند أبدًا.
+- المسمى الوظيفي غير الموجود يُضاف تلقائيًا — لمن يملك نطاق 'all' أو
+  job_titles.create فقط.
+- الإدارة غير الموجودة تُنشأ تلقائيًا (نطاق all فقط) برمز DEP-001...، تحت
+  الإدارة الأم المكتوبة لو وُجدت، ومديرها صاحب صف «مدير إدارة (أدمن)» بها.
+- preview_import(): نفس التحقق بلا كتابة — ملخص للتأكيد قبل الإنشاء.
+- النموذج القديم (7 أعمدة، صف لكل مستخدم) ما زال مقبولًا.
+- الحد الأقصى MAX_ROWS صفًا وMAX_USERS مستخدمًا (حد Brevo المجاني 300 بريد/يوم).
 
 الصلاحيات (مفروضة هنا لا بالواجهة):
 - نطاق 'all' على users.import: أي إدارة، وإنشاء إدارات جديدة.
-- أي نطاق آخر: إدارة المُستورِد فقط (الفارغ = إدارته)، بلا إنشاء إدارات،
+- أي نطاق آخر: إدارات نطاق المُستورِد فقط (الفارغ = إدارته الأساسية)، بلا إنشاء إدارات،
   ولا إسناد دور يملك صلاحيات ليست لدى المُستورِد نفسه (منع تصعيد الصلاحيات).
 """
 
@@ -54,13 +52,29 @@ from app.core.security import hash_password
 from app.models.department import Department
 from app.models.job_title import JobTitle
 from app.models.role import Role
+from app.models.user_department_role import UserDepartmentRole
 from app.models.user_role import UserRole
 from app.models.user import User, UserStatus
 from app.services import audit_service
 
 SHEET_NAME = "المستخدمين"
 LISTS_SHEET_NAME = "القوائم"
+# تعدد الإدارات (migration 0052 — قرار لاما 2026-11-22): صف لكل تعيين
+# (إدارة + دور)، والبريد يتكرر بعدد إدارات الشخص — كل الصفوف بنفس البريد =
+# مستخدم واحد.
 TEMPLATE_HEADERS = [
+    "الاسم الأول",
+    "الاسم الأوسط",
+    "اسم العائلة",
+    "البريد الإلكتروني",
+    "المسمى الوظيفي",
+    "الإدارة الأم",
+    "الإدارة",
+    "الدور في الإدارة",
+    "الإدارة الأساسية",
+]
+# النموذج القديم (قبل 0052) — يبقى مقبولًا: صف واحد لكل مستخدم، بلا إدارة أم.
+LEGACY_TEMPLATE_HEADERS = [
     "الاسم الأول",
     "الاسم الأوسط",
     "اسم العائلة",
@@ -69,7 +83,11 @@ TEMPLATE_HEADERS = [
     "المسمى الوظيفي",
     "الدور في النظام",
 ]
-MAX_ROWS = 200
+PRIMARY_YES = "نعم"
+# صفوف الملف (تعيينات) والمستخدمون (بريد مختلف) — الحد الثاني لحد Brevo
+# المجاني (300 بريد/يوم).
+MAX_ROWS = 400
+MAX_USERS = 200
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
 # أسماء الأدوار كما تظهر بنموذج لاما ← أسماء الأدوار المقابلة بقاعدة البيانات
@@ -124,9 +142,11 @@ class ParsedRow:
     middle_name: str
     last_name: str
     email: str
-    department: str
     job_title: str
+    parent_department: str
+    department: str
     role: str
+    primary: str = ""
 
 
 @dataclass
@@ -149,6 +169,28 @@ class ImportResult:
     users: list[CreatedUser]
     departments_created: list[tuple[str, str]]  # (الاسم، الرمز)
     job_titles_created: list[str] = field(default_factory=list)
+    assignments_count: int = 0
+    # الإدارات الجديدة → اسم إدارتها الأم (None = بالمستوى الأعلى).
+    departments_parents: dict[str, str | None] = field(default_factory=dict)
+
+
+@dataclass
+class ImportPlanUser:
+    row: int
+    full_name: str
+    email: str
+    primary_department: str | None
+    assignments: list[tuple[str | None, str | None]]  # (الإدارة، الدور)
+
+
+@dataclass
+class ImportPlan:
+    """ملخص ما سيُنشأ (معاينة قبل التأكيد — لا يُكتب شيء)."""
+
+    users: list[ImportPlanUser]
+    departments_to_create: list[tuple[str, str | None]]  # (الاسم، الإدارة الأم)
+    job_titles_to_create: list[str]
+    assignments_count: int
 
 
 # --------------------------------------------------------------------------
@@ -185,21 +227,29 @@ def parse_workbook(content: bytes) -> list[ParsedRow]:
         sheet = workbook[SHEET_NAME] if SHEET_NAME in workbook.sheetnames else workbook.worksheets[0]
         rows_iter = sheet.iter_rows(values_only=True)
         header = next(rows_iter, None)
-        header_cells = [_cell_text(v) for v in (header or ())][: len(TEMPLATE_HEADERS)]
-        if header_cells != TEMPLATE_HEADERS:
+        header_all = [_cell_text(v) for v in (header or ())]
+        if header_all[: len(TEMPLATE_HEADERS)] == TEMPLATE_HEADERS:
+            width, legacy = len(TEMPLATE_HEADERS), False
+        elif header_all[: len(LEGACY_TEMPLATE_HEADERS)] == LEGACY_TEMPLATE_HEADERS:
+            width, legacy = len(LEGACY_TEMPLATE_HEADERS), True
+        else:
             raise ImportFileError(
                 "أعمدة الملف لا تطابق النموذج. الأعمدة المطلوبة بالترتيب: " + "، ".join(TEMPLATE_HEADERS)
             )
 
         parsed: list[ParsedRow] = []
         for index, values in enumerate(rows_iter, start=2):
-            cells = [_cell_text(v) for v in (values or ())][: len(TEMPLATE_HEADERS)]
-            cells += [""] * (len(TEMPLATE_HEADERS) - len(cells))
+            cells = [_cell_text(v) for v in (values or ())][:width]
+            cells += [""] * (width - len(cells))
             if not any(cells):
                 continue
             if len(parsed) >= MAX_ROWS:
-                raise ImportFileError(f"الحد الأقصى {MAX_ROWS} مستخدم لكل ملف — قسّمي الملف لأكثر من ملف")
-            parsed.append(ParsedRow(index, *cells))
+                raise ImportFileError(f"الحد الأقصى {MAX_ROWS} صف لكل ملف — قسّمي الملف لأكثر من ملف")
+            if legacy:
+                first, middle, last, email, department, job_title, role = cells
+                parsed.append(ParsedRow(index, first, middle, last, email, job_title, "", department, role, ""))
+            else:
+                parsed.append(ParsedRow(index, *cells))
     finally:
         workbook.close()
 
@@ -342,34 +392,55 @@ async def _next_department_codes(db: AsyncSession, count: int) -> list[str]:
     return [f"DEP-{n:03d}" for n in range(start, start + count)]
 
 
-async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) -> ImportResult:
+@dataclass
+class _Person:
+    """كل صفوف البريد الواحد — مستخدم واحد بعدة تعيينات."""
+
+    rows: list[ParsedRow]
+    email: str
+    # (الصف، الدور، مفتاح الإدارة) لكل صف صالح.
+    assignments: list[tuple[ParsedRow, Role | None, str | None]] = field(default_factory=list)
+    job_title_key: str | None = None
+    primary_key: str | None = None
+
+
+async def _validate(db: AsyncSession, *, actor: User, rows: list[ParsedRow]):
     """
     الهدف:
-    التحقق من كل صفوف الملف ثم إنشاء المستخدمين (والإدارات الجديدة) بمعاملة
-    واحدة — الكل أو لا شيء.
+    التحقق من كل صفوف الملف (بدون أي كتابة) وبناء خطة الإنشاء — مشتركة بين
+    المعاينة (preview_import) والإنشاء الفعلي (import_users).
 
-    المدخلات:
-    - db: جلسة قاعدة البيانات.
-    - actor: المستخدم المُستورِد (يملك users.import — مفحوص بطبقة الـAPI).
-    - rows: ناتج parse_workbook.
+    المخرجات: (people, departments, job_titles, new_departments, new_job_titles,
+    managers, roles) — أو ImportValidationError بكل الأخطاء.
 
-    المخرجات: ImportResult — المستخدمون المنشأون (مع كلمات المرور المؤقتة
-    للإرسال بالبريد فقط) والإدارات المنشأة.
-
-    التأثيرات الجانبية: يكتب users/departments/audit_logs ويعمل commit.
-    كل مستخدم must_change_password=True (FR-UM-016).
-
-    الأخطاء: ImportValidationError بكل أخطاء الصفوف (لا يُكتب شيء).
+    قواعد العمل (قرارات لاما 2026-11-22، migration 0052):
+    - صف لكل تعيين؛ الصفوف بنفس البريد = مستخدم واحد. الاسم الثلاثي والمسمى
+      الوظيفي لازم يتطابقون بكل صفوفه (المسمى الفارغ بصف = غير محدد فيه).
+    - البريد المسجّل مسبقًا بالنظام يُرفض (الملف لا يعدّل حسابات قائمة).
+    - تكرار نفس (البريد، الإدارة، الدور) خطأ.
+    - "الإدارة الأساسية": «نعم» بصف واحد على الأكثر لكل شخص؛ بلا «نعم» تكون
+      إدارة أول صف له.
+    - الدور الفارغ مسموح فقط لشخص بصف واحد (عضو بالإدارة بلا دور).
+    - الإدارة الأم (اختيارية): لازم تكون موجودة وبالمستوى الأعلى — الملف لا
+      ينشئ إدارات أم أبدًا. إدارة موجودة: أمها الفعلية لازم تطابق المكتوبة.
+      إدارة جديدة (نطاق all فقط): تُنشأ تحت الأم المكتوبة، وبإدارة أم واحدة
+      بكل الملف، وتحتاج صف مدير.
+    - الإدارة الأم بلا إدارة بالصف: خطأ (الموظف التابع للأم مباشرة تُكتب أمه
+      بعمود "الإدارة").
+    - مدير الإدارة: صف دوره «مدير إدارة (أدمن)» — واحد لكل إدارة بالملف،
+      والإدارة الموجودة اللي لها مدير لا يُغيَّر مديرها من الملف.
+    - بغير نطاق all: إدارات نطاق المُستورِد فقط، الفارغ = إدارته الأساسية،
+      بلا إنشاء إدارات، وبلا إسناد دور يتجاوز صلاحياته.
     """
     import_scope = actor.scope_for("users.import")
     full_scope = import_scope == "all"
-    # الإدارات المسموح الرفع لها بدون نطاق all: إدارته فقط، أو إدارته وما
-    # تحتها لنطاق department_tree (migration 0048).
+    # الإدارات المسموح الرفع لها بدون نطاق all: إدارات دوره الحالي، أو هي
+    # وما تحتها لنطاق department_tree (migration 0048/0052).
     allowed_dep_ids = actor.department_ids_for_scope(
         "department_tree" if import_scope == "department_tree" else "department"
     )
     actor_permissions = actor.permission_codes
-    if not full_scope and actor.dep_id is None:
+    if not full_scope and not allowed_dep_ids:
         raise ImportFileError("حسابك غير مرتبط بإدارة — لا يمكنك رفع مستخدمين إلا لإدارتك")
 
     emails_in_file = {r.email.casefold() for r in rows if r.email}
@@ -380,6 +451,7 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
         _key(d.name): d
         for d in (await db.execute(select(Department).where(Department.deleted_at.is_(None)))).scalars().all()
     }
+    departments_by_id = {d.dep_id: d for d in departments.values()}
     existing_emails = set(
         (
             await db.execute(
@@ -389,20 +461,15 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
             )
         ).scalars()
     )
-    taken_usernames = set(
-        (await db.execute(select(func.lower(User.username)).where(User.deleted_at.is_(None)))).scalars()
-    )
 
     errors: list[RowError] = []
-    seen_emails: dict[str, int] = {}
-    # (الصف، البريد، الدور، مفتاح المسمى، مفتاح الإدارة) — المسمى والإدارة
-    # بالمفتاح لأن الجديد منهما لا يُنشأ إلا بعد نجاح التحقق من كل الصفوف.
-    resolved: list[tuple[ParsedRow, str, Role | None, str | None, str | None]] = []
     can_create_job_titles = full_scope or "job_titles.create" in actor_permissions
     new_job_titles: dict[str, str] = {}  # key → الاسم كما كُتب أول مرة
     new_departments: dict[str, str] = {}  # key → الاسم كما كُتب أول مرة
+    new_department_parent: dict[str, tuple[str | None, int]] = {}  # key → (key الأم، أول صف)
     managers: dict[str, int] = {}  # key الإدارة → رقم صف مديرها بالملف
     department_first_row: dict[str, int] = {}
+    people: dict[str, _Person] = {}
 
     for row in rows:
         row_errors: list[RowError] = []
@@ -426,14 +493,10 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
             except EmailNotValidError:
                 row_errors.append(RowError(row.row, "البريد الإلكتروني", f"صيغة البريد غير صحيحة: {row.email}"))
             else:
-                email_key = email.casefold()
-                if email_key in seen_emails:
+                if email.casefold() in existing_emails:
                     row_errors.append(
-                        RowError(row.row, "البريد الإلكتروني", f"البريد مكرر بالملف (نفس الصف {seen_emails[email_key]})")
+                        RowError(row.row, "البريد الإلكتروني", "البريد مسجّل مسبقًا لمستخدم آخر بالنظام")
                     )
-                elif email_key in existing_emails:
-                    row_errors.append(RowError(row.row, "البريد الإلكتروني", "البريد مسجّل مسبقًا لمستخدم آخر بالنظام"))
-                seen_emails.setdefault(email_key, row.row)
 
         role: Role | None = None
         if row.role:
@@ -442,13 +505,13 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
                 row_errors.append(
                     RowError(
                         row.row,
-                        "الدور في النظام",
+                        "الدور في الإدارة",
                         f"الدور «{row.role}» غير موجود. القيم المسموحة: " + "، ".join(role_choices(roles)),
                     )
                 )
             elif not full_scope and not role.permission_codes <= actor_permissions:
                 row_errors.append(
-                    RowError(row.row, "الدور في النظام", f"لا تملك صلاحية إسناد الدور «{row.role}»")
+                    RowError(row.row, "الدور في الإدارة", f"لا تملك صلاحية إسناد الدور «{row.role}»")
                 )
 
         job_title_key: str | None = None
@@ -470,17 +533,75 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
                         )
                     )
 
+        # ---- الإدارة الأم ----
+        parent_key: str | None = None
+        parent_ok = True
+        if row.parent_department:
+            parent = departments.get(_key(row.parent_department))
+            if parent is None:
+                parent_ok = False
+                row_errors.append(
+                    RowError(
+                        row.row,
+                        "الإدارة الأم",
+                        f"الإدارة الأم «{row.parent_department}» غير موجودة — الإدارات الأم تُنشأ من المنصة",
+                    )
+                )
+            elif parent.parent_dep_id is not None:
+                parent_ok = False
+                row_errors.append(
+                    RowError(
+                        row.row,
+                        "الإدارة الأم",
+                        f"«{parent.name}» إدارة تابعة وليست أمًّا — الهيكل مستويان فقط",
+                    )
+                )
+            else:
+                parent_key = _key(parent.name)
+            if not row.department:
+                parent_ok = False
+                row_errors.append(
+                    RowError(
+                        row.row,
+                        "الإدارة",
+                        "الإدارة مطلوبة مع الإدارة الأم — لو الموظف تابع للأم مباشرة اكتبيها بعمود الإدارة",
+                    )
+                )
+
+        # ---- الإدارة ----
         department_key: str | None = None
         if row.department:
             department_key = _key(row.department)
+            existing_department = departments.get(department_key)
             if len(row.department) > _DEPARTMENT_NAME_MAX:
                 row_errors.append(RowError(row.row, "الإدارة", f"اسم الإدارة أطول من {_DEPARTMENT_NAME_MAX} حرف"))
-            elif department_key not in departments:
-                if full_scope:
-                    new_departments.setdefault(department_key, row.department)
-                else:
+            elif existing_department is not None:
+                if parent_ok and row.parent_department:
+                    actual_parent = departments_by_id.get(existing_department.parent_dep_id)
+                    if actual_parent is None or _key(actual_parent.name) != parent_key:
+                        actual = f"«{actual_parent.name}»" if actual_parent else "بلا إدارة أم"
+                        row_errors.append(
+                            RowError(
+                                row.row,
+                                "الإدارة الأم",
+                                f"الإدارة «{existing_department.name}» إدارتها الأم بالنظام {actual}، "
+                                f"وليست «{row.parent_department}»",
+                            )
+                        )
+            elif not full_scope:
+                row_errors.append(
+                    RowError(row.row, "الإدارة", f"الإدارة «{row.department}» غير موجودة، ولا تملك صلاحية إنشاء إدارات")
+                )
+            elif parent_ok:
+                new_departments.setdefault(department_key, row.department)
+                previous = new_department_parent.setdefault(department_key, (parent_key, row.row))
+                if previous[0] != parent_key:
                     row_errors.append(
-                        RowError(row.row, "الإدارة", f"الإدارة «{row.department}» غير موجودة، ولا تملك صلاحية إنشاء إدارات")
+                        RowError(
+                            row.row,
+                            "الإدارة الأم",
+                            f"الإدارة الجديدة «{row.department}» مكتوبة تحت إدارة أم مختلفة بالصف {previous[1]}",
+                        )
                     )
         elif not full_scope and actor.department is not None:
             department_key = _key(actor.department.name)
@@ -495,19 +616,24 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
                 )
                 row_errors.append(RowError(row.row, "الإدارة", message))
 
+        if row.primary and row.primary != PRIMARY_YES:
+            row_errors.append(
+                RowError(row.row, "الإدارة الأساسية", f"القيمة المسموحة «{PRIMARY_YES}» أو اتركيها فارغة")
+            )
+
         if department_key is not None:
             department_first_row.setdefault(department_key, row.row)
             if role is not None and manager_role is not None and role.role_id == manager_role.role_id:
                 existing = departments.get(department_key)
                 if department_key in managers:
                     row_errors.append(
-                        RowError(row.row, "الدور في النظام", f"للإدارة مدير آخر بالملف (الصف {managers[department_key]})")
+                        RowError(row.row, "الدور في الإدارة", f"للإدارة مدير آخر بالملف (الصف {managers[department_key]})")
                     )
                 elif existing is not None and existing.manager_user_id is not None:
                     row_errors.append(
                         RowError(
                             row.row,
-                            "الدور في النظام",
+                            "الدور في الإدارة",
                             f"الإدارة «{existing.name}» لها مدير — تغيير المدير يتم من صفحة الإدارات",
                         )
                     )
@@ -515,8 +641,64 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
                     managers[department_key] = row.row
 
         errors += row_errors
-        if not row_errors:
-            resolved.append((row, email, role, job_title_key, department_key))
+        if email:
+            person = people.setdefault(email.casefold(), _Person(rows=[], email=email))
+            person.rows.append(row)
+            if not row_errors:
+                person.assignments.append((row, role, department_key))
+                if job_title_key:
+                    person.job_title_key = person.job_title_key or job_title_key
+
+    if len(people) > MAX_USERS:
+        raise ImportFileError(f"الحد الأقصى {MAX_USERS} مستخدم لكل ملف — قسّمي الملف لأكثر من ملف")
+
+    # ---- قواعد الشخص الواحد (عبر صفوفه) ----
+    for person in people.values():
+        first = person.rows[0]
+        name = (first.first_name, first.middle_name, first.last_name)
+        titles = {_key(r.job_title) for r in person.rows if r.job_title}
+        seen: dict[tuple[str | None, str | None], int] = {}
+        primaries = [r for r in person.rows if r.primary == PRIMARY_YES]
+        for r in person.rows[1:]:
+            if (r.first_name, r.middle_name, r.last_name) != name:
+                errors.append(
+                    RowError(
+                        r.row,
+                        "الاسم الأول",
+                        f"نفس البريد بالصف {first.row} باسم مختلف — الاسم لازم يتطابق بكل صفوف الشخص",
+                    )
+                )
+        if len(titles) > 1:
+            errors.append(
+                RowError(
+                    person.rows[-1].row,
+                    "المسمى الوظيفي",
+                    "صفوف نفس البريد فيها مسميات وظيفية مختلفة — المسمى واحد لكل شخص",
+                )
+            )
+        if len(primaries) > 1:
+            errors.append(
+                RowError(
+                    primaries[1].row,
+                    "الإدارة الأساسية",
+                    f"«{PRIMARY_YES}» مكتوبة بأكثر من صف لنفس الشخص (أول مرة بالصف {primaries[0].row}) — إدارة أساسية واحدة فقط",
+                )
+            )
+        for r, role, department_key in person.assignments:
+            key = (department_key, str(role.role_id) if role else None)
+            if key in seen:
+                errors.append(RowError(r.row, "الدور في الإدارة", f"نفس الإدارة والدور مكررين للشخص (الصف {seen[key]})"))
+            seen.setdefault(key, r.row)
+            if role is None and len(person.rows) > 1:
+                errors.append(
+                    RowError(r.row, "الدور في الإدارة", "حددي الدور — الشخص المكتوب بأكثر من صف لازم دور بكل صف")
+                )
+        if primaries:
+            person.primary_key = next(
+                (dk for r, _, dk in person.assignments if r.row == primaries[0].row), None
+            )
+        elif person.assignments:
+            person.primary_key = next((dk for _, _, dk in person.assignments if dk is not None), None)
 
     for key, name in new_departments.items():
         if key not in managers:
@@ -533,7 +715,79 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
         errors.sort(key=lambda e: e.row)
         raise ImportValidationError(errors)
 
-    # ---- الإنشاء (معاملة واحدة) ----
+    return people, departments, job_titles, new_departments, new_department_parent, new_job_titles, managers
+
+
+def _department_label(key: str | None, departments: dict[str, Department], new_departments: dict[str, str]):
+    if key is None:
+        return None
+    if key in departments:
+        return departments[key].name
+    return new_departments.get(key)
+
+
+async def preview_import(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) -> ImportPlan:
+    """
+    الهدف: معاينة الرفع قبل التأكيد (طلب لاما 2026-11-22) — نفس التحقق
+    الكامل، ويرجع ملخص ما سيُنشأ (المستخدمون وتعييناتهم، الإدارات الجديدة
+    وأمهاتها، المسميات الجديدة). بلا أي كتابة بقاعدة البيانات.
+    الأخطاء: نفس import_users (ImportFileError / ImportValidationError).
+    """
+    people, departments, _, new_departments, new_parent, new_job_titles, _ = await _validate(
+        db, actor=actor, rows=rows
+    )
+    users = [
+        ImportPlanUser(
+            row=p.rows[0].row,
+            full_name=f"{p.rows[0].first_name} {p.rows[0].middle_name} {p.rows[0].last_name}",
+            email=p.email,
+            primary_department=_department_label(p.primary_key, departments, new_departments),
+            assignments=[
+                (_department_label(dk, departments, new_departments), r.role or None)
+                for r, _, dk in p.assignments
+            ],
+        )
+        for p in people.values()
+    ]
+    return ImportPlan(
+        users=users,
+        departments_to_create=[
+            (name, _department_label(new_parent[key][0], departments, new_departments))
+            for key, name in new_departments.items()
+        ],
+        job_titles_to_create=list(new_job_titles.values()),
+        assignments_count=sum(len(p.assignments) for p in people.values()),
+    )
+
+
+async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) -> ImportResult:
+    """
+    الهدف:
+    التحقق من كل صفوف الملف (_validate) ثم إنشاء المستخدمين وتعييناتهم
+    (والإدارات والمسميات الجديدة) بمعاملة واحدة — الكل أو لا شيء.
+
+    المدخلات:
+    - db: جلسة قاعدة البيانات.
+    - actor: المستخدم المُستورِد (يملك users.import — مفحوص بطبقة الـAPI).
+    - rows: ناتج parse_workbook.
+
+    المخرجات: ImportResult — مستخدم واحد لكل بريد (مع كلمة المرور المؤقتة
+    للإرسال بالبريد فقط)، والإدارات والمسميات المنشأة.
+
+    التأثيرات الجانبية: يكتب users/user_roles/user_department_roles/
+    departments/job_titles/audit_logs ويعمل commit. كل مستخدم
+    must_change_password=True (FR-UM-016).
+
+    الأخطاء: ImportValidationError بكل أخطاء الصفوف (لا يُكتب شيء).
+    """
+    people, departments, job_titles, new_departments, new_parent, new_job_titles, managers = await _validate(
+        db, actor=actor, rows=rows
+    )
+    taken_usernames = set(
+        (await db.execute(select(func.lower(User.username)).where(User.deleted_at.is_(None)))).scalars()
+    )
+
+    # ---- المسميات الجديدة ----
     created_job_titles: list[str] = []
     for key, name in new_job_titles.items():
         job_title = JobTitle(name=name)
@@ -552,10 +806,15 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
                 metadata={"name": name, "source": "excel_import"},
             )
 
+    # ---- الإدارات الجديدة (تحت أمّها لو كُتبت) ----
     codes = await _next_department_codes(db, len(new_departments))
     created_departments: list[tuple[str, str]] = []
     for (key, name), code in zip(new_departments.items(), codes):
-        department = Department(name=name, code=code, description=None)
+        parent_key = new_parent[key][0]
+        parent = departments.get(parent_key) if parent_key else None
+        department = Department(
+            name=name, code=code, description=None, parent_dep_id=parent.dep_id if parent else None
+        )
         db.add(department)
         departments[key] = department
         created_departments.append((name, code))
@@ -564,39 +823,62 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
 
     # مؤقت قبل التدشين: كلمة موحّدة للجميع بدل generate_temporary_password()
     # — راجعي PRELAUNCH_INITIAL_PASSWORD أعلاه.
-    passwords = [PRELAUNCH_INITIAL_PASSWORD for _ in resolved]
+    person_list = list(people.values())
+    passwords = [PRELAUNCH_INITIAL_PASSWORD for _ in person_list]
     # bcrypt بطيء عمدًا — التجزئة بالتوازي على خيوط منفصلة بدل التسلسل.
     hashes = await asyncio.gather(*(asyncio.to_thread(hash_password, p) for p in passwords))
 
     created: list[CreatedUser] = []
-    for (row, email, role, job_title_key, department_key), password, password_hash in zip(resolved, passwords, hashes):
-        department = departments.get(department_key) if department_key else None
-        job_title = job_titles.get(job_title_key) if job_title_key else None
-        username = unique_username(username_base_from_email(email), taken_usernames)
+    assignments_count = 0
+    for person, password, password_hash in zip(person_list, passwords, hashes):
+        first = person.rows[0]
+        primary = departments.get(person.primary_key) if person.primary_key else None
+        job_title = job_titles.get(person.job_title_key) if person.job_title_key else None
+        # الدور الحالي عند أول دخول: دور صف الإدارة الأساسية، وإلا أول دور.
+        ordered_roles: list[Role] = []
+        primary_role = next(
+            (role for _, role, dk in person.assignments if role is not None and dk == person.primary_key), None
+        )
+        for role in [primary_role, *(role for _, role, _ in person.assignments)]:
+            if role is not None and role not in ordered_roles:
+                ordered_roles.append(role)
+
+        username = unique_username(username_base_from_email(person.email), taken_usernames)
         user = User(
-            first_name=row.first_name,
-            middle_name=row.middle_name,
-            last_name=row.last_name,
+            first_name=first.first_name,
+            middle_name=first.middle_name,
+            last_name=first.last_name,
             username=username,
-            email=email,
+            email=person.email,
             password_hash=password_hash,
-            role_id=role.role_id if role else None,
-            dep_id=department.dep_id if department else None,
+            role_id=ordered_roles[0].role_id if ordered_roles else None,
+            dep_id=primary.dep_id if primary else None,
             job_title_id=job_title.job_title_id if job_title else None,
             status=UserStatus.active,
             must_change_password=True,
         )
         db.add(user)
         await db.flush()
-        if role is not None:
-            # تعدد الأدوار (migration 0046): الدور المسند يُسجَّل بـuser_roles —
-            # قيد users_active_role_assigned_fkey (مؤجَّل لحد COMMIT) يشترط أن
-            # يكون الدور الحالي (role_id أعلاه) من أدوار المستخدم المسندة.
-            db.add(UserRole(user_id=user.user_id, role_id=role.role_id, assigned_by=actor.user_id))
+        # تعدد الأدوار (0046): user_roles أولًا — قيد users_active_role_assigned_fkey
+        # (مؤجَّل لحد COMMIT)، وقيد التعيينات يشترط الدور المسند (0052).
+        db.add_all([UserRole(user_id=user.user_id, role_id=r.role_id, assigned_by=actor.user_id) for r in ordered_roles])
+        await db.flush()
+        unique_assignments = {
+            (role.role_id, departments[dk].dep_id)
+            for _, role, dk in person.assignments
+            if role is not None and dk is not None
+        }
+        db.add_all(
+            [
+                UserDepartmentRole(user_id=user.user_id, role_id=rid, dep_id=did, assigned_by=actor.user_id)
+                for rid, did in unique_assignments
+            ]
+        )
+        assignments_count += len(person.assignments)
 
-        is_manager = bool(department_key and managers.get(department_key) == row.row)
-        if is_manager and department is not None:
-            department.manager_user_id = user.user_id
+        managed = [dk for r, _, dk in person.assignments if dk is not None and managers.get(dk) == r.row]
+        for dk in managed:
+            departments[dk].manager_user_id = user.user_id
 
         await audit_service.log_action(
             db,
@@ -604,19 +886,27 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
             action_type="create",
             target_type="user",
             target_id=user.user_id,
-            metadata={"username": username, "role": role.name if role else None, "source": "excel_import"},
+            metadata={
+                "username": username,
+                "role": ordered_roles[0].name if ordered_roles else None,
+                "roles": [r.name for r in ordered_roles],
+                "assignments": [
+                    {"role_id": str(rid), "dep_id": str(did)} for rid, did in sorted(unique_assignments, key=str)
+                ],
+                "source": "excel_import",
+            },
         )
         created.append(
             CreatedUser(
-                row=row.row,
+                row=first.row,
                 user_id=user.user_id,
-                full_name=f"{row.first_name} {row.middle_name} {row.last_name}",
-                first_name=row.first_name,
-                email=email,
+                full_name=f"{first.first_name} {first.middle_name} {first.last_name}",
+                first_name=first.first_name,
+                email=person.email,
                 username=username,
-                department=department.name if department else None,
-                role=row.role or None,
-                is_department_manager=is_manager,
+                department=primary.name if primary else None,
+                role="، ".join(r.role for r, _, _ in person.assignments if r.role) or None,
+                is_department_manager=bool(managed),
                 temporary_password=password,
             )
         )
@@ -633,13 +923,21 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
                 "name": name,
                 "code": code,
                 "manager_user_id": str(department.manager_user_id),
+                "parent_dep_id": str(department.parent_dep_id) if department.parent_dep_id else None,
                 "source": "excel_import",
             },
         )
 
     await db.commit()
     return ImportResult(
-        users=created, departments_created=created_departments, job_titles_created=created_job_titles
+        users=created,
+        departments_created=created_departments,
+        job_titles_created=created_job_titles,
+        assignments_count=assignments_count,
+        departments_parents={
+            name: _department_label(new_parent[_key(name)][0], departments, new_departments)
+            for name, _ in created_departments
+        },
     )
 
 
@@ -650,16 +948,20 @@ async def import_users(db: AsyncSession, *, actor: User, rows: list[ParsedRow]) 
 
 async def build_template(db: AsyncSession) -> bytes:
     """
-    الهدف: نموذج Excel فارغ بنفس الأعمدة المطلوبة، مع قوائم منسدلة محدثة من
-    النظام: الأدوار (role_choices) والمسميات الوظيفية، وشيت "القوائم" يعرض
-    الإدارات الحالية للمرجع (عمود الإدارة يقبل أيضًا اسم إدارة جديدة).
+    الهدف: نموذج Excel فارغ بالأعمدة المطلوبة (صف لكل تعيين — migration
+    0052)، مع قوائم منسدلة محدثة من النظام: المسميات الوظيفية، الإدارات الأم
+    (المستوى الأعلى فقط)، الإدارات (اقتراح — يقبل أيضًا اسم إدارة جديدة)،
+    الأدوار (role_choices)، و«نعم» للإدارة الأساسية. شيت "القوائم" للمرجع،
+    وشيت "تعليمات" بمثال شخص في أكثر من إدارة.
     المخرجات: bytes ملف .xlsx.
     """
     roles = _assignable_roles(list((await db.execute(select(Role))).scalars().all()))
     titles = sorted((await db.execute(select(JobTitle.name))).scalars().all())
-    department_names = sorted(
-        (await db.execute(select(Department.name).where(Department.deleted_at.is_(None)))).scalars().all()
-    )
+    active_departments = (
+        await db.execute(select(Department.name, Department.parent_dep_id).where(Department.deleted_at.is_(None)))
+    ).all()
+    department_names = sorted(name for name, _ in active_departments)
+    parent_names = sorted(name for name, parent in active_departments if parent is None)
     choices = role_choices(roles)
 
     workbook = Workbook()
@@ -672,39 +974,62 @@ async def build_template(db: AsyncSession) -> bytes:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center")
-    for column, width in zip("ABCDEFG", (16, 16, 16, 30, 24, 24, 22)):
+    for column, width in zip("ABCDEFGHI", (14, 14, 14, 30, 24, 24, 24, 22, 16)):
         sheet.column_dimensions[column].width = width
     sheet.freeze_panes = "A2"
 
     lists = workbook.create_sheet(LISTS_SHEET_NAME)
     lists.sheet_view.rightToLeft = True
-    lists.append(["الأدوار", "المسميات الوظيفية", "الإدارات الحالية"])
+    columns = [
+        ("الأدوار", choices),
+        ("المسميات الوظيفية", titles),
+        ("الإدارات الحالية", department_names),
+        ("الإدارات الأم", parent_names),
+        ("الإدارة الأساسية", [PRIMARY_YES]),
+    ]
+    lists.append([title for title, _ in columns])
     for cell in lists[1]:
         cell.font = Font(bold=True)
-    for i in range(max(len(choices), len(titles), len(department_names))):
-        lists.append(
-            [
-                choices[i] if i < len(choices) else None,
-                titles[i] if i < len(titles) else None,
-                department_names[i] if i < len(department_names) else None,
-            ]
-        )
-    for column in "ABC":
+    for i in range(max(len(values) for _, values in columns)):
+        lists.append([values[i] if i < len(values) else None for _, values in columns])
+    for column in "ABCDE":
         lists.column_dimensions[column].width = 28
 
     last_data_row = MAX_ROWS + 1
-    if choices:
-        role_validation = DataValidation(
-            type="list", formula1=f"'{LISTS_SHEET_NAME}'!$A$2:$A${len(choices) + 1}", allow_blank=True
+
+    def add_list(list_column: str, count: int, target_column: str, *, strict: bool = True) -> None:
+        if not count:
+            return
+        validation = DataValidation(
+            type="list",
+            formula1=f"'{LISTS_SHEET_NAME}'!${list_column}$2:${list_column}${count + 1}",
+            allow_blank=True,
+            # الإدارة: قائمة مقترحة فقط — الاسم الجديد مقبول (يُنشأ تلقائيًا).
+            showErrorMessage=strict,
         )
-        role_validation.add(f"G2:G{last_data_row}")
-        sheet.add_data_validation(role_validation)
-    if titles:
-        title_validation = DataValidation(
-            type="list", formula1=f"'{LISTS_SHEET_NAME}'!$B$2:$B${len(titles) + 1}", allow_blank=True
-        )
-        title_validation.add(f"F2:F{last_data_row}")
-        sheet.add_data_validation(title_validation)
+        validation.add(f"{target_column}2:{target_column}{last_data_row}")
+        sheet.add_data_validation(validation)
+
+    add_list("A", len(choices), "H")
+    add_list("B", len(titles), "E")
+    add_list("C", len(department_names), "G", strict=False)
+    add_list("D", len(parent_names), "F")
+    add_list("E", 1, "I")
+
+    notes = workbook.create_sheet("تعليمات")
+    notes.sheet_view.rightToLeft = True
+    for line in (
+        "كل صف = تعيين واحد (إدارة + دور). الشخص في أكثر من إدارة = أكثر من صف بنفس البريد.",
+        "البريد يعرّف الشخص: كل الصفوف بنفس البريد = مستخدم واحد (حساب واحد وبريد ترحيب واحد).",
+        "الاسم الثلاثي والمسمى الوظيفي لازم يتطابقون بكل صفوف نفس البريد.",
+        f"الإدارة الأساسية: «{PRIMARY_YES}» بصف واحد فقط للشخص (للعرض). بدونها تكون إدارة أول صف له.",
+        "الإدارة الأم اختيارية: لازم تكون موجودة بالنظام. لو الإدارة جديدة تُنشأ تحتها تلقائيًا.",
+        f"الإدارة الجديدة تحتاج صف مدير دوره «{MANAGER_ROLE_LABEL}». انتبهي للإملاء: اسم مختلف = إدارة جديدة.",
+        "البريد المسجّل مسبقًا بالنظام يُرفض — إدارات المستخدم الحالي تُعدَّل من صفحة المستخدم.",
+        "لو فيه أي خطأ بأي صف ما يُضاف أحد، وتظهر الأخطاء برقم الصف.",
+    ):
+        notes.append([line])
+    notes.column_dimensions["A"].width = 100
 
     buffer = io.BytesIO()
     workbook.save(buffer)
