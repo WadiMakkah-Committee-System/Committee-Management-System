@@ -9,7 +9,7 @@ import { useToast } from '@/components/ui/Toast'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useUserDetail, useSuspendUser, useReactivateUser, useUpdateUser } from '@/hooks/useUsers'
 import { usePermissionsCatalog } from '@/hooks/useRoles'
-import { assignedRoles, extractErrorMessage } from '@/lib/utils'
+import { assignedRoles, extractErrorMessage, roleLabel } from '@/lib/utils'
 
 interface MemberDetailModalProps {
   userId: string | null
@@ -105,6 +105,18 @@ export function MemberDetailModal({
                 <Building2 size={15} className="text-text-muted" />
                 <span className="text-text-secondary">{user.department?.name ?? 'بدون إدارة'}</span>
               </div>
+              {user.assignments && user.assignments.length > 0 && (
+                <div className="flex flex-col gap-1 text-sm sm:col-span-2">
+                  <span className="text-xs text-text-muted">الإدارات والأدوار:</span>
+                  <ul className="flex flex-col gap-0.5 text-text-secondary">
+                    {user.assignments.map((a) => (
+                      <li key={`${a.department.dep_id}-${a.role.role_id}`}>
+                        {a.department.name} — {roleLabel(a.role)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="flex items-start gap-2">
                 <span className="mt-1 shrink-0 text-xs text-text-muted">
                   {assignedRoles(user).length > 1 ? 'الأدوار:' : 'الدور:'}

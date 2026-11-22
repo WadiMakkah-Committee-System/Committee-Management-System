@@ -1,13 +1,13 @@
 import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
-import { CheckCircle2, Download, FileSpreadsheet, Mail, Upload, X } from 'lucide-react'
+import { ArrowRight, CheckCircle2, Download, Eye, FileSpreadsheet, Mail, Upload, X } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
-import { useDownloadImportTemplate, useImportUsers } from '@/hooks/useUsers'
-import type { ImportRowError, UserImportResult } from '@/api/users'
+import { useDownloadImportTemplate, useImportUsers, usePreviewImportUsers } from '@/hooks/useUsers'
+import type { ImportRowError, UserImportPreview, UserImportResult } from '@/api/users'
 import { cn, extractErrorMessage } from '@/lib/utils'
 
-/** نفس حدود الباك إند (user_import_service.MAX_ROWS / MAX_FILE_BYTES). */
-const MAX_ROWS = 200
+/** نفس حدود الباك إند (user_import_service.MAX_USERS / MAX_FILE_BYTES). */
+const MAX_USERS = 200
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 
 interface UserImportModalProps {
@@ -34,6 +34,8 @@ function extractRowErrors(error: unknown): { message: string; errors: ImportRowE
  *
  * المسؤولية:
  * - اختيار ملف .xlsx (زر أو سحب وإفلات) + تحميل النموذج المحدث من النظام.
+ * - المعاينة أولًا (طلب لاما 2026-11-22): ملخص المستخدمين وتعييناتهم والإدارات
+ *   الجديدة (وأمهاتها) قبل أي إنشاء، ثم التأكيد.
  * - الرفع، ثم عرض النتيجة: إما ملخص المستخدمين المنشأين (أسماء المستخدمين
  *   والإدارات الجديدة) — وبيانات الدخول تصل لبريد كل مستخدم — أو جدول
  *   أخطاء برقم الصف والعمود (لا يُضاف أحد عند وجود أي خطأ).
@@ -48,28 +50,33 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
   const [localError, setLocalError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const importMutation = useImportUsers()
+  const previewMutation = usePreviewImportUsers()
   const templateMutation = useDownloadImportTemplate()
 
   const result: UserImportResult | undefined = importMutation.data
-  const rowErrors = importMutation.error ? extractRowErrors(importMutation.error) : null
-  const generalError =
-    localError ?? (importMutation.error && !rowErrors ? extractErrorMessage(importMutation.error) : null)
+  const preview: UserImportPreview | undefined = previewMutation.data
+  const requestError = importMutation.error ?? previewMutation.error
+  const rowErrors = requestError ? extractRowErrors(requestError) : null
+  const generalError = localError ?? (requestError && !rowErrors ? extractErrorMessage(requestError) : null)
+  const busy = importMutation.isPending || previewMutation.isPending
 
   const reset = () => {
     setFile(null)
     setLocalError(null)
     importMutation.reset()
+    previewMutation.reset()
     if (inputRef.current) inputRef.current.value = ''
   }
 
   const handleClose = () => {
-    if (importMutation.isPending) return
+    if (busy) return
     reset()
     onClose()
   }
 
   const pickFile = (picked: File | undefined) => {
     importMutation.reset()
+    previewMutation.reset()
     setLocalError(null)
     if (!picked) return
     if (!picked.name.toLowerCase().endsWith('.xlsx')) {
@@ -95,6 +102,27 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
     <Button className="w-full" onClick={handleClose}>
       تم
     </Button>
+  ) : preview ? (
+    <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+      <Button
+        variant="ghost"
+        icon={<ArrowRight size={16} />}
+        disabled={importMutation.isPending}
+        onClick={() => {
+          previewMutation.reset()
+          importMutation.reset()
+        }}
+      >
+        رجوع
+      </Button>
+      <Button
+        icon={<Upload size={16} />}
+        loading={importMutation.isPending}
+        onClick={() => file && importMutation.mutate(file)}
+      >
+        تأكيد وإضافة {preview.users_count} مستخدم
+      </Button>
+    </div>
   ) : (
     <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-between">
       <Button
@@ -106,12 +134,12 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
         تحميل النموذج
       </Button>
       <Button
-        icon={<Upload size={16} />}
+        icon={<Eye size={16} />}
         disabled={!file}
-        loading={importMutation.isPending}
-        onClick={() => file && importMutation.mutate(file)}
+        loading={previewMutation.isPending}
+        onClick={() => file && previewMutation.mutate(file)}
       >
-        رفع وإضافة المستخدمين
+        معاينة الملف
       </Button>
     </div>
   )
@@ -138,7 +166,9 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
               {result.departments_created.length > 0 && (
                 <p className="mt-1 text-text-secondary">
                   إدارات جديدة أُنشئت:{' '}
-                  {result.departments_created.map((d) => `${d.name} (${d.code})`).join('، ')}
+                  {result.departments_created
+                    .map((d) => `${d.name} (${d.code})${d.parent_name ? ` تحت ${d.parent_name}` : ''}`)
+                    .join('، ')}
                 </p>
               )}
               {result.job_titles_created.length > 0 && (
@@ -180,6 +210,8 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
             </table>
           </div>
         </div>
+      ) : preview ? (
+        <ImportPreviewSummary preview={preview} rowErrors={rowErrors} generalError={generalError} />
       ) : (
         <div className="flex flex-col gap-4">
           <label
@@ -221,50 +253,20 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
               <span className="text-sm font-medium text-text-primary">اختاري ملف Excel أو اسحبيه هنا</span>
             )}
             <span className="text-xs text-text-muted">
-              ‎.xlsx فقط — حتى {MAX_ROWS} مستخدم و2 ميجابايت
+              ‎.xlsx فقط — حتى {MAX_USERS} مستخدم و2 ميجابايت
             </span>
           </label>
 
           <ul className="list-disc space-y-1 ps-5 text-xs text-text-secondary">
-            <li>الأعمدة الإلزامية: الاسم الأول، الأوسط، العائلة، البريد. الإدارة والمسمى والدور اختيارية.</li>
-            <li>الإدارة غير الموجودة تُنشأ تلقائيًا، ومديرها صاحب الصف الذي دوره «مدير إدارة (أدمن)».</li>
-            <li>المسمى الوظيفي غير الموجود يُضاف تلقائيًا لقائمة المسميات.</li>
+            <li>كل صف = إدارة ودور. الشخص في أكثر من إدارة يتكرر بنفس البريد، والنظام ينشئ له حسابًا واحدًا.</li>
+            <li>الاسم والمسمى الوظيفي لازم يتطابقون بكل صفوف نفس البريد، و«نعم» بعمود الإدارة الأساسية بصف واحد فقط.</li>
+            <li>الإدارة غير الموجودة تُنشأ تلقائيًا (تحت الإدارة الأم لو كتبتيها)، ومديرها صاحب الصف الذي دوره «مدير إدارة (أدمن)».</li>
+            <li>قبل الإضافة تظهر لك معاينة بالمستخدمين والإدارات الجديدة لتأكيدها.</li>
             <li>لو فيه أي خطأ بأي صف، ما يُضاف أحد — تظهر الأخطاء برقم الصف لتصحيحها.</li>
           </ul>
 
-          {generalError && (
-            <p role="alert" className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
-              {generalError}
-            </p>
-          )}
-
-          {rowErrors && (
-            <div role="alert" className="flex flex-col gap-2">
-              <p className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
-                {rowErrors.message}
-              </p>
-              <div className="max-h-64 overflow-auto rounded-sm border border-border-default">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-bg-elevated text-text-secondary">
-                    <tr>
-                      <th className="px-3 py-2 text-start font-medium">الصف</th>
-                      <th className="px-3 py-2 text-start font-medium">العمود</th>
-                      <th className="px-3 py-2 text-start font-medium">الخطأ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rowErrors.errors.map((e, i) => (
-                      <tr key={`${e.row}-${i}`} className="border-t border-border-default align-top">
-                        <td className="px-3 py-2 text-text-muted">{e.row}</td>
-                        <td className="whitespace-nowrap px-3 py-2 text-text-secondary">{e.field ?? '—'}</td>
-                        <td className="px-3 py-2 text-danger">{e.message}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          <GeneralError message={generalError} />
+          <ImportErrors rowErrors={rowErrors} />
 
           {templateMutation.error && (
             <p className="text-xs text-danger">{extractErrorMessage(templateMutation.error)}</p>
@@ -272,5 +274,132 @@ export function UserImportModal({ open, onClose }: UserImportModalProps) {
         </div>
       )}
     </Modal>
+  )
+}
+
+function GeneralError({ message }: { message: string | null }) {
+  if (!message) return null
+  return (
+    <p role="alert" className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
+      {message}
+    </p>
+  )
+}
+
+/** جدول أخطاء الصفوف (رقم الصف + العمود + الخطأ) — من المعاينة أو الرفع. */
+function ImportErrors({ rowErrors }: { rowErrors: { message: string; errors: ImportRowError[] } | null }) {
+  if (!rowErrors) return null
+  return (
+    <div role="alert" className="flex flex-col gap-2">
+      <p className="rounded-sm border border-danger-border/30 bg-danger-bg px-3 py-2 text-sm font-medium text-danger">
+        {rowErrors.message}
+      </p>
+      <div className="max-h-64 overflow-auto rounded-sm border border-border-default">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-bg-elevated text-text-secondary">
+            <tr>
+              <th className="px-3 py-2 text-start font-medium">الصف</th>
+              <th className="px-3 py-2 text-start font-medium">العمود</th>
+              <th className="px-3 py-2 text-start font-medium">الخطأ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rowErrors.errors.map((e, i) => (
+              <tr key={`${e.row}-${i}`} className="border-t border-border-default align-top">
+                <td className="px-3 py-2 text-text-muted">{e.row}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-text-secondary">{e.field ?? '—'}</td>
+                <td className="px-3 py-2 text-danger">{e.message}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * ملخص المعاينة: كل شخص بتعييناته (إدارة + دور) وإدارته الأساسية، والإدارات
+ * الجديدة وأمهاتها، والمسميات الجديدة — لتأكيدها قبل الإنشاء.
+ */
+function ImportPreviewSummary({
+  preview,
+  rowErrors,
+  generalError,
+}: {
+  preview: UserImportPreview
+  rowErrors: { message: string; errors: ImportRowError[] } | null
+  generalError: string | null
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-sm border border-brand-primary/30 bg-brand-primary/5 px-4 py-3 text-sm">
+        <p className="font-semibold text-text-primary">
+          سيُضاف {preview.users_count} مستخدم بـ{preview.assignments_count} تعيين (إدارة + دور)
+        </p>
+        {preview.departments_to_create.length > 0 && (
+          <div className="mt-2">
+            <p className="font-medium text-text-primary">
+              إدارات جديدة ستُنشأ ({preview.departments_to_create.length}) — تأكدي من الإملاء:
+            </p>
+            <ul className="mt-1 list-disc ps-5 text-text-secondary">
+              {preview.departments_to_create.map((d) => (
+                <li key={d.name}>
+                  {d.name}
+                  {d.parent_name ? ` (تحت ${d.parent_name})` : ' (إدارة مستقلة)'}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {preview.job_titles_to_create.length > 0 && (
+          <p className="mt-2 text-text-secondary">
+            مسميات وظيفية جديدة: {preview.job_titles_to_create.join('، ')}
+          </p>
+        )}
+      </div>
+
+      <div className="max-h-72 overflow-auto rounded-sm border border-border-default">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-bg-elevated text-text-secondary">
+            <tr>
+              <th className="px-3 py-2 text-start font-medium">الصف</th>
+              <th className="px-3 py-2 text-start font-medium">الاسم</th>
+              <th className="px-3 py-2 text-start font-medium">الإدارات والأدوار</th>
+            </tr>
+          </thead>
+          <tbody>
+            {preview.users.map((u) => (
+              <tr key={u.email} className="border-t border-border-default align-top">
+                <td className="px-3 py-2 text-text-muted">{u.row}</td>
+                <td className="px-3 py-2 text-text-primary">
+                  {u.full_name}
+                  <span className="block text-xs text-text-muted" dir="ltr">
+                    {u.email}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-text-secondary">
+                  <ul className="flex flex-col gap-0.5">
+                    {u.assignments.map((a, i) => (
+                      <li key={`${a.department}-${a.role}-${i}`}>
+                        {a.department ?? 'بدون إدارة'} — {a.role ?? 'بدون دور'}
+                        {a.department && a.department === u.primary_department && (
+                          <span className="ms-2 rounded-sm bg-brand-primary/10 px-1.5 py-0.5 text-xs text-brand-primary">
+                            أساسية
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <GeneralError message={generalError} />
+      <ImportErrors rowErrors={rowErrors} />
+    </div>
   )
 }

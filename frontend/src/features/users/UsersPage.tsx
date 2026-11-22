@@ -39,7 +39,7 @@ import { useToast } from '@/components/ui/Toast'
 import { UserFormModal } from './UserFormModal'
 import { UserImportModal } from './UserImportModal'
 import { MemberDetailModal } from './MemberDetailModal'
-import { assignedRoles, extractErrorMessage, roleLabel, scopeFor } from '@/lib/utils'
+import { assignedRoles, extractErrorMessage, otherDepartmentNames, roleLabel, scopeFor } from '@/lib/utils'
 import type { User, UserCreatePayload, UserUpdatePayload } from '@/types'
 
 const PAGE_SIZE = 10
@@ -337,7 +337,17 @@ export function UsersPage() {
                     <td className="px-4 py-3">
                       <UserRolesBadges user={user} compact />
                     </td>
-                    <td className="px-4 py-3 text-text-secondary">{user.department?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-text-secondary">
+                      {user.department?.name ?? '—'}
+                      {otherDepartmentNames(user).length > 0 && (
+                        <span
+                          className="ms-1.5 rounded-sm bg-brand-primary/10 px-1.5 py-0.5 text-xs text-brand-primary"
+                          title={otherDepartmentNames(user).join('، ')}
+                        >
+                          +{otherDepartmentNames(user).length}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-text-secondary">{user.job_title?.name ?? '—'}</td>
                     <td className="px-4 py-3">
                       <UserStatusBadge status={user.status} />

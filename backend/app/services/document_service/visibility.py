@@ -22,7 +22,7 @@ async def _user_committee_ids(db: AsyncSession, user_id: uuid.UUID) -> set[uuid.
     return {row[0] for row in result.all()}
 
 
-async def _department_committee_ids(db: AsyncSession, dep_id: uuid.UUID) -> set[uuid.UUID]:
+async def _department_committee_ids(db: AsyncSession, dep_ids: set[uuid.UUID]) -> set[uuid.UUID]:
     """
     اللجان اللي "تتبع" إدارة معينة — تُعرَّف بإدارة مَن طلب تشكيلها
     (CommitteeFormationRequest.requested_by)، وليس بعمود مباشر على
@@ -38,7 +38,8 @@ async def _department_committee_ids(db: AsyncSession, dep_id: uuid.UUID) -> set[
             CommitteeFormationRequest.request_id == Committee.source_request_id,
         )
         .join(User, User.user_id == CommitteeFormationRequest.requested_by)
-        .where(User.dep_id == dep_id, Committee.deleted_at.is_(None))
+        # الإدارة الأساسية لمقدّم الطلب = إدارة اللجنة (migration 0052).
+        .where(User.dep_id.in_(dep_ids), Committee.deleted_at.is_(None))
     )
     return {row[0] for row in result.all()}
 
@@ -61,9 +62,9 @@ class DocumentViewer:
             self._committee_ids = await _user_committee_ids(self._db, self._user.user_id)
         return self._committee_ids
 
-    async def department_committee_ids(self, dep_id: uuid.UUID) -> set[uuid.UUID]:
+    async def department_committee_ids(self, dep_ids: set[uuid.UUID]) -> set[uuid.UUID]:
         if self._department_committee_ids is None:
-            self._department_committee_ids = await _department_committee_ids(self._db, dep_id)
+            self._department_committee_ids = await _department_committee_ids(self._db, dep_ids)
         return self._department_committee_ids
 
 
@@ -115,13 +116,11 @@ async def can_view_document(
         # مقيَّدة بإدارته هو تحديدًا (dep_id)، وليست تجاوزًا شاملًا لكل
         # اللجان. راجعي _department_committee_ids أعلاه لتعريف "لجان
         # الإدارة".
-        if (
-            current_user.dep_id is not None
-            and current_user.scope_for("committees.request.create") == "all"
-        ):
-            department_committee_ids = await viewer.department_committee_ids(
-                current_user.dep_id
-            )
+        # تعدد الإدارات (migration 0052): إدارات دوره الحالي (معاذ كأدمن:
+        # القانونية والخدمات المشتركة).
+        own_dep_ids = current_user.department_ids_for_scope("department")
+        if own_dep_ids and current_user.scope_for("committees.request.create") == "all":
+            department_committee_ids = await viewer.department_committee_ids(own_dep_ids)
             if visible_committee_ids & department_committee_ids:
                 return True
     return False

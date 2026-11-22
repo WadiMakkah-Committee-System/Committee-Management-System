@@ -21,14 +21,31 @@ FR-UM-007 → FR-UM-010. يفصل قواعد العمل عن طبقة الـ API
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.department import Department
 from app.models.user import User
-from app.services import audit_service
+from app.models.user_department_role import UserDepartmentRole
+from app.services import audit_service, user_assignment_service
+
+_MULTI_DEPARTMENT_MEMBER_ERROR = (
+    "«{name}» مرتبط بأكثر من إدارة — أضيفي له هذه الإدارة من صفحة المستخدم (الإدارات والأدوار)"
+)
+
+
+def member_of_department_clause(dep_id_expr):
+    """
+    شرط SQL: المستخدم عضو بالإدارة — إدارته الأساسية، أو له تعيين عليها بأي
+    دور (migration 0052). dep_id_expr: قيمة أو عمود (للاستعلامات المرتبطة).
+    """
+    return or_(
+        User.dep_id == dep_id_expr,
+        exists().where(UserDepartmentRole.user_id == User.user_id, UserDepartmentRole.dep_id == dep_id_expr)
+        .correlate_except(UserDepartmentRole),
+    )
 
 
 async def _assert_unique_name(db: AsyncSession, name: str, *, exclude_dep_id: uuid.UUID | None = None) -> None:
@@ -187,10 +204,14 @@ async def create_department(
     await _flush_hierarchy(db)  # للحصول على dep_id قبل تسجيل التدقيق وربط المسؤول
 
     department.manager_user_id = manager.user_id
-    manager.dep_id = department.dep_id
+    # تعدد الإدارات (migration 0052): مستخدم الإدارة الواحدة يُنقل كما كان
+    # (مع تعييناته)، ومتعدد الإدارات لا يُنقل — المدير يُحدَّد كمؤشر فقط،
+    # وإضافة عضو متعدد الإدارات تُرفض برسالة (تعديل إداراته من صفحة المستخدم).
+    await user_assignment_service.attach_to_department(db, user=manager, new_dep_id=department.dep_id)
     moved_from = {str(m.user_id): (str(m.dep_id) if m.dep_id else None) for m in members}
     for member in members:
-        member.dep_id = department.dep_id
+        if not await user_assignment_service.attach_to_department(db, user=member, new_dep_id=department.dep_id):
+            raise ValueError(_MULTI_DEPARTMENT_MEMBER_ERROR.format(name=member.full_name))
 
     await audit_service.log_action(
         db,
@@ -249,7 +270,7 @@ async def get_department_detail(db: AsyncSession, dep_id: uuid.UUID) -> dict | N
     members_result = await db.execute(
         select(User)
         .options(selectinload(User.department).selectinload(Department.manager))
-        .where(User.dep_id == dep_id, User.deleted_at.is_(None))
+        .where(member_of_department_clause(dep_id), User.deleted_at.is_(None))
         .order_by(User.created_at.desc())
     )
     members = list(members_result.scalars().all())
@@ -263,7 +284,7 @@ async def get_department_detail(db: AsyncSession, dep_id: uuid.UUID) -> dict | N
     )
     member_count = (
         select(func.count(User.user_id))
-        .where(User.dep_id == Department.dep_id, User.deleted_at.is_(None))
+        .where(member_of_department_clause(Department.dep_id), User.deleted_at.is_(None))
         .correlate(Department)
         .scalar_subquery()
     )
@@ -337,7 +358,7 @@ async def update_department(
     if manager_user_id is not None and manager_user_id != department.manager_user_id:
         manager = await _get_active_manager(db, manager_user_id)
         department.manager_user_id = manager.user_id
-        manager.dep_id = department.dep_id
+        await user_assignment_service.attach_to_department(db, user=manager, new_dep_id=department.dep_id)
     if parent_changed:
         department.parent_dep_id = parent_dep_id  # type: ignore[assignment]
     await _flush_hierarchy(db)

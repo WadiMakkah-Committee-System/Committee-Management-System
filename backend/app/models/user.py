@@ -130,6 +130,15 @@ class User(Base):
         lazy="raise_on_sql",
     )
 
+    # تعيينات (إدارة + دور) — migration 0052. للقراءة فقط، وتُحمَّل صراحةً
+    # (selectinload) بالمسارات اللي تعرضها، مثل assigned_roles أعلاه.
+    assignment_links: Mapped[list["UserDepartmentRole"]] = relationship(  # noqa: F821
+        primaryjoin="User.user_id == foreign(UserDepartmentRole.user_id)",
+        order_by="[UserDepartmentRole.created_at, UserDepartmentRole.dep_id]",
+        viewonly=True,
+        lazy="raise_on_sql",
+    )
+
     @property
     def roles(self) -> list | None:
         """
@@ -162,65 +171,105 @@ class User(Base):
         """راجعي Role.scope_for — نفس المنطق، آمن مع مستخدم بدون دور (تُرجع None)."""
         return self.role.scope_for(*codes) if self.role is not None else None
 
-    def department_ids_for_scope(self, scope: str | None) -> set[uuid.UUID]:
-        """
-        الهدف:
-        الإدارات اللي يغطيها نطاق صلاحية مرتبط بالإدارة لهذا المستخدم —
-        نقطة واحدة لكل فحوصات النطاق بالنظام (بدل تكرار المقارنة بكل خدمة).
+    # ------------------------------------------------------------------
+    # الإدارات والتعيينات (migration 0052 — مستخدم في أكثر من إدارة بدور
+    # مختلف في كل إدارة). department_assignment_rows عمود JSONB محسوب بنفس
+    # استعلام المستخدم (راجعي app/models/user_department_role.py)، ويُحمَّل
+    # على مسار المصادقة وget_user فقط (user_service._profile_options). أي
+    # وصول له بدون تحميل يرمي خطأ raiseload واضحًا بدل نتيجة خاطئة صامتة.
+    # ------------------------------------------------------------------
 
-        المدخلات:
-        - scope: نطاق الصلاحية (عادةً ناتج scope_for).
+    def _assignment_rows(self) -> list[dict]:
+        return list(self.department_assignment_rows or [])
 
-        المخرجات (set[UUID]):
-        - department: {إدارته} فقط.
-        - department_tree: {إدارته} + كل الإدارات التابعة النشطة لها
-          (فارغة التوابع لو إدارته نفسها تابعة أو بلا توابع).
-        - أي نطاق آخر (own/all/None)، أو مستخدم بلا إدارة: مجموعة فارغة —
-          own وall لا يُحسبان بالإدارات أصلًا.
-
-        التأثيرات الجانبية: لا شيء (حساب بالذاكرة).
-
-        الاعتماديات / الأخطاء المحتملة:
-        department_tree يقرأ department.child_dep_ids — محمَّل مسبقًا على مسار
-        المصادقة (user_service._profile_options). مستخدم محمَّل بغير هذا
-        المسار يرمي خطأ raiseload واضحًا بدل نتيجة خاطئة صامتة.
-        """
-        if self.dep_id is None or scope not in ("department", "department_tree"):
-            return set()
-        ids = {self.dep_id}
-        if scope == "department_tree" and self.department is not None:
-            ids.update(self.department.child_dep_ids or [])
-        return ids
-
-    def related_department_ids(self) -> set[uuid.UUID]:
-        """
-        إدارته + إدارتها الأم (لو كانت تابعة) + إداراتها التابعة (لو كانت أمًّا)
-        — لرؤية ما يُشارَك على مستوى الإدارة (الوثائق وتصنيفاتها) عبر الهيكل
-        بالاتجاهين (قرار لاما 2026-11-15). مستخدم بلا إدارة: مجموعة فارغة.
-        يعتمد على department.child_dep_ids المحمَّل بمسار المصادقة (راجعي
-        department_ids_for_scope).
-        """
+    def _primary_department_ids(self, *, children: bool = False, parent: bool = False) -> set[uuid.UUID]:
+        """الإدارة الأساسية (users.dep_id) ومعها توابعها/أمها حسب الطلب."""
         if self.dep_id is None:
             return set()
         ids = {self.dep_id}
         if self.department is not None:
-            if self.department.parent_dep_id is not None:
+            if children:
+                ids.update(self.department.child_dep_ids or [])
+            if parent and self.department.parent_dep_id is not None:
                 ids.add(self.department.parent_dep_id)
-            ids.update(self.department.child_dep_ids or [])
+        return ids
+
+    @staticmethod
+    def _row_ids(row: dict, *, children: bool = False, parent: bool = False) -> set[uuid.UUID]:
+        ids = {uuid.UUID(row["dep_id"])}
+        if children:
+            ids.update(uuid.UUID(c) for c in row.get("child_dep_ids") or [])
+        if parent and row.get("parent_dep_id"):
+            ids.add(uuid.UUID(row["parent_dep_id"]))
+        return ids
+
+    def department_ids_for_scope(self, scope: str | None) -> set[uuid.UUID]:
+        """
+        الهدف:
+        الإدارات اللي يغطيها نطاق صلاحية مرتبط بالإدارة للدور الحالي — نقطة
+        واحدة لكل فحوصات النطاق بالنظام.
+
+        المدخلات: scope — نطاق الصلاحية (عادةً ناتج scope_for).
+
+        المخرجات (set[UUID]):
+        - department: الإدارات اللي يحمل فيها المستخدم دوره الحالي
+          (user_department_roles). دور بلا تعيينات = الإدارة الأساسية فقط
+          (نفس السلوك قبل migration 0052).
+        - department_tree: نفسها + كل الإدارات التابعة النشطة لها.
+        - أي نطاق آخر (own/all/None): مجموعة فارغة.
+
+        مثال: معاذ دوره الحالي "أدمن" (القانونية + الخدمات المشتركة) ← نطاقه
+        هاتان الإدارتان فقط، وليس مكتب الرئيس التنفيذي.
+        """
+        if scope not in ("department", "department_tree"):
+            return set()
+        tree = scope == "department_tree"
+        rows = [r for r in self._assignment_rows() if self.role_id and r["role_id"] == str(self.role_id)]
+        if not rows:
+            return self._primary_department_ids(children=tree)
+        ids: set[uuid.UUID] = set()
+        for row in rows:
+            ids |= self._row_ids(row, children=tree)
+        return ids
+
+    def member_department_ids(self) -> set[uuid.UUID]:
+        """كل إدارات المستخدم (الأساسية + كل تعييناته بأي دور) — العضوية."""
+        ids = self._primary_department_ids()
+        for row in self._assignment_rows():
+            ids |= self._row_ids(row)
+        return ids
+
+    def related_department_ids(self) -> set[uuid.UUID]:
+        """
+        كل إداراته (الأساسية + التعيينات، بغض النظر عن الدور الحالي) + أم كل
+        منها + توابع كل منها — لرؤية ما يُشارَك على مستوى الإدارة (الوثائق
+        وتصنيفاتها) عبر الهيكل بالاتجاهين (قرار لاما 2026-11-15). الرؤية
+        عضوية وليست صلاحية، فلا تتبع مبدّل الأدوار.
+        """
+        ids = self._primary_department_ids(children=True, parent=True)
+        for row in self._assignment_rows():
+            ids |= self._row_ids(row, children=True, parent=True)
         return ids
 
     def department_and_parent_ids(self) -> set[uuid.UUID]:
         """
-        إدارته + إدارتها الأم (لو كانت تابعة) — للأشياء المعرَّفة على مستوى
-        الإدارة الأم وتشمل إداراتها التابعة تلقائيًا (تصنيفات الوثائق الخاصة
-        بإدارة أم — طلب لاما 2026-11-16). مستخدم بلا إدارة: مجموعة فارغة.
+        كل إداراته + أم كل منها — للأشياء المعرَّفة على مستوى الإدارة الأم
+        وتشمل إداراتها التابعة تلقائيًا (تصنيفات الوثائق الخاصة بإدارة أم —
+        طلب لاما 2026-11-16).
         """
-        if self.dep_id is None:
-            return set()
-        ids = {self.dep_id}
-        if self.department is not None and self.department.parent_dep_id is not None:
-            ids.add(self.department.parent_dep_id)
+        ids = self._primary_department_ids(parent=True)
+        for row in self._assignment_rows():
+            ids |= self._row_ids(row, parent=True)
         return ids
+
+    @property
+    def assignments(self) -> list | None:
+        """
+        تعيينات المستخدم (إدارة + دور) لو حُمِّلت مسبقًا (assignment_links)،
+        وإلا None — بلا استعلام إضافي. يقرأها UserOut.assignments.
+        """
+        loaded = sa_inspect(self).attrs.assignment_links.loaded_value
+        return None if loaded is NO_VALUE else list(loaded)
 
     def scope_covers_department(self, scope: str | None, dep_id: uuid.UUID | None) -> bool:
         """

@@ -36,10 +36,21 @@ from app.schemas.user import ActiveRoleSwitch, UserCreate, UserDetailOut, UserOu
 from app.schemas.user_import import (
     ImportedDepartmentOut,
     ImportedUserOut,
+    ImportPreviewAssignmentOut,
+    ImportPreviewDepartmentOut,
+    ImportPreviewUserOut,
     ImportRowErrorOut,
+    UserImportPreview,
     UserImportResult,
 )
-from app.services import committee_service, notification_service, user_import_service, user_service
+from app.services import (
+    committee_service,
+    notification_service,
+    user_assignment_service,
+    user_import_service,
+    user_service,
+)
+from app.services.user_assignment_service import Assignment
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -57,8 +68,10 @@ def _check_user_scope_access(current_user: User, target: User, *permission_codes
     if scope == "all":
         return
     if scope in DEPARTMENT_SCOPES:
-        # department: إدارته فقط — department_tree: إدارته وما تحتها (0048).
-        if current_user.scope_covers_department(scope, target.dep_id):
+        # department: إدارات دوره الحالي — department_tree: ومعها توابعها (0048).
+        # تعدد الإدارات (0052): يكفي أن يكون target عضوًا بإحدى إدارات النطاق
+        # (أساسية أو تعيين) — مدير القانونية يدير معاذ لأنه عضو بالقانونية.
+        if target.member_department_ids() & current_user.department_ids_for_scope(scope):
             return
     elif scope == "own":
         if target.user_id == current_user.user_id:
@@ -104,6 +117,60 @@ def _check_department_assignment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="لا يمكنك إسناد المستخدم لإدارة خارج نطاق صلاحيتك",
         )
+
+
+def _to_assignments(items) -> list[Assignment] | None:
+    if items is None:
+        return None
+    return [Assignment(role_id=a.role_id, dep_id=a.dep_id) for a in items]
+
+
+def _check_assignments_create(
+    current_user: User, assignments: list[Assignment], primary_dep_id: uuid.UUID | None
+) -> None:
+    """
+    إنشاء بتعيينات (migration 0052): كل إدارة بالتعيينات (والإدارة الأساسية)
+    لازم تكون ضمن نطاق المنفّذ على users.create. بغير نطاق all لازم إدارة
+    واحدة على الأقل (نفس قاعدة "لا مستخدم بلا إدارة" للنطاق المحدود).
+    """
+    deps = {a.dep_id for a in assignments if a.dep_id is not None}
+    if primary_dep_id is not None:
+        deps.add(primary_dep_id)
+    if not deps:
+        _check_department_assignment(current_user, None, "users.create")
+    for dep in deps:
+        _check_department_assignment(current_user, dep, "users.create")
+
+
+def _merge_scoped_assignments(
+    current_user: User, existing: list[Assignment], incoming: list[Assignment]
+) -> list[Assignment]:
+    """
+    الهدف:
+    تعديل تعيينات مستخدم من منفّذ نطاقه محدود (department/department_tree):
+    يعدّل فقط التعيينات داخل إدارات نطاقه، وتعيينات المستخدم خارجها تبقى كما
+    هي حرفيًا — فمدير القانونية لا يقدر يغيّر دور معاذ في مكتب الرئيس.
+
+    المخرجات: القائمة النهائية = تعيينات خارج النطاق (كما هي) + الواردة داخله.
+    الأخطاء: 403 لو وردت تعيينات خارج النطاق غير موجودة أصلًا (إضافة أو تغيير).
+    """
+    scope = current_user.scope_for("users.update")
+    if current_user.is_super_admin or scope == "all":
+        return incoming
+    allowed = (
+        current_user.department_ids_for_scope(scope)
+        if scope in DEPARTMENT_SCOPES
+        else ({current_user.dep_id} if current_user.dep_id is not None else set())
+    )
+    outside_existing = [a for a in existing if a.dep_id not in allowed]
+    for a in incoming:
+        if a.dep_id not in allowed and a not in outside_existing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="لا يمكنك إسناد المستخدم لإدارة خارج نطاق صلاحيتك",
+            )
+    inside_incoming = [a for a in incoming if a.dep_id in allowed]
+    return outside_existing + inside_incoming
 
 
 @router.get("/me", response_model=UserDetailOut)
@@ -200,7 +267,11 @@ async def create_user(
     - 403 أيضًا: الإدارة المختارة خارج نطاق صلاحية المنفّذ على users.create
       (راجعي _check_department_assignment).
     """
-    _check_department_assignment(current_user, payload.dep_id, "users.create")
+    assignments = _to_assignments(payload.assignments)
+    if assignments is not None:
+        _check_assignments_create(current_user, assignments, payload.dep_id)
+    else:
+        _check_department_assignment(current_user, payload.dep_id, "users.create")
     try:
         user = await user_service.create_user(
             db,
@@ -216,6 +287,7 @@ async def create_user(
             dep_id=payload.dep_id,
             job_title_id=payload.job_title_id,
             status=payload.status,
+            assignments=assignments,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -252,7 +324,11 @@ async def list_users(
     if scope == "own":
         return [UserOut.model_validate(current_user)]
     if scope == "department":
-        users = await user_service.list_users(db, dep_id=current_user.dep_id)
+        # إدارات دوره الحالي (migration 0052 — قد تكون أكثر من إدارة).
+        allowed = current_user.department_ids_for_scope(scope)
+        if not allowed:
+            return []
+        users = await user_service.list_users(db, dep_ids=allowed)
         return [UserOut.model_validate(u) for u in users]
     if scope == "department_tree":
         allowed = current_user.department_ids_for_scope(scope)
@@ -292,6 +368,75 @@ async def download_import_template(db: AsyncSession = Depends(get_db)) -> Respon
     )
 
 
+async def _read_import_rows(file: UploadFile) -> list:
+    """قراءة الملف المرفوع والتحقق من صيغته وحجمه وبنيته — مشتركة بين المعاينة والرفع."""
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="الملف يجب أن يكون بصيغة Excel ‏(.xlsx)")
+    content = await file.read(user_import_service.MAX_FILE_BYTES + 1)
+    if len(content) > user_import_service.MAX_FILE_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="حجم الملف أكبر من 2 ميجابايت")
+    try:
+        return user_import_service.parse_workbook(content)
+    except user_import_service.ImportFileError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _row_errors_http(exc: "user_import_service.ImportValidationError") -> HTTPException:
+    return HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        detail={
+            "message": f"لم يُضف أي مستخدم — الملف يحتوي {len(exc.errors)} خطأ، صحّحيها وأعيدي الرفع",
+            "errors": [ImportRowErrorOut(**vars(e)).model_dump() for e in exc.errors],
+        },
+    )
+
+
+@router.post(
+    "/import/preview",
+    response_model=UserImportPreview,
+    dependencies=[Depends(require_permission("users.import"))],
+)
+async def preview_import_users(
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> UserImportPreview:
+    """
+    POST /users/import/preview (multipart: file) — يتطلب users.import.
+
+    نفس تحقق POST /users/import بالكامل، لكن بلا أي كتابة: يرجع ملخص ما
+    سيُنشأ (المستخدمون وتعييناتهم، الإدارات الجديدة وأمهاتها، المسميات
+    الجديدة) لتأكيده قبل الرفع الفعلي (طلب لاما 2026-11-22).
+
+    الاستجابات: 200 ملخص، و400/413 بنفس أشكال POST /users/import.
+    """
+    rows = await _read_import_rows(file)
+    try:
+        plan = await user_import_service.preview_import(db, actor=current_user, rows=rows)
+    except user_import_service.ImportFileError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except user_import_service.ImportValidationError as exc:
+        raise _row_errors_http(exc) from exc
+    return UserImportPreview(
+        users_count=len(plan.users),
+        assignments_count=plan.assignments_count,
+        users=[
+            ImportPreviewUserOut(
+                row=u.row,
+                full_name=u.full_name,
+                email=u.email,
+                primary_department=u.primary_department,
+                assignments=[ImportPreviewAssignmentOut(department=d, role=r) for d, r in u.assignments],
+            )
+            for u in plan.users
+        ],
+        departments_to_create=[
+            ImportPreviewDepartmentOut(name=n, parent_name=p) for n, p in plan.departments_to_create
+        ],
+        job_titles_to_create=plan.job_titles_to_create,
+    )
+
+
 @router.post(
     "/import",
     response_model=UserImportResult,
@@ -318,25 +463,13 @@ async def import_users(
     - 409: تعارض متزامن (أُنشئ نفس البريد/الاسم أثناء الرفع) — أعيدي المحاولة.
     - 413: الملف أكبر من الحد.
     """
-    if not (file.filename or "").lower().endswith(".xlsx"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="الملف يجب أن يكون بصيغة Excel ‏(.xlsx)")
-    content = await file.read(user_import_service.MAX_FILE_BYTES + 1)
-    if len(content) > user_import_service.MAX_FILE_BYTES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="حجم الملف أكبر من 2 ميجابايت")
-
+    rows = await _read_import_rows(file)
     try:
-        rows = user_import_service.parse_workbook(content)
         result = await user_import_service.import_users(db, actor=current_user, rows=rows)
     except user_import_service.ImportFileError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except user_import_service.ImportValidationError as exc:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail={
-                "message": f"لم يُضف أي مستخدم — الملف يحتوي {len(exc.errors)} خطأ، صحّحيها وأعيدي الرفع",
-                "errors": [ImportRowErrorOut(**vars(e)).model_dump() for e in exc.errors],
-            },
-        ) from exc
+        raise _row_errors_http(exc) from exc
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(
@@ -366,9 +499,13 @@ async def import_users(
             )
             for u in result.users
         ],
-        departments_created=[ImportedDepartmentOut(name=n, code=c) for n, c in result.departments_created],
+        departments_created=[
+            ImportedDepartmentOut(name=n, code=c, parent_name=result.departments_parents.get(n))
+            for n, c in result.departments_created
+        ],
         job_titles_created=result.job_titles_created,
         emails_queued=len(result.users),
+        assignments_count=result.assignments_count,
     )
 
 
@@ -421,6 +558,10 @@ async def update_user(
     # أيضًا (وليس فقط إدارته الحالية). update_user يتجاهل dep_id = None.
     if payload.dep_id is not None and payload.dep_id != target.dep_id:
         _check_department_assignment(current_user, payload.dep_id, "users.update")
+    assignments = _to_assignments(payload.assignments)
+    if assignments is not None:
+        existing = await user_assignment_service.load_assignments(db, target.user_id)
+        assignments = _merge_scoped_assignments(current_user, existing, assignments)
     try:
         user = await user_service.update_user(
             db,
@@ -434,6 +575,7 @@ async def update_user(
             role_ids=payload.role_ids,
             dep_id=payload.dep_id,
             job_title_id=payload.job_title_id,
+            assignments=assignments,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

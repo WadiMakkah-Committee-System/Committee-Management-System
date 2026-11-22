@@ -75,7 +75,11 @@ async def create_category(
     scope: DocumentCategoryScope,
     department_id: uuid.UUID | None,
 ) -> DocumentCategory:
-    if scope == "department" and not actor.is_super_admin and department_id != actor.dep_id:
+    if (
+        scope == "department"
+        and not actor.is_super_admin
+        and department_id not in actor.member_department_ids()
+    ):
         raise DocumentValidationError("لا يمكن إنشاء تصنيف خاص بإدارة غير إدارتك")
 
     if department_id is not None:
@@ -117,7 +121,7 @@ async def update_category(
     if (
         category.scope == "department"
         and not actor.is_super_admin
-        and category.department_id != actor.dep_id
+        and category.department_id not in actor.member_department_ids()
     ):
         raise DocumentValidationError("لا يمكن تعديل تصنيف خاص بإدارة غير إدارتك")
 
@@ -158,7 +162,7 @@ async def delete_category(
     if (
         category.scope == "department"
         and not actor.is_super_admin
-        and category.department_id != actor.dep_id
+        and category.department_id not in actor.member_department_ids()
     ):
         raise DocumentValidationError("لا يمكن حذف تصنيف خاص بإدارة غير إدارتك")
 

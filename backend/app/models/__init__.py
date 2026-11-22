@@ -40,6 +40,7 @@ from app.models.task import Task, TaskAssignmentHistory, TaskStatus
 from app.models.ticket import Ticket, TicketAttachment, TicketMessage, TicketStatus
 from app.models.user import User, UserStatus
 from app.models.user_role import UserRole
+from app.models.user_department_role import UserDepartmentRole
 from app.models.user_saved_signature import UserSavedSignature
 
 __all__ = [
@@ -92,5 +93,6 @@ __all__ = [
     "User",
     "UserStatus",
     "UserRole",
+    "UserDepartmentRole",
     "UserSavedSignature",
 ]
