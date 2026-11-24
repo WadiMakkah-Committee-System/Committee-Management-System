@@ -23,6 +23,7 @@ from httpx import AsyncClient
 
 from app.db.session import AsyncSessionLocal
 from app.models.role import Role
+from tests.dates import COMMITTEE_END, COMMITTEE_START
 
 
 async def _actor(
@@ -61,6 +62,30 @@ async def _actor(
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
+async def _system_user_role_id(
+    client: AsyncClient, auth_headers: dict[str, str], roles_by_name: dict[str, str]
+) -> str:
+    """
+    دور "مستخدم نظام" — مُنشأ يدويًا بالإنتاج فقط (ليس ضمن migrations)، فقاعدة
+    الاختبار النظيفة ما فيها هذا الدور. ننشئه هنا بنفس تعريفه بالإنتاج
+    (users.view بنطاق own فقط، بلا أي committees.*) لو مو موجود.
+    """
+    if "مستخدم نظام" in roles_by_name:
+        return roles_by_name["مستخدم نظام"]
+    created = await client.post(
+        "/api/v1/roles",
+        json={
+            "name": "مستخدم نظام",
+            "permission_codes": ["users.view"],
+            "permission_scopes": {"users.view": "own"},
+        },
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+    roles_by_name["مستخدم نظام"] = created.json()["role_id"]
+    return roles_by_name["مستخدم نظام"]
+
+
 async def _create_system_user(
     client: AsyncClient,
     auth_headers: dict[str, str],
@@ -78,7 +103,7 @@ async def _create_system_user(
             "username": username,
             "email": f"{username}@example.com",
             "password": "StrongPass1",
-            "role_id": roles_by_name["مستخدم نظام"],
+            "role_id": await _system_user_role_id(client, auth_headers, roles_by_name),
             "dep_id": None,
         },
         headers=auth_headers,
@@ -106,8 +131,8 @@ async def _approve_committee(
     payload = {
         "committee_name": name,
         "statement": "بيان اللجنة",
-        "start_date": "2026-09-01",
-        "end_date": "2026-12-01",
+        "start_date": COMMITTEE_START,
+        "end_date": COMMITTEE_END,
         "proposed_member_ids": member_ids,
         "chair_user_id": chair_id,
     }
@@ -133,7 +158,11 @@ async def _setup_request_actors(
     client: AsyncClient, auth_headers: dict[str, str]
 ) -> dict[str, dict[str, str]]:
     admin_headers = await _actor(
-        client, auth_headers, username="cr_admin", permission_codes=["committees.request.create"]
+        client,
+        auth_headers,
+        username="cr_admin",
+        # الإرسال (submit) صار يتطلب committees.request.update (مثل دور admin النظامي).
+        permission_codes=["committees.request.create", "committees.request.update"],
     )
     office_headers = await _actor(
         client,

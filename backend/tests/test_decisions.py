@@ -8,15 +8,18 @@
 """
 
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.db.session import AsyncSessionLocal
 from app.models.role import Permission, Role, RolePermission
 from app.models.user import User
+from tests.permission_splits import with_split_codes
+from tests.dates import COMMITTEE_END, COMMITTEE_START, DATE_A, DATE_B
 
 
 async def _grant_committee_role_permissions(codes: list[str], *, slug: str) -> None:
     """Idempotent — راجعي شرح مماثل بـtest_meetings.py (roles/role_permissions لا تُنظَّف بين الاختبارات)."""
+    codes = with_split_codes(codes)  # منح 0050 (راجعي tests/permission_splits.py)
     async with AsyncSessionLocal() as db:
         role = (
             await db.execute(select(Role).where(Role.committee_role_slug == slug))
@@ -71,6 +74,19 @@ async def _create_user_with_role(
     return {"Authorization": f"Bearer {token}"}, user_id
 
 
+async def _revoke_committee_role_permissions(codes: list[str], *, slug: str) -> None:
+    """عكس _grant_committee_role_permissions — يسحب أكوادًا من دور اللجنة."""
+    async with AsyncSessionLocal() as db:
+        role = (await db.execute(select(Role).where(Role.committee_role_slug == slug))).scalar_one()
+        await db.execute(
+            delete(RolePermission).where(
+                RolePermission.role_id == role.role_id,
+                RolePermission.permission_id.in_(select(Permission.permission_id).where(Permission.code.in_(codes))),
+            )
+        )
+        await db.commit()
+
+
 async def _create_approved_committee(
     client: AsyncClient,
     auth_headers: dict[str, str],
@@ -115,8 +131,8 @@ async def _create_approved_committee(
         json={
             "committee_name": f"لجنة القرارات التجريبية {suffix}",
             "statement": "بيان",
-            "start_date": "2026-09-01",
-            "end_date": "2026-12-01",
+            "start_date": COMMITTEE_START,
+            "end_date": COMMITTEE_END,
             "proposed_member_ids": [chair_id, *member_ids],
             "chair_user_id": chair_id,
         },
@@ -171,8 +187,8 @@ async def test_chair_can_create_final_decision_and_approve_directly(
             "committee_id": ctx["committee_id"],
             "title": "قرار إداري نهائي",
             "classification": "final",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -198,8 +214,8 @@ async def test_non_chair_cannot_create_decision(
             "committee_id": ctx["committee_id"],
             "title": "محاولة غير مصرح بها",
             "classification": "final",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["member_headers_list"][0],
     )
@@ -217,8 +233,8 @@ async def test_cannot_edit_or_delete_decision_after_voting_opened(
             "committee_id": ctx["committee_id"],
             "title": "قرار للتصويت",
             "classification": "voting",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -256,8 +272,8 @@ async def test_voting_decision_approved_when_majority_reached(
             "committee_id": ctx["committee_id"],
             "title": "قرار بالأغلبية",
             "classification": "voting",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -310,8 +326,8 @@ async def test_voting_decision_auto_rejected_without_majority(
             "committee_id": ctx["committee_id"],
             "title": "قرار مرفوض",
             "classification": "voting",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -357,8 +373,8 @@ async def test_outsider_cannot_view_decision(
             "committee_id": ctx["committee_id"],
             "title": "قرار خاص",
             "classification": "final",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -385,8 +401,8 @@ async def test_assignees_are_derived_automatically_from_committee_membership(
             "committee_id": ctx["committee_id"],
             "title": "قرار بمنفذين تلقائيين",
             "classification": "final",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -412,8 +428,8 @@ async def test_open_voting_always_uses_fixed_options(
             "committee_id": ctx["committee_id"],
             "title": "قرار بخيارات ثابتة",
             "classification": "voting",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -457,8 +473,8 @@ async def test_open_voting_needs_no_options_in_body(
             "committee_id": ctx["committee_id"],
             "title": "قرار يُطرح بلا خيارات بالطلب",
             "classification": "voting",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -483,6 +499,9 @@ async def test_member_without_view_result_sees_only_own_vote(
     ctx = await _create_approved_committee(
         client, auth_headers, roles_by_name, suffix="hideresults", member_count=1
     )
+    # _create_approved_committee يمنح العضو view_result (لبقية الاختبارات)، والمنح
+    # يبقى بين الاختبارات — هذا الاختبار يحتاج عضوًا بدونها، فنسحبها صراحة.
+    await _revoke_committee_role_permissions(["decisions.vote.view_result"], slug="member")
 
     create = await client.post(
         "/api/v1/decisions",
@@ -490,8 +509,8 @@ async def test_member_without_view_result_sees_only_own_vote(
             "committee_id": ctx["committee_id"],
             "title": "قرار سرّي النتيجة للأعضاء",
             "classification": "voting",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -555,8 +574,8 @@ async def test_member_cannot_see_or_delete_pending_decision(
             "committee_id": ctx["committee_id"],
             "title": "قرار لسا رئيسة اللجنة تجهّزه",
             "classification": "voting",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )

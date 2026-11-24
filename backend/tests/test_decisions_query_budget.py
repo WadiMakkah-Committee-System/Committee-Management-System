@@ -18,6 +18,7 @@ from app.models.decision import Decision, DecisionVote
 from app.models.role import Permission, Role, RolePermission
 from tests.test_decisions import _create_approved_committee
 from tests.test_meetings_query_budget import _QueryCounter, _count, _drain_background_tasks
+from tests.dates import VOTING_END, VOTING_START
 
 
 async def _new_voting_decision(client: AsyncClient, ctx: dict, title: str) -> tuple[str, str]:
@@ -27,8 +28,8 @@ async def _new_voting_decision(client: AsyncClient, ctx: dict, title: str) -> tu
             "committee_id": ctx["committee_id"],
             "title": title,
             "classification": "voting",
-            "start_date": "2026-11-01",
-            "end_date": "2026-11-30",
+            "start_date": VOTING_START,
+            "end_date": VOTING_END,
         },
         headers=ctx["chair_headers"],
     )

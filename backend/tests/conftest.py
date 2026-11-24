@@ -122,7 +122,9 @@ async def _clean_tables(_fresh_async_resources: None) -> AsyncGenerator[None, No
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE TABLE password_reset_tokens, audit_logs, users, departments "
+                # job_titles: بلا بيانات أولية بالـmigrations، فبقاؤها بين الاختبارات
+                # كان يسرّب مسميات اختبار لاختبار آخر (خطأ "المسمى موجود مسبقًا").
+                "TRUNCATE TABLE password_reset_tokens, audit_logs, users, departments, job_titles "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -187,3 +189,30 @@ async def super_admin_token(client: AsyncClient, super_admin_user: User) -> str:
 @pytest.fixture
 def auth_headers(super_admin_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {super_admin_token}"}
+
+
+@pytest_asyncio.fixture
+async def _president_can_view_requests():
+    """
+    بالإنتاج دور الرئيس التنفيذي يملك committees.request.view (نطاق all) —
+    مُنح يدويًا من شاشة الأدوار ولا توجد migration له، فقاعدة الاختبار تفتقده.
+    نمنحه مؤقتًا لهذا الاختبار فقط ثم نزيله (role_permissions لا تُفرَّغ بين
+    الاختبارات).
+    """
+    grant = text(
+        "INSERT INTO role_permissions (role_id, permission_id, scope) "
+        "SELECT r.role_id, p.permission_id, 'all' FROM roles r, permissions p "
+        "WHERE r.name = 'executive_president' AND p.code = 'committees.request.view' "
+        "ON CONFLICT (role_id, permission_id) DO NOTHING RETURNING role_id"
+    )
+    async with engine.begin() as conn:
+        inserted = (await conn.execute(grant)).first() is not None
+    yield
+    if inserted:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "DELETE FROM role_permissions WHERE role_id = (SELECT role_id FROM roles WHERE name = 'executive_president') "
+                    "AND permission_id = (SELECT permission_id FROM permissions WHERE code = 'committees.request.view')"
+                )
+            )

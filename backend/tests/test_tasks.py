@@ -13,10 +13,13 @@ from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from app.models.role import Permission, Role, RolePermission
 from app.models.user import User
+from tests.permission_splits import with_split_codes
+from tests.dates import COMMITTEE_END, COMMITTEE_START, DATE_A, DATE_B
 
 
 async def _grant_committee_role_permissions(codes: list[str], *, slug: str) -> None:
     """Idempotent — راجعي شرح مماثل بـtest_meetings.py (roles/role_permissions لا تُنظَّف بين الاختبارات)."""
+    codes = with_split_codes(codes)  # منح 0050 (راجعي tests/permission_splits.py)
     async with AsyncSessionLocal() as db:
         role = (
             await db.execute(select(Role).where(Role.committee_role_slug == slug))
@@ -115,8 +118,8 @@ async def _create_approved_committee(
         json={
             "committee_name": f"لجنة المهام التجريبية {suffix}",
             "statement": "بيان",
-            "start_date": "2026-09-01",
-            "end_date": "2026-12-01",
+            "start_date": COMMITTEE_START,
+            "end_date": COMMITTEE_END,
             "proposed_member_ids": [chair_id, *member_ids],
             "chair_user_id": chair_id,
         },
@@ -165,8 +168,8 @@ async def _create_task(client: AsyncClient, ctx: dict, *, assignee_id: str, titl
         json={
             "committee_id": ctx["committee_id"],
             "title": title,
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
             "assignee_user_id": assignee_id,
         },
         headers=ctx["chair_headers"],
@@ -198,8 +201,8 @@ async def test_member_cannot_create_task(
         json={
             "committee_id": ctx["committee_id"],
             "title": "محاولة غير مصرح بها",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
             "assignee_user_id": ctx["member_ids"][0],
         },
         headers=ctx["member_headers_list"][0],
@@ -226,8 +229,8 @@ async def test_end_date_before_start_date_rejected(
         json={
             "committee_id": ctx["committee_id"],
             "title": "تواريخ خاطئة",
-            "start_date": "2026-10-10",
-            "end_date": "2026-09-10",
+            "start_date": DATE_B,
+            "end_date": DATE_A,
             "assignee_user_id": ctx["chair_id"],
         },
         headers=ctx["chair_headers"],

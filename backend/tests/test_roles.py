@@ -24,6 +24,8 @@ async def test_permissions_catalog_has_all_categories(client: AsyncClient, auth_
         "job_titles",
         # التذاكر (migration 0051).
         "tickets",
+        # تصنيفات الوثائق — قسم مستقل بشاشة الأدوار.
+        "document_categories",
     }
     # مراجعة لاما 2026-09-01: فئة "committee_roles" المصطنعة أُزيلت
     # (db/migrations/0017_remove_committee_roles_category.sql) — أدوار
@@ -49,7 +51,12 @@ async def test_permissions_catalog_marks_enforced_categories(
     """
     response = await client.get("/api/v1/permissions", headers=auth_headers)
     body = response.json()
-    enforced = {p["category"] for p in body if p["is_enforced"]}
+    # أقسام مُنفَّذة بالكامل (كل أكوادها is_enforced). بعض الأقسام فيها أكواد
+    # مفردة مُنفَّذة (ENFORCED_PERMISSION_CODES، مثل ai_items.view
+    # وmeetings.transcript.view) مع بقية أكوادها "قريبًا" — فتظهر بالمجموعتين.
+    enforced = {
+        c for c in {p["category"] for p in body} if all(p["is_enforced"] for p in body if p["category"] == c)
+    }
     not_enforced = {p["category"] for p in body if not p["is_enforced"]}
     assert enforced == {"departments", "users", "committees", "job_titles", "tickets"}
     assert "meetings" in not_enforced and "tasks" in not_enforced
@@ -74,8 +81,9 @@ async def test_system_roles_seeded(client: AsyncClient, auth_headers) -> None:
     body = response.json()
 
     committee_roles = [r for r in body if r["kind"] == "committee"]
-    assert {r["committee_role_slug"] for r in committee_roles} == {"chair", "member"}
-    assert {r["name"] for r in committee_roles} == {"رئيس اللجنة", "عضو اللجنة"}
+    # أمين سر اللجنة (secretary) أُضيف لاحقًا كدور لجنة ثالث.
+    assert {r["committee_role_slug"] for r in committee_roles} == {"chair", "member", "secretary"}
+    assert {r["name"] for r in committee_roles} == {"رئيس اللجنة", "عضو اللجنة", "أمين سر اللجنة"}
 
     user_roles = [r for r in body if r["kind"] == "user"]
     assert len(user_roles) == 5

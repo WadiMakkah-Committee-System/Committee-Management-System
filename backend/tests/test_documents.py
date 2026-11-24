@@ -15,14 +15,53 @@ import io
 from datetime import date, timedelta
 from urllib.parse import quote
 
+import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import text
 
 from app.core import storage_client
+from app.db.session import engine
 from app.models.committee import Committee
 from app.models.user import User
+from tests.dates import COMMITTEE_END, COMMITTEE_START
 
 
 DOCUMENT_TEST_CONTENT = b"sample document content for tests"
+
+
+_SUPER_ADMIN_DOC_CODES = ("documents.update", "documents.delete", "documents.download")
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _super_admin_document_permissions():
+    """
+    migration 0014 منحت super_admin صلاحيات الوثائق الأساسية فقط، وتعديل/حذف/
+    تحميل الوثيقة مُنحت له يدويًا من شاشة الأدوار بالإنتاج — قاعدة الاختبار
+    تفتقدها (require_permission بلا تجاوز للسوبر أدمن). نمنحها مؤقتًا لهذا
+    الملف ثم نزيل اللي أضفناه فقط (role_permissions لا تُفرَّغ بين الاختبارات).
+    """
+    codes = ", ".join(f"'{c}'" for c in _SUPER_ADMIN_DOC_CODES)
+    async with engine.begin() as conn:
+        inserted = (
+            await conn.execute(
+                text(
+                    "INSERT INTO role_permissions (role_id, permission_id, scope) "
+                    "SELECT r.role_id, p.permission_id, 'all' FROM roles r, permissions p "
+                    f"WHERE r.name = 'super_admin' AND p.code IN ({codes}) "
+                    "ON CONFLICT (role_id, permission_id) DO NOTHING RETURNING permission_id"
+                )
+            )
+        ).scalars().all()
+    yield
+    if inserted:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "DELETE FROM role_permissions WHERE role_id = (SELECT role_id FROM roles WHERE name = 'super_admin') "
+                    "AND permission_id = ANY(:ids)"
+                ),
+                {"ids": list(inserted)},
+            )
 
 
 async def _upload_document(
@@ -367,8 +406,8 @@ async def _create_approved_committee_with_member(
         json={
             "committee_name": name,
             "statement": "بيان تجريبي",
-            "start_date": "2026-09-01",
-            "end_date": "2026-12-01",
+            "start_date": COMMITTEE_START,
+            "end_date": COMMITTEE_END,
             "proposed_member_ids": [member_id],
             "chair_user_id": member_id,
         },
