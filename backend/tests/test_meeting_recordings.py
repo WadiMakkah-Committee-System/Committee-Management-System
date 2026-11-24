@@ -12,8 +12,10 @@ meetings.record_audio، رفض توليد المسودة بدون تسجيل م�
 """
 
 from httpx import AsyncClient
+from sqlalchemy import text
 
 from app.core import gemini_client
+from app.db.session import engine
 from app.models.user import User
 
 from tests.test_meetings import _create_meeting_with_attachment_permissions, _grant_committee_role_permissions
@@ -96,6 +98,10 @@ async def test_chair_can_generate_and_view_draft(
         "decisions": [{"text": "اعتماد الميزانية", "proposed_by": "أحمد العتيبي", "approved": True}],
         "action_items": [{"text": "إرسال التقرير", "assignee": "أحمد العتيبي", "due_date": None}],
         "key_points": ["نقطة مهمة واحدة"],
+        # حقول أُضيفت لاحقًا لـ_RESPONSE_SCHEMA (Gemini يرجعها دائمًا لأنها required).
+        "recommendations": [{"text": "توصية تجريبية", "proposed_by": None}],
+        "open_items": [],
+        "compliance_notes": [],
     }
 
     async def fake_generate(**kwargs):
@@ -149,5 +155,30 @@ async def test_member_without_draft_view_permission_cannot_view_draft(
     ctx = await _create_meeting_with_recording_permissions(client, auth_headers, roles_by_name)
     meeting_id = ctx["meeting_id"]
 
-    response = await client.get(f"/api/v1/meetings/{meeting_id}/draft", headers=ctx["member_headers"])
-    assert response.status_code == 403, response.text
+    # "عضو اللجنة" يملك افتراضيًا meetings.summary.view/meetings.transcript.view
+    # (migration 0035 — عرض جزئي للمسودة)، فيصل للمسودة. هذا الاختبار يفحص
+    # عضوًا بلا أي من الثلاث: نسحبها مؤقتًا ونعيد ما كان ممنوحًا بعده
+    # (role_permissions لا تُفرَّغ بين الاختبارات).
+    codes = ["meetings.draft.view", "meetings.summary.view", "meetings.transcript.view"]
+    async with engine.begin() as conn:
+        removed = (
+            await conn.execute(
+                text(
+                    "DELETE FROM role_permissions WHERE role_id = "
+                    "(SELECT role_id FROM roles WHERE committee_role_slug = 'member') "
+                    "AND permission_id IN (SELECT permission_id FROM permissions WHERE code = ANY(:codes)) "
+                    "RETURNING role_id, permission_id, scope"
+                ),
+                {"codes": codes},
+            )
+        ).all()
+    try:
+        response = await client.get(f"/api/v1/meetings/{meeting_id}/draft", headers=ctx["member_headers"])
+        assert response.status_code == 403, response.text
+    finally:
+        async with engine.begin() as conn:
+            for role_id, permission_id, scope in removed:
+                await conn.execute(
+                    text("INSERT INTO role_permissions (role_id, permission_id, scope) VALUES (:r, :p, :s)"),
+                    {"r": role_id, "p": permission_id, "s": scope},
+                )

@@ -154,7 +154,8 @@ describe('MemberPicker', () => {
     render(
       <MemberPicker users={USERS} selected={['u-1', 'u-2']} onChange={() => {}} chairId="u-1" onChairChange={() => {}} secretaryId={null} onSecretaryChange={() => {}} />,
     )
-    const radios = screen.getAllByRole('radio') as HTMLInputElement[]
+    // مجموعتا Radio منفصلتان (الرئيس، وأمين السر المضاف لاحقًا) — نفحص مجموعة الرئيس.
+    const radios = (screen.getAllByRole('radio') as HTMLInputElement[]).filter((r) => r.name === 'committee-chair')
     expect(radios).toHaveLength(2)
     expect(radios.filter((r) => r.checked)).toHaveLength(1)
   })

@@ -97,8 +97,9 @@ describe('DashboardPage', () => {
       refetch: vi.fn(),
     })
     renderDashboard()
-    expect(screen.getByText('3')).toBeInTheDocument()
-    expect(screen.getByText('2')).toBeInTheDocument()
+    // العدد يظهر ببطاقة الإحصاء وبعنوان القسم المقابل معًا (اللجان، الاجتماعات القادمة).
+    expect(screen.getAllByText('3').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('2').length).toBeGreaterThan(0)
   })
 
   it('يعرض حالة فارغة واضحة لكل قسم بلا بيانات', () => {
@@ -137,7 +138,8 @@ describe('DashboardPage', () => {
       refetch: vi.fn(),
     })
     renderDashboard()
-    fireEvent.click(screen.getByText('لجاني المصرح بها'))
+    // أول ظهور = بطاقة الإحصاء (العنوان يتكرر بقسم اللجان أسفلها).
+    fireEvent.click(screen.getAllByText('لجاني المصرح بها')[0])
     expect(mockNavigate).toHaveBeenCalledWith('/committees/approved')
   })
 

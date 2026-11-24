@@ -159,7 +159,12 @@ class MeetingUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _normalize_location(self) -> "MeetingUpdate":
-        self.location = _blank_to_none(self.location)
+        # فقط لو أُرسل location فعلًا: الإسناد هنا يضيف الحقل لـmodel_fields_set
+        # (Pydantic v2)، فكان كل PATCH يُعامل كأنه "مسح المكان" — تعديل عنوان
+        # اجتماع حضوري وحده كان يُرفض بـ"مكان الاجتماع إلزامي"، والتبديل لعن
+        # بُعد بدون location=None كان يمسح المكان ضمنيًا.
+        if "location" in self.model_fields_set:
+            self.location = _blank_to_none(self.location)
         return self
 
 

@@ -12,6 +12,7 @@
 from httpx import AsyncClient
 
 from app.models.user import User
+from tests.test_decisions import _revoke_committee_role_permissions
 from tests.test_meetings import _grant_committee_role_permissions
 from tests.test_minutes_general_api import _detail, _select_general, _setup
 
@@ -36,6 +37,9 @@ async def test_member_without_review_permission_cannot_review(
 ) -> None:
     ctx = await _setup(client, auth_headers, roles_by_name)
     await _select_general(client, ctx)
+    # الاختبار التالي يمنح العضو minutes.review، والمنح يبقى بالقاعدة بين
+    # الاختبارات والتشغيلات (role_permissions لا تُفرَّغ) — نسحبها هنا صراحة.
+    await _revoke_committee_role_permissions(["minutes.review"], slug="member")
 
     detail = await _detail_full(client, ctx, ctx["member_headers"])
     assert detail["can_review"] is False

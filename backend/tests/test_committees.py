@@ -353,7 +353,7 @@ async def test_admin_sees_only_own_requests_office_sees_submitted_ones(
 
 
 async def test_president_sees_request_only_after_office_escalates_it(
-    client: AsyncClient, auth_headers, roles_by_name: dict[str, str]
+    client: AsyncClient, auth_headers, roles_by_name: dict[str, str], _president_can_view_requests
 ) -> None:
     """
     قرار موثّق مع المستخدمة 2026-09-13: الرئيس التنفيذي ما يشوف الطلب
@@ -1173,3 +1173,4 @@ async def test_department_members_elsewhere_lists_cross_department_participation
     )
     assert empty.status_code == 200
     assert empty.json() == []
+

@@ -18,6 +18,7 @@ from app.models.committee import Committee
 from app.models.meeting import Meeting
 from app.models.user import User
 from tests.test_meetings import _create_approved_committee, _grant_committee_role_permissions
+from tests.dates import VOTING_END, VOTING_START
 
 
 @pytest.fixture(autouse=True)
@@ -405,8 +406,8 @@ async def test_guest_vote_counts_in_its_meeting_decisions_only(
                 "meeting_id": meeting_id,
                 "title": "قرار للتصويت",
                 "classification": "voting",
-                "start_date": "2026-11-01",
-                "end_date": "2026-11-30",
+                "start_date": VOTING_START,
+                "end_date": VOTING_END,
             },
             headers=ctx["chair_headers"],
         )

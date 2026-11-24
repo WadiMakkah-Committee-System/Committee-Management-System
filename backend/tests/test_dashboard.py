@@ -15,10 +15,13 @@ from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from app.models.role import Permission, Role, RolePermission
 from app.models.user import User
+from tests.permission_splits import with_split_codes
+from tests.dates import COMMITTEE_END, COMMITTEE_START, DATE_A, DATE_B
 
 
 async def _grant_committee_role_permissions(codes: list[str], *, slug: str) -> None:
     """Idempotent — راجعي شرح مماثل بـtest_decisions.py."""
+    codes = with_split_codes(codes)  # منح 0050 (راجعي tests/permission_splits.py)
     async with AsyncSessionLocal() as db:
         role = (
             await db.execute(select(Role).where(Role.committee_role_slug == slug))
@@ -103,8 +106,8 @@ async def _create_approved_committee(
         json={
             "committee_name": f"لجنة لوحة التحكم التجريبية {suffix}",
             "statement": "بيان",
-            "start_date": "2026-09-01",
-            "end_date": "2026-12-01",
+            "start_date": COMMITTEE_START,
+            "end_date": COMMITTEE_END,
             "proposed_member_ids": [chair_id, member_id],
             "chair_user_id": chair_id,
         },
@@ -170,8 +173,8 @@ async def test_dashboard_reflects_chair_pending_vote_and_open_task(
             "committee_id": ctx["committee_id"],
             "title": "قرار بانتظار تصويت الرئيسة",
             "classification": "voting",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
         },
         headers=ctx["chair_headers"],
     )
@@ -190,8 +193,8 @@ async def test_dashboard_reflects_chair_pending_vote_and_open_task(
         json={
             "committee_id": ctx["committee_id"],
             "title": "مهمة مفتوحة للرئيسة",
-            "start_date": "2026-09-10",
-            "end_date": "2026-10-10",
+            "start_date": DATE_A,
+            "end_date": DATE_B,
             "assignee_user_id": ctx["chair_id"],
         },
         headers=ctx["chair_headers"],

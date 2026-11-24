@@ -25,6 +25,8 @@ from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from app.models.role import Permission, Role, RolePermission
 from app.models.user import User
+from tests.permission_splits import with_split_codes
+from tests.dates import COMMITTEE_END, COMMITTEE_START, future_slot, past_slot
 
 
 async def _grant_committee_role_permissions(codes: list[str], *, slug: str) -> None:
@@ -39,6 +41,7 @@ async def _grant_committee_role_permissions(codes: list[str], *, slug: str) -> N
     بدون هذا التحقق تفشل بخطأ مفتاح مكرَّر (role_id, permission_id) UNIQUE
     من ثاني اختبار يستدعي _create_approved_committee فصاعدًا.
     """
+    codes = with_split_codes(codes)  # منح 0050 (راجعي tests/permission_splits.py)
     async with AsyncSessionLocal() as db:
         role = (
             await db.execute(select(Role).where(Role.committee_role_slug == slug))
@@ -130,8 +133,8 @@ async def _create_approved_committee(
         json={
             "committee_name": "لجنة الاجتماعات التجريبية",
             "statement": "بيان",
-            "start_date": "2026-09-01",
-            "end_date": "2026-12-01",
+            "start_date": COMMITTEE_START,
+            "end_date": COMMITTEE_END,
             "proposed_member_ids": [chair_id, member_id],
             "chair_user_id": chair_id,
         },
@@ -193,8 +196,8 @@ async def test_chair_can_create_meeting(
             "title": "الاجتماع الأول",
             "description": "وصف",
             "mode": "remote",
-            "scheduled_at": "2026-09-15T10:00:00Z",
-            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "scheduled_at": future_slot(15, 10)[0],
+            "scheduled_end_at": future_slot(15, 10)[1],
             "agenda_items": [{"title": "بند 1", "sort_order": 0}],
         },
         headers=ctx["chair_headers"],
@@ -218,8 +221,8 @@ async def test_non_chair_member_cannot_create_meeting(
             "committee_id": ctx["committee_id"],
             "title": "محاولة غير مصرح بها",
             "mode": "remote",
-            "scheduled_at": "2026-09-15T10:00:00Z",
-            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "scheduled_at": future_slot(15, 10)[0],
+            "scheduled_end_at": future_slot(15, 10)[1],
         },
         headers=ctx["member_headers"],
     )
@@ -237,8 +240,8 @@ async def test_member_can_view_but_not_delete_meeting(
             "committee_id": ctx["committee_id"],
             "title": "اجتماع للعرض",
             "mode": "remote",
-            "scheduled_at": "2026-09-20T09:00:00Z",
-            "scheduled_end_at": "2026-09-20T10:00:00Z",
+            "scheduled_at": future_slot(20, 9)[0],
+            "scheduled_end_at": future_slot(20, 9)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -265,8 +268,8 @@ async def test_outsider_cannot_view_meeting(
             "committee_id": ctx["committee_id"],
             "title": "اجتماع خاص",
             "mode": "remote",
-            "scheduled_at": "2026-09-22T09:00:00Z",
-            "scheduled_end_at": "2026-09-22T10:00:00Z",
+            "scheduled_at": future_slot(22, 9)[0],
+            "scheduled_end_at": future_slot(22, 9)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -288,8 +291,8 @@ async def test_chair_can_update_and_delete_meeting(
             "committee_id": ctx["committee_id"],
             "title": "عنوان قديم",
             "mode": "remote",
-            "scheduled_at": "2026-09-25T09:00:00Z",
-            "scheduled_end_at": "2026-09-25T10:00:00Z",
+            "scheduled_at": future_slot(25, 9)[0],
+            "scheduled_end_at": future_slot(25, 9)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -323,8 +326,8 @@ async def test_agenda_item_crud_by_chair(
             "committee_id": ctx["committee_id"],
             "title": "اجتماع بجدول أعمال",
             "mode": "remote",
-            "scheduled_at": "2026-09-28T09:00:00Z",
-            "scheduled_end_at": "2026-09-28T10:00:00Z",
+            "scheduled_at": future_slot(28, 9)[0],
+            "scheduled_end_at": future_slot(28, 9)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -366,8 +369,8 @@ async def test_onsite_meeting_requires_location(
             "committee_id": ctx["committee_id"],
             "title": "اجتماع حضوري بدون مكان",
             "mode": "in_person",
-            "scheduled_at": "2026-09-15T10:00:00Z",
-            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "scheduled_at": future_slot(15, 10)[0],
+            "scheduled_end_at": future_slot(15, 10)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -380,8 +383,8 @@ async def test_onsite_meeting_requires_location(
             "title": "اجتماع حضوري",
             "mode": "in_person",
             "location": "قاعة الاجتماعات الرئيسية",
-            "scheduled_at": "2026-09-15T10:00:00Z",
-            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "scheduled_at": future_slot(15, 10)[0],
+            "scheduled_end_at": future_slot(15, 10)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -401,8 +404,8 @@ async def test_remote_meeting_rejects_location(
             "title": "اجتماع عن بُعد بمكان (خطأ)",
             "mode": "remote",
             "location": "لا يجوز",
-            "scheduled_at": "2026-09-15T10:00:00Z",
-            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "scheduled_at": future_slot(15, 10)[0],
+            "scheduled_end_at": future_slot(15, 10)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -422,8 +425,8 @@ async def test_update_meeting_can_switch_type_and_clear_location(
             "title": "اجتماع حضوري قابل للتعديل",
             "mode": "in_person",
             "location": "الطابق الثاني",
-            "scheduled_at": "2026-09-15T10:00:00Z",
-            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "scheduled_at": future_slot(15, 10)[0],
+            "scheduled_end_at": future_slot(15, 10)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -462,8 +465,8 @@ async def test_cannot_delete_meeting_after_scheduled_time(
             "committee_id": ctx["committee_id"],
             "title": "اجتماع انتهى وقته",
             "mode": "remote",
-            "scheduled_at": "2020-01-01T09:00:00Z",
-            "scheduled_end_at": "2020-01-01T10:00:00Z",
+            "scheduled_at": past_slot(10)[0],
+            "scheduled_end_at": past_slot(10)[1],
         },
         headers=ctx["chair_headers"],
     )
@@ -495,8 +498,8 @@ async def _create_meeting_with_attachment_permissions(
             "committee_id": ctx["committee_id"],
             "title": "اجتماع بمرفقات",
             "mode": "remote",
-            "scheduled_at": "2026-09-15T10:00:00Z",
-            "scheduled_end_at": "2026-09-15T11:00:00Z",
+            "scheduled_at": future_slot(15, 10)[0],
+            "scheduled_end_at": future_slot(15, 10)[1],
         },
         headers=ctx["chair_headers"],
     )
